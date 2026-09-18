@@ -133,6 +133,34 @@ plus static catalogue: `/clinic` (everything in one call, plus restrictions),
 `/providers`, `/locations`, `/specialties`, `/appointment-types`,
 `/insurance-plans`. No booking endpoint anywhere — you never mutate.
 
+For exact field-by-field request/response shapes, `hackspain-prosper-api.md`
+(built from the live `openapi.json`, v0.1.0) is more authoritative than this
+page's narrative summary — consult it first for wire-level detail. Facts
+worth pulling forward from it:
+
+- On `/directory`, **`name` is the only approximate field** — `national_id`,
+  `phone`, `date_of_birth` are all exact filters. The response also carries
+  `match_score` and `matched_fields`, and `referrals` (specialty ids the
+  patient holds, format unconfirmed).
+- On `/availability`, each slot carries `payable_with` — the insurers that
+  can actually pay for that specific slot. This is the real mechanism behind
+  problem 17 (second policy): pass `insurer=` to see if a plan not on the
+  patient's record would unlock it.
+- Insurer ids are the exact lowercase tokens: `sanitas`, `adeslas`, `dkv`,
+  `asisa`, `mapfre`, `caser`, `cigna`, `axa`, `nueva_mutua`, `privado` — not
+  the display names.
+- The catalogue (`/clinic`, `/providers`, `/locations`, etc.) cross-references
+  entities **by name, not id** (`provider_names`, `location_names`,
+  `covered_specialty_names`) — build a name→id index at startup.
+
+### Known discrepancy: site coordinates
+
+The narrative `/clinic-api` docs page says problem 15's site coordinates are
+"published in `/availability`'s location data." The actual `openapi.json`
+schema doesn't carry `latitude`/`longitude` on `/availability` at all — they
+live on `/locations` (and inside `/clinic`'s `locations` block) instead. Use
+`/locations` for problem 15's distance calculation, not `/availability`.
+
 ### Traps worth remembering
 
 - **Identification is exclusionary, not fuzzy.** An exact field mismatch
