@@ -13,7 +13,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from loguru import logger
-from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
+from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
@@ -34,8 +34,12 @@ from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
+
+try:
+    from pipecat.transports.daily.transport import DailyParams
+except ImportError:  # daily-python has no Windows wheels
+    DailyParams = None
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
@@ -43,35 +47,9 @@ from pipecat.workers.runner import WorkerRunner
 from booking import MADRID
 from clinic_client import ClinicClient
 from handlers import GREETING, create_identify_node
-from krisp_model import ensure_filter_model, existing_filter_model_path
 from submission import CallSubmission
 
 load_dotenv(override=True)
-ensure_filter_model()
-
-
-def _audio_in_filter() -> BaseAudioFilter | None:
-    """Krisp VIVA noise-reduction on inbound audio.
-
-    The ``.kef`` is resolved at process startup (see ``ensure_filter_model``).
-    """
-    model_path = existing_filter_model_path()
-    api_key = os.getenv("KRISP_VIVA_API_KEY")
-    if not model_path:
-        return None
-
-    from pipecat.audio.filters.krisp_viva_filter import KrispVivaFilter
-
-    kwargs: dict = {}
-    if model_path:
-        kwargs["model_path"] = model_path
-    if api_key:
-        kwargs["api_key"] = api_key
-    level = os.getenv("KRISP_NOISE_SUPPRESSION_LEVEL")
-    if level:
-        kwargs["noise_suppression_level"] = int(level)
-    return KrispVivaFilter(**kwargs)
-
 
 FORCED_SUBMIT_AFTER_SECS = 150  # the harness caps calls at 3 minutes
 
@@ -238,15 +216,16 @@ async def bot(runner_args: RunnerArguments):
         return {
             "audio_in_enabled": True,
             "audio_out_enabled": True,
-            "audio_in_filter": _audio_in_filter(),
+            "audio_in_filter": RNNoiseFilter(),
         }
 
     transport_params = {
-        "daily": lambda: DailyParams(**_audio_kwargs()),
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
         "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
     }
+    if DailyParams is not None:
+        transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
     transport = await create_transport(runner_args, transport_params)
     await run_bot(transport, runner_args)
 

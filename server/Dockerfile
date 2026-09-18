@@ -16,4 +16,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-install-project --no-dev
 
 # Copy the application code
-COPY ./bot.py ./handlers.py ./menu.py ./krisp_model.py ./
+COPY ./bot.py ./handlers.py ./booking.py ./clinic_client.py ./clinic_catalog.py ./national_id.py ./submission.py ./
