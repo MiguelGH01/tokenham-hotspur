@@ -27,14 +27,18 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
-from pipecat.runner.utils import create_transport
+from pipecat.runner.utils import create_transport, parse_telephony_websocket
+from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 
 try:
     from pipecat.transports.daily.transport import DailyParams
@@ -209,6 +213,25 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await submission.flush()
 
 
+async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) -> BaseTransport:
+    """Twilio-shaped WebSocket transport without Twilio credentials.
+
+    create_transport() builds the serializer with auto_hang_up=True, which raises when
+    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are empty. The harness speaks Twilio Media
+    Streams but is not Twilio: it hangs up on its own, so no REST hang-up is needed.
+    """
+    transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    runner_args.transport_type = transport_type
+    runner_args.call_data = call_data
+    params.add_wav_header = False
+    params.serializer = TwilioFrameSerializer(
+        stream_sid=call_data["stream_id"],
+        call_sid=call_data["call_id"],
+        params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
+    )
+    return FastAPIWebsocketTransport(websocket=runner_args.websocket, params=params)
+
+
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
 
@@ -226,7 +249,10 @@ async def bot(runner_args: RunnerArguments):
     }
     if DailyParams is not None:
         transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
-    transport = await create_transport(runner_args, transport_params)
+    if isinstance(runner_args, WebSocketRunnerArguments):
+        transport = await _telephony_transport(runner_args, transport_params["twilio"]())
+    else:
+        transport = await create_transport(runner_args, transport_params)
     await run_bot(transport, runner_args)
 
 

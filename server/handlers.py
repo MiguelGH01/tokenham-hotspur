@@ -9,13 +9,16 @@ from datetime import datetime
 
 from loguru import logger
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
+from pipecat.frames.frames import TTSSpeakFrame
 
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import location_ids, location_name, specialty_ids
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
-GREETING = "Clínica Arenal, en qué puedo ayudarte?"
+GREETING = "Clínica Arenal, how can I help you?"  # must match the TTS voice language
+FILLER = "One moment, please."
+SPOKEN_TITLES = {"Dra.": "Doctor", "Dr.": "Doctor", "D.": "Don"}  # TTS cannot read the abbreviations
 
 ROLE_MESSAGE = (
     "You are the receptionist for Clínica Arenal, on the phone. Your responses will be "
@@ -29,6 +32,16 @@ ROLE_MESSAGE = (
 
 def _phone_digits(value: str) -> str:
     return "".join(ch for ch in value if ch.isdigit())[-9:]
+
+
+def _spoken_name(provider_name: str) -> str:
+    title, _, rest = provider_name.partition(" ")
+    return f"{SPOKEN_TITLES[title]} {rest}" if title in SPOKEN_TITLES else provider_name
+
+
+async def _say_filler(flow_manager: FlowManager) -> None:
+    """Fill the silence while an API lookup runs; spoken by code, not the LLM."""
+    await flow_manager.worker.queue_frames([TTSSpeakFrame(text=FILLER, append_to_context=False)])
 
 
 # --- actions -------------------------------------------------------------------
@@ -62,6 +75,7 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
         query = {"name": stated_name, "phone": wanted}
         exact = lambda m: _phone_digits(m["phone"]) == wanted  # noqa: E731
 
+    await _say_filler(flow_manager)
     try:
         matches = [m for m in await state["client"].search_directory(**query) if exact(m)]
     except Exception as exc:
@@ -87,6 +101,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
 
     connected_at: datetime = state["connected_at"]
     date_from, date_to = search_window(connected_at)
+    await _say_filler(flow_manager)
     try:
         availability = await state["client"].availability(
             date_from, date_to, specialty, state["patient"]["patient_id"], location_id=site
@@ -105,7 +120,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     offer_id = f"offer-{len(state['offers']) + 1}"
     state["offers"][offer_id] = offer
     summary = (
-        f"{slot['provider_name']} at {location_name(offer['location_id'])}, "
+        f"{_spoken_name(slot['provider_name'])} at {location_name(offer['location_id'])}, "
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
     logger.info("Offer {}: {}", offer_id, offer)
@@ -185,10 +200,11 @@ def create_identify_node() -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Establish the patient's full name and ONE exact identifier: their DNI or NIE "
-                    "including the letter, or their phone number. Ask for whatever is missing, one "
-                    "short question at a time, then call search_patient. Never search by name "
-                    "alone. If the result is misheard_id or not_found, say you could not find them "
+                    "You have already greeted the caller: do not greet again or re-introduce the "
+                    "clinic. Establish the patient's full name and ONE exact identifier: their DNI "
+                    "or NIE including the letter, or their phone number. Ask for everything that is "
+                    "missing in a single short question, then call search_patient. Never search by "
+                    "name alone. If the result is misheard_id or not_found, say you could not find them "
                     "and ask them to repeat the identifier slowly, digit by digit."
                 ),
             }

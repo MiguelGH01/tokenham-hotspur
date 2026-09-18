@@ -370,3 +370,9 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   100 rpm, 5 requests concurrentes por clave). Proveedor `helmcode` añadido a
   `build_llm()` vía `OpenAILLMService(base_url=...)` y puesto por defecto; `gemini` y
   `openai` siguen disponibles con `LLM_PROVIDER`.
+- 2026-09-19 — PRIMERA LLAMADA REAL (práctica, Ignacio): "Connection lost · Missing
+  record" a los 3 s, 2 de 2. Túnel OK (ngrok registró `GET /ws -> 101`). Causa raíz:
+  `create_transport()` construye `TwilioFrameSerializer` con `auto_hang_up=True` y
+  credenciales Twilio vacías → `ValueError` al arrancar la sesión. Fix: `bot()` monta
+  el transporte de telefonía él mismo (`_telephony_transport`) con
+  `auto_hang_up=False`; la plataforma cuelga sola y no tenemos cuenta Twilio.
