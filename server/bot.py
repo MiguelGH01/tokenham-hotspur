@@ -46,7 +46,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from booking import MADRID
 from clinic_client import ClinicClient
-from handlers import GREETING, create_identify_node
+from flow import GREETING, create_identify_node
 from submission import CallSubmission
 
 load_dotenv(override=True)

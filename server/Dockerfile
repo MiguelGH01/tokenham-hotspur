@@ -17,3 +17,5 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Copy the application code
 COPY ./bot.py ./handlers.py ./booking.py ./clinic_client.py ./clinic_catalog.py ./national_id.py ./submission.py ./
+COPY ./flow ./flow
+COPY ./clinic ./clinic

@@ -44,7 +44,7 @@ flowchart TD
   out --> compile
 ```
 
-Graph source: [flow.yaml](flow.yaml). Node names below match that file.
+Graph source: [flow.yaml](flow.yaml) (target). What the bot runs today: `server/flow/`.
 
 ---
 
