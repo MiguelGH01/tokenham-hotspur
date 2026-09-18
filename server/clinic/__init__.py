@@ -1,0 +1,1 @@
+"""Clinic API + static catalogue."""
