@@ -1,0 +1,28 @@
+# PR-05 case when_exactly-0ae0c03a3e6d — Ignacio Vázquez Moreno (GP "on Saturday morning")
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00. Only Centro opens Saturdays, so no
+# site needs to be asked for or passed — the caller's intent (GP, not his usual ortho) wins.
+# Expected BOOK: P00005 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / cigna
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: when_exactly_ignacio_saturday
+turns:
+  - user: "Hi, Ignacio Vázquez Moreno, phone 731 169 716. I've got a cough, could I see a GP on Saturday morning?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: phone }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, weekday: saturday, part_of_day: morning }
+      - event: response
+        eval: "the response offers a general practice appointment on Saturday morning at Arenal Centro, not an orthopaedics appointment"
+  - user: "Yes, that works."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

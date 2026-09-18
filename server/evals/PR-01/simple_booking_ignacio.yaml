@@ -1,5 +1,8 @@
 # PR-01 case simple_booking-3371b9ac9462 — Ignacio Vázquez Moreno (phone, returning, orthopaedics)
 # Expected BOOK: P00005 / PR10 / sur / orthopaedic_review / 2026-09-21T09:30:00+02:00 / cigna
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
 name: simple_booking_ignacio
 turns:
   - user: "Good morning, this is Ignacio Vázquez Moreno. I don't have my ID on me, but my phone number is 731 169 716."
