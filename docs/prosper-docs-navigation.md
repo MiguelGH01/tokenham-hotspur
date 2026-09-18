@@ -22,22 +22,27 @@ not mean the page is broken.
 | `/problems` | The 18 problems | Full problem list with weights, open status, per-problem answer shape |
 | `/api` | API Documentation | Generated OpenAPI/Swagger reference for the clinic + submission routes |
 
-`docs/prosper-track-reference.md` in this repo is a snapshot of all of the
-above taken 2026-09-18. Re-fetch if the organizers announce a rules change
-(the Scoring page carries a version string, e.g. "Version 2.0-draft · 17
-September 2026" — check that against the snapshot date before trusting old
-notes) or if a problem's "open" status needs checking during the event.
+**Preferred local source of truth:** [docs/README.md](README.md) →
+`docs/requirements/` (stable IDs) + `docs/api/` (OpenAPI fields) + live probe
+findings. See also [INDEX.md](INDEX.md).
+
+`docs/prosper-track-reference.md` is an earlier prose snapshot of the official
+pages (2026-09-18). Prefer `requirements/` / `api/` when they disagree. Re-fetch
+official pages if organizers announce a rules change (Scoring carries a version
+string, e.g. "Version 2.0-draft · 17 September 2026") or a problem's "open"
+status needs checking during the event.
 
 ## When something is unclear, consult before guessing
 
 If a rule, an API field's exact behavior, a `reason` code, a problem's
 answer shape, or anything scoring-affecting is ambiguous while working on
-this codebase, don't guess and don't assume the snapshot is complete —
+this codebase, don't guess and don't assume any snapshot is complete —
 Prosper's own docs explicitly say a "no way to say it makes its case
 unanswerable" and reward reading the rule off the API, not inferring it.
 
-1. **Check `docs/prosper-track-reference.md` first** — it's local, no
-   network needed, and covers everything gathered so far.
+1. **Check `docs/requirements/` and `docs/api/` first** — structured IDs,
+   scenarios, and the OpenAPI snapshot. Fall back to
+   `prosper-track-reference.md` for narrative context.
 2. **If it doesn't resolve the question, or the detail is one that changes
    during the event** (a problem's `open` status, its weight, the Scoring
    page's version string) **fetch the live page directly** using the page
