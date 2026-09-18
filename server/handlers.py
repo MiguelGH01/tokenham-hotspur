@@ -15,7 +15,7 @@ from clinic_catalog import location_ids, location_name, specialty_ids
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
-GREETING = "Clínica Arenal, how can I help you?"
+GREETING = "Clínica Arenal, en qué puedo ayudarte?"
 
 ROLE_MESSAGE = (
     "You are the receptionist for Clínica Arenal, on the phone. Your responses will be "
