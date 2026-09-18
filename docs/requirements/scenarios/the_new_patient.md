@@ -2,6 +2,8 @@
 
 Weight **2**. Each case is one dial. Answer verb: `REGISTER` → `POST /api/v1/submit/register`. **Do not `BOOK`.**
 
+Public people below are **fixtures**. The engine is: nid/DOB miss → flat register of whatever demographics they gave. Do not special-case these four nids.
+
 Dashboard “accepted answer” nests fields under `new_patient`. The POST body is **flat** (`call_id` + the same demographics). Scoring reads the submitted `REGISTER` action.
 
 Connect-day note does not apply; there is no slot.

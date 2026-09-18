@@ -112,11 +112,11 @@ Notes on the chart are talk-track, never a scheduling preference (`FR-caller-int
 After a unique patient (and chart load):
 
 1. Specialty: named, or triage table (`PR-10`) — not free clinical judgement. Then **age-remap**: spoken GP for a child (or paeds for an adult) becomes the age-correct specialty (`FR-age-remap`). Do not refuse `not_eligible_age` when the other side can serve.
-2. Provider: disambiguate Sáez/Sáenz, Iglesias/Iglesia against specialty (`CL-name-collision`). DKV × Iglesias → Vilar, not refuse (`CL-dkv-iglesias`).
+2. Provider: resolve the spoken name against the catalogue (specialty context if they named one). Near-miss surnames are a class, not two hardcoded pairs. If that provider refuses this plan, redirect in-specialty when someone else accepts (`FR-site-provider`).
 3. Site: named, or nearest that **can serve** (`PR-15`), else unconstrained. Closed-day rolls keep the named site.
-4. When: published phrase list + morning `<14:00` / afternoon `≥14:00`. Clock = connect time, Europe/Madrid. No same-day. `tomorrow` may be Saturday. Closed days (Sunday, 12 Oct even if slots appear, `LIVE-01`) → next open day that still matches the rest (`FR-closed-day-roll`).
-5. Policy: directory `insurer` first. If coverage blocks, **ask** for a second plan (`PR-17`). Never invent one (`LIVE-07`). Map “Mapfre Salud” → `mapfre`.
-6. Referrals: derm/physio need a held referral; missing → `referral_required` (`PR-06-S3`). Plan × specialty dead-end → `specialty_not_covered` (`PR-06-S4`). Do not refuse a specialty the patient **does** hold a referral for (`PR-06-S6`).
+4. When: parse the ask against connect time (Europe/Madrid), site hours, morning `<14:00` / afternoon `≥14:00`. No same-day. Closed days → next open day that still matches the rest (`FR-closed-day-roll`). Public phrase lists are fixtures for the parser, not its only input.
+5. Policy: directory `insurer` first. If coverage blocks, **ask** for a second plan they actually hold (`PR-17`). Never invent one. Map spoken labels through the catalogue display name → id.
+6. Referrals and coverage: if the specialty requires a referral and the chart does not hold it → `referral_required`. Plan/site/provider dead-end → the `blocked` reason. If they **do** pass, book — do not refuse a whole specialty because some public cases did.
 
 `answer_clinic_question` may run here; answers freeze what they will then ask to book (`PR-16`).
 
@@ -129,10 +129,10 @@ Always call `/availability` with `patient_id` (and current filters). Appointment
 | `status` | Meaning | Next |
 |---|---|---|
 | `ok` | Matching future slot | `offer_slot` |
-| `on_leave` | Named provider leave | `fallback_same_specialty_site` (Requena Norte → Benítez `PR07`) |
-| `not_at_site_that_day` | Provider exists, not there that weekday | `keep_provider_and_site` (Sáez Centro Monday → Friday Centro) |
-| `provider_not_in_network` | e.g. DKV × Iglesias | `redirect_in_specialty` (Vilar) or refuse if none |
-| `location_not_covered` | e.g. ASISA × Sur | `refuse_close` unless caller accepts another site |
+| `on_leave` | Named provider’s leave covers the ask | `fallback_same_specialty_site` |
+| `not_at_site_that_day` | Provider’s hours at that site skip that weekday | `keep_provider_and_site` |
+| `provider_not_in_network` | Named provider refuses this plan | `redirect_in_specialty` if another in-specialty accepts, else refuse |
+| `location_not_covered` | Plan does not cover that site | `refuse_close` unless caller accepts another site |
 | `specialty_not_covered` / other `blocked` | Restriction on the wire | `refuse_close` with that `reason` |
 | `provider_missing_no_alternative` | Named doctor does not exist; caller refuses anyone else | `refuse_close` `provider_not_found` |
 | `provider_missing_flexible` | No such doctor; caller accepts anyone | `resolve_constraints` (specialty only) |
@@ -152,13 +152,13 @@ Always call `/availability` with `patient_id` (and current filters). Appointment
 
 Happy path is always A → B → C → D. Each problem is one extra branch, not a new agent.
 
-| IDs | Extra branch |
+| IDs | Extra branch (engine, not a case list) |
 |---|---|
-| `PR-01`, `PR-02` | Happy path; isolate per socket |
-| `PR-03` | Provider/site fallback table |
+| `PR-01`, `PR-02` | Identify + earliest + optional filters; isolate per socket |
+| `PR-03` | Named provider: leave / hours / missing-name fallbacks from catalogue |
 | `PR-04` | `none` → register-only (nid miss beats namesake) |
-| `PR-05` | Time parser + closed-day roll (Sun→Mon, Fiesta→Tue) |
-| `PR-06`, `PR-17` | Age-remap / `blocked` / redirect-in-network / second-policy ask |
+| `PR-05` | Date engine + closed-day roll |
+| `PR-06`, `PR-17` | Age / referral / coverage / in-network redirect / second-policy ask |
 | `PR-07` | Empty slots negotiate |
 | `PR-08` | Upcoming `appointment_id` + multi-POST |
 | `PR-09` | Caller ≠ patient |
@@ -173,11 +173,11 @@ Happy path is always A → B → C → D. Each problem is one extra branch, not 
 
 ## Flexibility vs the pen
 
-Public cases (and the names in [add-pr04-06.md](add-pr04-06.md)) are **leaderboard fixtures**. Private cases and the jury pass will use people and wordings we have not seen. Extra branches are **engines** (identity, date, catalogue policy), not a switch on `case_id`.
+Public cases are **leaderboard fixtures**. Private cases and the jury pass will use people and wordings we have not seen. Extra branches are **engines** (identity, earliest+filters, named-provider fallbacks, date, catalogue policy), not a switch on `case_id` or `patient_id`. Named traps in the live probe (Requena leave, Sáez hours, DKV×Iglesias, …) are **instances** of leave / hours / `refused_insurers` fields.
 
-**Allowed:** wording, question order, empathy, reading the note, offering two **real** slots; any relative date the clock+hours+closures can resolve; any plan×specialty×site the catalogue encodes.
+**Allowed:** wording, question order, empathy, reading the note, offering two **real** slots; any relative date the clock+hours+closures can resolve; any plan×specialty×site×provider the catalogue encodes.
 
-**Forbidden:** inventing a slot or `patient_id`; booking a fuzzy namesake; hard-coding a public `patient_id` / slot as the answer; swapping `review` for a specialty type; booking the caller instead of the patient; leaking a nid/phone; empty submit.
+**Forbidden:** inventing a slot or `patient_id`; booking a fuzzy namesake; hard-coding a public `patient_id` / `provider_id` / slot as the answer; swapping `review` for a specialty type; booking the caller instead of the patient; leaking a nid/phone; empty submit.
 
 ---
 
@@ -188,3 +188,4 @@ Public cases (and the names in [add-pr04-06.md](add-pr04-06.md)) are **leaderboa
 - Problems → [06-problems](../requirements/06-problems.md)
 - Live traps → [10-live-probe-findings](../requirements/10-live-probe-findings.md)
 - Submit routes → [03-call-and-submission](../requirements/03-call-and-submission.md)
+- Implementer note (PR-04–06 only) → [add-pr04-06.md](add-pr04-06.md)

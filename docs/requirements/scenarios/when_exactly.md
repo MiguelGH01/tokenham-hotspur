@@ -2,7 +2,7 @@
 
 Weight **2**. Each case is one dial. Answer verb: `BOOK` → `POST /api/v1/submit/book`.
 
-The extract’s confirmation dates assume the call connects on **Friday 18 September 2026**. Relative phrases resolve against **connect time** (`CL-clock`), not this file. If organisers re-anchor public “earliest” slots, keep the **calendar rule** (closed day → next open day that still matches the rest) and re-read `/availability`.
+Public confirmation dates assume connect on **Friday 18 September 2026**. They are **fixtures**. Implement a date engine (connect clock + hours + closures). Do not paste these ISO timestamps into the bot. If organisers re-anchor public slots, keep the calendar rule (closed day → next open day that still matches the rest) and re-read `/availability`.
 
 ## Scenario-derived requirements
 

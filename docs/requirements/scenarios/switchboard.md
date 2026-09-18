@@ -2,6 +2,8 @@
 
 Weight **none** (diagnostic). Run All does **not** dial this problem. Trigger manually before first scored run.
 
+Same booking **engine** as `PR-01`, N isolated sockets. The burst sizes (5 / 10 / 20) are the public diagnostic; production isolation must not depend on those numbers.
+
 Every burst opens N independent problem-1 bookings at the same moment — each with its own patient, socket, and `call_id`. No single accepted JSON is shown on the dashboard (`accepted: []`).
 
 ## Scenario-derived requirements

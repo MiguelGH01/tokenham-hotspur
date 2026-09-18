@@ -1,10 +1,12 @@
 # Live clinic probe — findings
 
 **Date:** 18 Sep 2026  
-**Method:** Authenticated reads against `GET /api/v1/clinic`, `/directory`, `/availability`, `/patients/.../appointments` for the 12 open public cases.  
+**Method:** Authenticated reads against `GET /api/v1/clinic`, `/directory`, `/availability`, `/patients/.../appointments` for the open public cases.  
 **Secrets:** API key used from shell env only — **not** stored in this repo.
 
-All accepted `BOOK` answers for `PR-01` / `PR-03` were confirmed present as the earliest matching slot under the case constraints (ids + type + site + plan).
+These rows are **observed instances** (schedules, leave windows, empty `payable_with` on the closure day). Use them as regression checks. The agent should get the same outcome by reading catalogue fields, not by hard-coding provider ids from this table.
+
+All accepted `BOOK` answers for `PR-01` / `PR-03` were confirmed present as the earliest matching slot under the case constraints (ids + type + site + plan) **on that probe day**. Another connect day can move the slot.
 
 ---
 

@@ -2,6 +2,8 @@
 
 Weight **2**. Named provider ± named site, including near-miss surnames, leave, wrong weekday at site, and nonexistent provider.
 
+Public JSON is a **leaderboard fixture**. Implement leave / hours / missing-name from the **provider catalogue**. Requena, Sáez-on-Monday-Centro, and Fuentes are tests of those functions, not `if` targets.
+
 ## Scenario-derived requirements
 
 | ID | Requirement | Priority |

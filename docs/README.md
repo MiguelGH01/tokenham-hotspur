@@ -36,14 +36,14 @@ Internal rewrite of the HackSpain / Prosper **El Turno** challenge docs as stabl
 | [requirements/09-open-and-deferred.md](requirements/09-open-and-deferred.md) | TBDs and next phases | `OD-` |
 | [requirements/scenarios/](requirements/scenarios/README.md) | Public case walkthroughs for open problems | `PR-*-S*` |
 | [requirements/10-live-probe-findings.md](requirements/10-live-probe-findings.md) | Authenticated clinic probe traps (no secrets) | `LIVE-*` |
-| [agent/](agent/README.md) | Receptionist process map + Flows YAML | — |
+| [agent/](agent/README.md) | Receptionist process map + Flows YAML + PR-04–06 handoff | — |
 | [api/](api/README.md) | Platform OpenAPI field reference | `API-*` |
 
 ## How to extend
 
 1. **Client examples (in progress):** open problems `PR-01`…`PR-06` live under [requirements/scenarios/](requirements/scenarios/README.md). Append more when new problems open.
 2. **API docs (done for v0.1.0):** [api/](api/README.md) from live OpenAPI; re-snapshot if the schema changes.
-3. **Agent graph:** [agent/](agent/README.md) is the receptionist process map + Flows YAML (not loaded by the bot yet).
+3. **Agent graph:** [agent/](agent/README.md) is the receptionist process map + Flows YAML. New problems to hang on the existing bot: [agent/add-pr04-06.md](agent/add-pr04-06.md).
 
 ## Explicitly deferred
 

@@ -2,6 +2,8 @@
 
 Weight **3**. Each case is one dial. Answer is either a redirected `BOOK` or `NO_ACTION` with the **rule that bit**. Caller does not name the rule.
 
+Public Sonia / Teresa / Josefa / Gloria / Ignacio are **fixtures**. Implement age / referral / coverage / in-network redirect from the catalogue. Do not switch on those names.
+
 ## Scenario-derived requirements
 
 | ID | Requirement | Priority |
