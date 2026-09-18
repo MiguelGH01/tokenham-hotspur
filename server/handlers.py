@@ -193,7 +193,8 @@ def create_identify_node() -> NodeConfig:
                 ),
             }
         ],
-        pre_actions=[{"type": "tts_say", "text": GREETING}],
+        # The fixed greeting is queued by bot.py after initialize(): as a tts_say pre_action,
+        # a caller barging into it drops Flows' ActionFinishedFrame and the node never loads.
         respond_immediately=False,
         functions=[_search_patient_schema()],
     )

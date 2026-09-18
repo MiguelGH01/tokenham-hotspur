@@ -18,6 +18,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -40,7 +41,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from booking import MADRID
 from clinic_client import ClinicClient
-from handlers import create_identify_node
+from handlers import GREETING, create_identify_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
 from submission import CallSubmission
 
@@ -189,6 +190,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             return
         flow_started = True
         await flow_manager.initialize(create_identify_node())
+        await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
 
     # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
     # interrupts and drops anything queued earlier; telephony has no RTVI client.
