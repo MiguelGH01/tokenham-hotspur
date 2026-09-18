@@ -102,6 +102,9 @@ def build_llm():
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
             settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s.
+            retry_on_timeout=True,
+            retry_timeout_secs=3.0,
         )
     if provider == "gemini":
         return GoogleLLMService(
