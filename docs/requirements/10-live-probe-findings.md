@@ -116,7 +116,7 @@ No per-burst catalogue difference — concurrency isolation only. Each dial is a
 | ID | Trap | Detail |
 |---|---|---|
 | `LIVE-01` | **Closure day still lists slots** | `GET /availability` for `2026-10-12` returns many GP slots across all sites, but `payable_with: []` and calendar `closure_days` includes that date. **Do not book Fiesta Nacional** even if slots appear. |
-| `LIVE-02` | **Saturday GP scarcity** | Only Ortiz sits Saturday; early Saturdays in window can be fully booked (0 Centro GP slots on 19 & 26 Sep). “On Saturday” may need the next free Saturday or negotiation (`PR-05`/`PR-07` territory). |
+| `LIVE-02` | **Saturday GP scarcity** | Only Ortiz sits Saturday. An earlier probe saw 0 Centro GP slots on 19 & 26 Sep; public `PR-05` later **books 19 Sep 11:00 Centro** (`when_exactly-7d2467212026`). Treat Saturday fill as live, not a permanent empty. |
 | `LIVE-03` | **No GP at Sur on Friday** | Sáez is at Centro Fridays; Sur Fri afternoon clinic closes at 14:00 and morning has no GP in probe. Friday+Sur GP asks are fragile. |
 | `LIVE-04` | **ASISA × Sur** | Any Sur search for ASISA patient → all providers `location_not_covered`. |
 | `LIVE-05` | **ASISA × physio** | Only physio is Sur → ASISA physio → `location_not_covered` on PR09 (dead end). |
@@ -125,6 +125,11 @@ No per-burst catalogue difference — concurrency isolation only. Each dial is a
 | `LIVE-08` | **Blocked reason priority** | Same provider can fail for different reasons depending on params (leave vs referral vs network). Prefer the `blocked[].restriction` string as `OutcomeReason`. |
 | `LIVE-09` | **Amelia earliest ≠ Ortiz** | First free Centro first-visit was Benítez (`PR07`), not Ortiz — “usual doctor” must not override soonest when asked. |
 | `LIVE-10` | **Name collision is specialty collision** | Sáez↔Sáenz and Iglesias↔Iglesia sit in different specialties; wrong pick fails age or specialty rules, not just “wrong id”. |
+| `LIVE-11` | **Register namesakes** | `Natalia Muñoz González` name-only → **P01239** (DOB 2005-11-21). Public register caller is DOB 1988-12-13, nid `50454876Y` (0 hits). `Sergio Martínez Ramírez` name-only → **P01988** (DOB 1969-06-01); public caller is 2005-08-10, nid `31426012P`. All four public register nids return 0 matches. |
+| `LIVE-12` | **Sonia is a child** | P00009 Sonia Álvarez Medina DOB **2017-05-12**, `privado`, seen in paediatrics+ortho. Public `PR-06` asks for GP for “your daughter’s check-up” → `paediatric_review` `PR08` Norte, not GP and not `not_eligible_age`. |
+| `LIVE-13` | **Sunday rolls to Monday** | Public Chloe Centro “this coming Sunday” → book **Mon 21 Sep 09:15** Centro Ortiz, not Sunday (closed) and not another site. |
+| `LIVE-14` | **Named Fiesta rolls to Tuesday** | Public Amelia “first thing Monday 12 Oct” → **Tue 13 Oct 09:45** Centro Ortiz `first_visit`. Do not book 12 Oct slots (`LIVE-01`). |
+| `LIVE-15` | **Derm referral vs plan** | Teresa P00004 ASISA has physio referral only → `referral_required` for derm (plan still covers derm). Josefa P00015 Adeslas + gynae → `specialty_not_covered` (not referral). Ignacio P00005 has derm referral → books Vilar. Gloria P00057 DKV + derm referral + Iglesias → Vilar, not refuse. |
 
 ---
 
@@ -132,18 +137,19 @@ No per-burst catalogue difference — concurrency isolation only. Each dial is a
 
 | Finding | Existing IDs |
 |---|---|
-| Fuzzy name list | `FR-identify`, `FR-confirm-id`, `CL-exact-exclude` |
+| Fuzzy name list | `FR-identify`, `FR-confirm-id`, `CL-exact-exclude`, `FR-register-homonym`, `LIVE-11` |
 | Leave redirect same site | `PR-03-S3`, `CL-requena-leave`, `FR-site-provider` |
 | Wrong weekday keep provider+site | `PR-03-S4` |
 | Specialty type ids | `FR-appointment-type`, `CL-type-from-availability`, `PR-01-S4` |
-| Closure / relative dates | `CL-fiesta`, `FR-relative-time`, **`LIVE-01`** |
+| Closure / relative dates | `CL-fiesta`, `FR-relative-time`, `FR-closed-day-roll`, **`LIVE-01`**, `LIVE-13`, `LIVE-14` |
 | Catalan constraint | `FR-language-provider`, `PR-11` |
-| Plan dead-ends | `CL-asisa-physio`, `CL-adeslas-gynae`, `CL-dkv-iglesias`, `LIVE-04`…`06` |
+| Plan dead-ends | `CL-asisa-physio`, `CL-adeslas-gynae`, `CL-dkv-iglesias`, `LIVE-04`…`06`, `LIVE-15` |
+| Age remap vs refuse | `CL-age-boundary`, `FR-age-remap`, `LIVE-12` |
 
 ---
 
 ## Follow-ups when more problems open
 
-- Re-probe private-case templates are impossible (answers unpublished); re-run this playbook on new **public** cases as they appear.
+- Re-run this playbook when `PR-07`… open. Register / relative-date / rules public cases ingested 18 Sep 2026 (`LIVE-11`…`15`).
 - Confirm with a practice call whether Oct 12 slots are scorer-rejected or API bug — treat as **unbookable** until proven otherwise.
 - Rotate the team API key if this chat is shared beyond the team (`OP-lost-key`).

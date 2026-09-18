@@ -20,8 +20,8 @@ Update this table when the desk publishes answers; do not invent them.
 
 | ID | Status |
 |---|---|
-| `OD-client-examples` | **Partial.** Dashboard extract for open problems ingested into [scenarios/](scenarios/README.md) (`simple_booking`, `switchboard`, `doctor_and_site` — 12 cases, 18 Sep 2026). |
-| `OD-public-cases` | **Partial.** The 12 visible public cases are documented; remaining problems and the full `public-cases.json` roster wait until those pages open / further extracts are shared. |
+| `OD-client-examples` | **Partial.** Dashboard extracts ingested into [scenarios/](scenarios/README.md) (`simple_booking`, `switchboard`, `doctor_and_site`, `the_new_patient`, `when_exactly`, `the_rules` — 26 cases, 18 Sep 2026). |
+| `OD-public-cases` | **Partial.** 26 visible public cases documented; remaining problems (`PR-07`…) wait until those pages open / further extracts are shared. |
 
 Preferred shape (in use):
 

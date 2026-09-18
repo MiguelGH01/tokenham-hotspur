@@ -12,7 +12,9 @@ Agent behaviours required to pass cases and to support the jury demo. Each ID is
 | `FR-national-id` | Capture the complete national id (DNI/NIE) including check letter when required. One wrong character fails the case. | must |
 | `FR-confirm-id` | Confirm identity on a second field when ids may collide (some ids differ by one digit). | must |
 | `FR-from-number` | Treat `from_number` on the wire as a **hint** only: may be absent (withheld / unknown), and the line owner is not always the patient being booked. | must |
-| `FR-third-party` | When a third party calls (parent, daughter, carer), book for the **patient**, not the caller. Callers often offer their own details first. | must |
+| `FR-third-party` | When a third party calls (parent, daughter, carer), book for the **patient**, not the caller. Callers often offer their own details first. Public `PR-06` “daughter’s check-up” books the child (`P00009`), not a parent GP slot. | must |
+| `FR-register-homonym` | A fuzzy name hit is not the caller. If `national_id` (and DOB) match nobody, `REGISTER` — do not `BOOK` an existing namesake (`PR-04-S5`, `LIVE-11`). | must |
+| `FR-spoken-plan` | Map spoken / catalogue display names to plan ids (e.g. “Mapfre Salud” → `mapfre`). Submit the id, not the marketing name (`PR-04-S4`). | must |
 
 ## Chart, notes, and personalisation
 
@@ -29,7 +31,9 @@ Agent behaviours required to pass cases and to support the jury demo. Each ID is
 | `FR-availability` | Obtain bookable slots only from `GET /api/v1/availability` (and related catalogue). Never invent a slot, provider, or rule. | must |
 | `FR-appointment-type` | Choose `appointment_type_id` from specialty + patient’s `has_visited_before` (and specialty-specific types). Prefer the type named on the availability response / slots. Hard-coding `review` for every follow-up fails specialties with their own type ids. | must |
 | `FR-earliest` | “Earliest” / soonest means earliest from **the day after the call** (Europe/Madrid at connect time). Same-day slots are never accepted. | must |
-| `FR-relative-time` | Resolve relative/colloquial times (“next Thursday”, “first thing Monday”, etc.) against connect time, site hours, and published closures. | must |
+| `FR-relative-time` | Resolve relative/colloquial times (“next Thursday”, “first thing Monday”, etc.) against connect time, site hours, and published closures. `tomorrow` is the next calendar day (may be Saturday). `this coming <weekday>` is the first such weekday **strictly after** the day of the call. | must |
+| `FR-closed-day-roll` | If the requested calendar day is closed (Sunday, Fiesta 12 Oct, site shut), book the earliest slot on the **next open day** that still matches the rest of the ask. Do not refuse and do not book a closed-day slot even if the API lists one (`PR-05-S4`, `LIVE-01`). | must |
+| `FR-age-remap` | For a general complaint, if the spoken specialty is age-ineligible, book the age-correct specialty (GP ↔ paediatrics at 14 / 168 months). Do not `NO_ACTION(not_eligible_age)` when the other side of the boundary can serve (`PR-06-S1`). | must |
 | `FR-site-provider` | Honour named provider and/or site when requested. If provider is on leave: book earliest **same specialty at same site**. If provider is not at that site on the requested day: keep provider+site, take earliest slot there on another day. Fallbacks must not drop specialty or site when both were required. | must |
 | `FR-provider-missing` | If the named provider does not exist and the caller refuses anyone else, submit `NO_ACTION(provider_not_found)` — do not invent a booking. | must |
 | `FR-nearest-site` | When the caller gives a street address and asks for the closest clinic, book the nearest site that can **serve** the request (straight-line distance to published coordinates), not refusal and not closest if it cannot serve. | must |
@@ -42,7 +46,7 @@ Agent behaviours required to pass cases and to support the jury demo. Each ID is
 | ID | Requirement | Priority |
 |---|---|---|
 | `FR-book` | Report a booking via `POST /submit/book` with `patient_id`, `provider_id`, `location_id`, `appointment_type_id`, `slot` (explicit TZ offset), `policy_id`. | must |
-| `FR-register` | For unknown callers who want registration only: `POST /submit/register` with demographics; do **not** also `BOOK` if the case forbids it. A patient not on chart cannot be booked. | must |
+| `FR-register` | For unknown callers who want registration only: `POST /submit/register` with **flat** demographics; do **not** also `BOOK` if the case forbids it. A patient not on chart cannot be booked. Dashboard readback nests the same fields under `new_patient`. | must |
 | `FR-reschedule` | Move an existing **upcoming** appointment via `POST /submit/reschedule` using `appointment_id` from appointments lookup only. | must |
 | `FR-cancel` | Cancel via `POST /submit/cancel`; support multi-cancel (multiple posts) when the caller cancels more than one appointment. | must |
 | `FR-no-action` | When the correct outcome is refusal / cannot book, submit `NO_ACTION` with a closed-vocabulary `reason` that names the rule (or situation). Empty submission always fails. | must |
