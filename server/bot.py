@@ -24,8 +24,10 @@ import os
 
 from dotenv import load_dotenv
 from handlers import create_initial_node, get_delivery_estimate
+from krisp_model import ensure_filter_model, existing_filter_model_path
 from loguru import logger
 from menu import current_menu
+from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.flows import FlowManager
@@ -49,6 +51,30 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 load_dotenv(override=True)
+ensure_filter_model()
+
+
+def _audio_in_filter() -> BaseAudioFilter | None:
+    """Krisp VIVA noise-reduction on inbound audio.
+
+    The ``.kef`` is resolved at process startup (see ``ensure_filter_model``).
+    """
+    model_path = existing_filter_model_path()
+    api_key = os.getenv("KRISP_VIVA_API_KEY")
+    if not model_path:
+        return None
+
+    from pipecat.audio.filters.krisp_viva_filter import KrispVivaFilter
+
+    kwargs: dict = {}
+    if model_path:
+        kwargs["model_path"] = model_path
+    if api_key:
+        kwargs["api_key"] = api_key
+    level = os.getenv("KRISP_NOISE_SUPPRESSION_LEVEL")
+    if level:
+        kwargs["noise_suppression_level"] = int(level)
+    return KrispVivaFilter(**kwargs)
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -156,19 +182,17 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
 
+    def _audio_kwargs() -> dict:
+        return {
+            "audio_in_enabled": True,
+            "audio_out_enabled": True,
+            "audio_in_filter": _audio_in_filter(),
+        }
+
     transport_params = {
-        "daily": lambda: DailyParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-        ),
-        "webrtc": lambda: TransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-        ),
-        "twilio": lambda: FastAPIWebsocketParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-        ),
+        "daily": lambda: DailyParams(**_audio_kwargs()),
+        "webrtc": lambda: TransportParams(**_audio_kwargs()),
+        "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
     }
 
     transport = await create_transport(runner_args, transport_params)
