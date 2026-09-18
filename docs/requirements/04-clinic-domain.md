@@ -31,6 +31,7 @@ Every clinic endpoint needs `X-Api-Key`. Field-level shapes are deferred to the 
 | ID | Requirement | Priority |
 |---|---|---|
 | `CL-exact-exclude` | An exact query field that does not match **excludes** the patient. | must |
+| `CL-homonym-register` | Several legal names collide in the ~3,000-patient directory. Name-only search returning a hit does **not** mean the caller is on file. Confirm with `national_id` / DOB. Public register cases: Natalia Muñoz González and Sergio Martínez Ramírez each have an existing namesake with a different DOB (`LIVE-11`). | must |
 | `CL-submit-record-name` | Submit the record’s name and id, never the caller’s nickname/mishearing as the legal identity for writes. | must |
 | `CL-phone-fold` | `phone` queries fold to nine national digits (`+34…`, `0034…`, national form are one query). | must |
 | `CL-note` | Every patient record carries a `note` (how history runs, how to talk to them). Not scored on the board; material for jury personalisation. | should |
@@ -41,14 +42,15 @@ Every clinic endpoint needs `X-Api-Key`. Field-level shapes are deferred to the 
 | ID | Requirement | Priority |
 |---|---|---|
 | `CL-sites` | Sites: Centro, Norte, Sur (ids as published in catalogue). | must |
-| `CL-saturday` | Only Centro opens on Saturday. Nothing opens Sunday. | must |
+| `CL-saturday` | Only Centro opens on Saturday. Nothing opens Sunday. A Sunday ask at Centro still stays at Centro and rolls to Monday (`PR-05-S4`). | must |
+| `CL-closed-day-roll` | Closed requested day (Sunday, Fiesta Nacional, site hours) → next open day keeping the rest of the constraint set. Public: Sun 20 Sep → Mon 21; Mon 12 Oct → Tue 13. | must |
 | `CL-coords` | Site coordinates appear in availability location data; ground truth for nearest-site (`PR-15`). | must |
 
 ## Specialties and age
 
 | ID | Requirement | Priority |
 |---|---|---|
-| `CL-age-boundary` | 14th birthday is the age boundary (in months): every age has exactly one correct specialty for a general complaint; no gap/overlap. | must |
+| `CL-age-boundary` | 14th birthday is the age boundary (in months): every age has exactly one correct specialty for a general complaint; no gap/overlap. Live catalogue: paediatrics `min_age_months=0` / `max_age_months=167`; general practice `min_age_months=168` / `max_age_months=null`. Gynaecology also starts at 168 months. Public `PR-06` Sonia (DOB 2017-05-12) is on the paediatric side — spoken “GP” remaps, it does not refuse (`FR-age-remap`). | must |
 
 ## Providers (traps)
 
@@ -66,7 +68,8 @@ Every clinic endpoint needs `X-Api-Key`. Field-level shapes are deferred to the 
 |---|---|---|
 | `CL-asisa-physio` | ASISA covers physiotherapy only at Centro and Norte, but the only physiotherapist sits at Sur → ASISA patient can never book physio. | must |
 | `CL-adeslas-gynae` | Adeslas covers no gynaecology; one gynaecologist → nowhere to redirect. | must |
-| `CL-privado` | `privado` is self-pay and a plan the patient holds or not — not a fallback. Uncovered → refuse. | must |
+| `CL-privado` | `privado` is self-pay and a plan the patient holds or not — not a fallback. Uncovered → refuse. Public: Sonia `P00009` **holds** `privado`; submitting it is correct, inventing it for someone else is not. | must |
+| `CL-plan-display-names` | Catalogue display names are not ids. `mapfre` is labelled **Mapfre Salud**; `nueva_mutua` is Nueva Mutua Sanitaria; `privado` is Privado. Submit the id (`FR-spoken-plan`). | must |
 | `CL-second-policy` | Patients hold one or two plans. Only the first is on the directory; a second exists to be asked for on the call (`PR-17`). | must |
 | `CL-insurer-param` | Naming a plan on availability (`insurer`) is the only way to be quoted against it. Omitting prices against the single plan on the record. | must |
 
@@ -121,3 +124,5 @@ These are receptionist quality bars for the jury (`JR-*`), not leaderboard crite
 - Submit shapes → [03-call-and-submission](03-call-and-submission.md)
 - Functional use of these rules → [02-functional](02-functional.md)
 - Problem traps → [06-problems](06-problems.md)
+- Public cases → [scenarios/](scenarios/README.md)
+- Live probe → [10-live-probe-findings.md](10-live-probe-findings.md)

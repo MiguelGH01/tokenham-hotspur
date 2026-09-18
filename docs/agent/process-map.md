@@ -90,8 +90,8 @@ Notes on the chart are talk-track, never a scheduling preference (`FR-caller-int
 
 1. Hear the ask; enqueue jobs (more than one is allowed).
 2. Separate **caller** vs **patient**. If they offered their own details first, keep them as caller and identify the patient again (`PR-09`).
-3. Name-only search is not enough (10 fuzzy hits). Require a second exact field: DNI/NIE, phone, or DOB (`FR-identify`, `FR-confirm-id`).
-4. Directory exact fields **exclude** on mismatch (`CL-exact-exclude`).
+3. Name-only search is not enough (10 fuzzy hits, and **homonyms**). Require a second exact field: DNI/NIE, phone, or DOB (`FR-identify`, `FR-confirm-id`, `LIVE-11`).
+4. Directory exact fields **exclude** on mismatch (`CL-exact-exclude`). A name hit plus a nid miss is `none`, not the namesake.
 5. Submit the **record** name and `patient_id`, never the nickname (`FR-record-ids`).
 
 `lookup_patient` branches:
@@ -105,17 +105,18 @@ Notes on the chart are talk-track, never a scheduling preference (`FR-caller-int
 
 `unknown_patient`: register-only (`PR-04`) → `register_patient`. If they wanted a booking for someone not on file → `refuse_close` with `patient_not_found`.
 
-`register_patient`: two surnames, DNI+check letter, DOB, phone, email, insurer. If they decline a slot, **do not BOOK**.
+`register_patient`: two surnames, DNI **or NIE** + check letter, DOB, phone, email, insurer (display name → id, `FR-spoken-plan`). If they decline a slot, **do not BOOK**. POST is flat.
 
 ### B — Resolve the ask (`resolve_constraints`)
 
 After a unique patient (and chart load):
 
-1. Specialty: named, or triage table (`PR-10`) — not free clinical judgement.
-2. Provider: disambiguate Sáez/Sáenz, Iglesias/Iglesia against specialty (`CL-name-collision`).
-3. Site: named, or nearest that **can serve** (`PR-15`), else unconstrained.
-4. When: published phrase list + morning `<14:00` / afternoon `≥14:00`. Clock = connect time, Europe/Madrid. No same-day. Closed days (incl. 12 Oct even if slots appear, `LIVE-01`) → next open day that still matches the rest (`PR-05`).
-5. Policy: directory `insurer` first. If coverage blocks, **ask** for a second plan (`PR-17`). Never invent one (`LIVE-07`).
+1. Specialty: named, or triage table (`PR-10`) — not free clinical judgement. Then **age-remap**: spoken GP for a child (or paeds for an adult) becomes the age-correct specialty (`FR-age-remap`). Do not refuse `not_eligible_age` when the other side can serve.
+2. Provider: disambiguate Sáez/Sáenz, Iglesias/Iglesia against specialty (`CL-name-collision`). DKV × Iglesias → Vilar, not refuse (`CL-dkv-iglesias`).
+3. Site: named, or nearest that **can serve** (`PR-15`), else unconstrained. Closed-day rolls keep the named site.
+4. When: published phrase list + morning `<14:00` / afternoon `≥14:00`. Clock = connect time, Europe/Madrid. No same-day. `tomorrow` may be Saturday. Closed days (Sunday, 12 Oct even if slots appear, `LIVE-01`) → next open day that still matches the rest (`FR-closed-day-roll`).
+5. Policy: directory `insurer` first. If coverage blocks, **ask** for a second plan (`PR-17`). Never invent one (`LIVE-07`). Map “Mapfre Salud” → `mapfre`.
+6. Referrals: derm/physio need a held referral; missing → `referral_required` (`PR-06-S3`). Plan × specialty dead-end → `specialty_not_covered` (`PR-06-S4`). Do not refuse a specialty the patient **does** hold a referral for (`PR-06-S6`).
 
 `answer_clinic_question` may run here; answers freeze what they will then ask to book (`PR-16`).
 
@@ -155,9 +156,9 @@ Happy path is always A → B → C → D. Each problem is one extra branch, not 
 |---|---|
 | `PR-01`, `PR-02` | Happy path; isolate per socket |
 | `PR-03` | Provider/site fallback table |
-| `PR-04` | `none` → register-only |
-| `PR-05` | Time parser + closures |
-| `PR-06`, `PR-17` | `blocked` + second-policy ask |
+| `PR-04` | `none` → register-only (nid miss beats namesake) |
+| `PR-05` | Time parser + closed-day roll (Sun→Mon, Fiesta→Tue) |
+| `PR-06`, `PR-17` | Age-remap / `blocked` / redirect-in-network / second-policy ask |
 | `PR-07` | Empty slots negotiate |
 | `PR-08` | Upcoming `appointment_id` + multi-POST |
 | `PR-09` | Caller ≠ patient |
@@ -174,7 +175,7 @@ Happy path is always A → B → C → D. Each problem is one extra branch, not 
 
 **Allowed:** wording, question order, empathy, reading the note, offering two **real** slots (“Ortiz Thursday or Sáez tomorrow”).
 
-**Forbidden:** inventing a slot, booking a fuzzy match, swapping `review` for `orthopaedic_review`, booking the caller instead of the child, leaking a nid/phone, empty submit.
+**Forbidden:** inventing a slot, booking a fuzzy namesake, swapping `review` for `orthopaedic_review`, booking the caller instead of the child, booking GP for a child, booking Sunday/Fiesta, leaking a nid/phone, empty submit.
 
 ---
 

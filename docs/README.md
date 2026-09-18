@@ -41,14 +41,14 @@ Internal rewrite of the HackSpain / Prosper **El Turno** challenge docs as stabl
 
 ## How to extend
 
-1. **Client examples (in progress):** open problems `PR-01`…`PR-03` live under [requirements/scenarios/](requirements/scenarios/README.md). Append more when new problems open.
+1. **Client examples (in progress):** open problems `PR-01`…`PR-06` live under [requirements/scenarios/](requirements/scenarios/README.md). Append more when new problems open.
 2. **API docs (done for v0.1.0):** [api/](api/README.md) from live OpenAPI; re-snapshot if the schema changes.
 3. **Agent graph:** [agent/](agent/README.md) is the receptionist process map + Flows YAML (not loaded by the bot yet).
 
 ## Explicitly deferred
 
-- Scenarios for `PR-04`…`PR-18` (not yet open / not in the shared extract).
-- Full `public-cases.json` dump beyond the 12 dashboard cases already captured.
+- Scenarios for `PR-07`…`PR-18` (not yet open / not in the shared extract).
+- Full `public-cases.json` dump beyond the 26 dashboard cases already captured.
 - Stack / model / telephony choices — wait for tech discussion.
 - Upstream recommendations (Pipecat, ngrok EU) appear only as hints in [08-operations](requirements/08-operations.md) / [09-open-and-deferred](requirements/09-open-and-deferred.md), not as our decisions.
 
