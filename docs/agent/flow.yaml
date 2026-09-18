@@ -1,0 +1,458 @@
+# Clínica Arenal receptionist — FlowConfig (documentation graph).
+# Shape matches Pipecat Flows YAML used by this repo (server/flow.yaml).
+# Tools named here are the handlers module to implement; they return
+# (result, TRANSITION_IN_YAML). Branches key on a field of that result.
+# Not loaded by server/bot.py yet. Handlers named here are the module to implement.
+#
+# Narrative: docs/agent/process-map.md
+
+initial_node: greeting
+
+nodes:
+  greeting:
+    role_message: >
+      You are the receptionist for Clínica Arenal, on the phone. Your
+      responses will be spoken aloud, so avoid emojis, bullet points, or
+      other formatting that cannot be spoken. Keep replies to one or two
+      short sentences. Never invent a slot, doctor, site, or rule. Never
+      read out another patient's national id or phone number. The caller
+      is not always the patient. Use only the tools to look people up,
+      check availability, and finish the call. When a tool returns a
+      slot or a reason, say that — do not guess.
+    task_messages:
+      - role: developer
+        content: >
+          Greet the caller briefly and ask how you can help. Do not claim
+          you already know who they are from the number. Wait for them to
+          say what they need, then call capture_intent.
+    pre_actions:
+      - type: function
+        handler: bind_call_session
+    functions:
+      - name: capture_intent
+        transition_to: identify_patient
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  identify_patient:
+    task_messages:
+      - role: developer
+        content: >
+          Establish who the appointment is for, not only who is speaking.
+          Ask for the patient's name and one exact identifier: DNI or NIE
+          including the letter, or a phone number. Do not look them up on
+          name alone. If they gave their own details but the visit is for
+          someone else, keep them as the caller and identify the patient.
+          Then call lookup_patient.
+    functions:
+      - name: lookup_patient
+        transition_to:
+          field: status
+          cases:
+            unique: load_chart
+            many: disambiguate
+            none: unknown_patient
+            caller_is_not_patient: identify_patient
+          default: identify_patient
+      - name: capture_intent
+        transition_to: identify_patient
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  disambiguate:
+    task_messages:
+      - role: developer
+        content: >
+          Several people matched. Ask for date of birth, DNI or NIE, or
+          phone until one remains. Do not read out other people's
+          identifiers. Then call lookup_patient again.
+    functions:
+      - name: lookup_patient
+        transition_to:
+          field: status
+          cases:
+            unique: load_chart
+            many: disambiguate
+            none: unknown_patient
+          default: disambiguate
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  unknown_patient:
+    task_messages:
+      - role: developer
+        content: >
+          Nobody on file matched. If they only want to be registered,
+          call begin_register. If they wanted a booking for this person,
+          call refuse_patient_not_found. Do not invent a patient_id.
+    functions:
+      - name: begin_register
+        transition_only: true
+        description: The caller is new and wants to be put on file, not booked today.
+        transition_to: register_patient
+      - name: refuse_patient_not_found
+        transition_only: true
+        description: They wanted a booking but this person is not on the clinic file.
+        transition_to: refuse_close
+      - name: lookup_patient
+        transition_to:
+          field: status
+          cases:
+            unique: load_chart
+            many: disambiguate
+            none: unknown_patient
+          default: unknown_patient
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  register_patient:
+    task_messages:
+      - role: developer
+        content: >
+          Collect both surnames, DNI or NIE with the check letter, date of
+          birth, phone, email, and insurer. Spell back critical fields.
+          If they decline an appointment, do not book. When complete, call
+          submit_register.
+    functions:
+      - name: submit_register
+        transition_to: goodbye
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  load_chart:
+    task_messages:
+      - role: developer
+        content: >
+          The patient is identified. Use what the chart already knows —
+          do not ask if a regular has been here before. Then call
+          proceed_to_constraints unless they first ask clinic facts.
+    pre_actions:
+      - type: function
+        handler: load_patient_chart
+    functions:
+      - name: proceed_to_constraints
+        transition_only: true
+        description: Chart is loaded; continue to specialty, site, time, and policy.
+        transition_to: resolve_constraints
+      - name: answer_clinic_question
+      - name: capture_intent
+        transition_to: identify_patient
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  resolve_constraints:
+    task_messages:
+      - role: developer
+        content: >
+          Capture specialty, named doctor, site, when, and which plan if
+          needed. Vague times stay as the caller's words; the tool
+          resolves them. Symptoms map only through the published triage
+          list. For an address and "closest clinic", call
+          resolve_nearest_site. Then call lock_constraints.
+    functions:
+      - name: lock_constraints
+        transition_to:
+          field: status
+          cases:
+            ready: search_availability
+            need_named_provider: resolve_named_provider
+            need_site: resolve_constraints
+            need_time: resolve_constraints
+            need_policy: ask_second_policy
+            need_specialty: resolve_constraints
+          default: resolve_constraints
+      - name: resolve_nearest_site
+        transition_to: resolve_constraints
+      - name: answer_clinic_question
+      - name: record_final_intent
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  resolve_named_provider:
+    task_messages:
+      - role: developer
+        content: >
+          They named a doctor. Confirm which person if two surnames
+          sound alike, then call lookup_named_provider. Do not pick a
+          different specialty to make the name fit.
+    functions:
+      - name: lookup_named_provider
+        transition_to:
+          field: status
+          cases:
+            found: search_availability
+            on_leave: fallback_same_specialty_site
+            not_at_site_that_day: keep_provider_and_site
+            provider_not_in_network: redirect_in_specialty
+            provider_missing_no_alternative: refuse_close
+            provider_missing_flexible: resolve_constraints
+          default: resolve_named_provider
+      - name: record_final_intent
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  ask_second_policy:
+    task_messages:
+      - role: developer
+        content: >
+          The plan on file does not cover this. Ask whether they have
+          another insurer. Do not invent a second plan. When they name
+          one, call set_policy. If they have none, call refuse_uncovered.
+    functions:
+      - name: set_policy
+        transition_to: search_availability
+      - name: refuse_uncovered
+        transition_only: true
+        description: No covering plan; end without a booking using the blocked reason already on file.
+        transition_to: refuse_close
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  search_availability:
+    task_messages:
+      - role: developer
+        content: >
+          Call search_availability. Do not offer a time until the tool
+          returns slots. Use the appointment type the tool named.
+    functions:
+      - name: search_availability
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            on_leave: fallback_same_specialty_site
+            not_at_site_that_day: keep_provider_and_site
+            provider_not_in_network: redirect_in_specialty
+            location_not_covered: refuse_close
+            specialty_not_covered: refuse_close
+            blocked: refuse_close
+            empty: negotiate_slot
+            need_policy: ask_second_policy
+          default: search_availability
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  fallback_same_specialty_site:
+    task_messages:
+      - role: developer
+        content: >
+          That doctor is away. Say so and offer the earliest doctor of
+          the same kind at the same site. Call apply_leave_fallback.
+    functions:
+      - name: apply_leave_fallback
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            empty: negotiate_slot
+            blocked: refuse_close
+          default: refuse_close
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  keep_provider_and_site:
+    task_messages:
+      - role: developer
+        content: >
+          That doctor is not at that site on the day they asked. Keep
+          the same doctor and site; offer their next slot there on
+          another day. Call apply_other_day_same_site.
+    functions:
+      - name: apply_other_day_same_site
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            empty: negotiate_slot
+            blocked: refuse_close
+          default: refuse_close
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  redirect_in_specialty:
+    task_messages:
+      - role: developer
+        content: >
+          That doctor does not take this plan. Offer another doctor in
+          the same specialty who does, at a site that still fits. Call
+          apply_network_redirect. If none, the tool will refuse.
+    functions:
+      - name: apply_network_redirect
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            empty: negotiate_slot
+            blocked: refuse_close
+          default: refuse_close
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  offer_slot:
+    task_messages:
+      - role: developer
+        content: >
+          Offer the slot the tool returned, with doctor, site, day and
+          time. If two real options exist, you may say both. If they
+          want something else, call record_final_intent then search
+          again. If they accept, call accept_slot.
+    functions:
+      - name: accept_slot
+        transition_to: confirm_action
+      - name: record_final_intent
+        transition_to: search_availability
+      - name: search_availability
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            empty: negotiate_slot
+            blocked: refuse_close
+          default: offer_slot
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  negotiate_slot:
+    task_messages:
+      - role: developer
+        content: >
+          Nothing in that window. Offer the nearest real alternative
+          that still matches what they care about, or establish there
+          is none. Call negotiate_availability.
+    functions:
+      - name: negotiate_availability
+        transition_to:
+          field: status
+          cases:
+            ok: offer_slot
+            empty: refuse_close
+            blocked: refuse_close
+          default: refuse_close
+      - name: record_final_intent
+        transition_to: search_availability
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  confirm_action:
+    task_messages:
+      - role: developer
+        content: >
+          Read back the appointment the way a person would. Nothing is
+          submitted until they confirm. On confirm, call enqueue_action.
+          To change, call record_final_intent. For an existing visit,
+          cancel or reschedule uses the upcoming appointment_id only.
+    functions:
+      - name: enqueue_action
+        transition_to:
+          field: status
+          cases:
+            more_jobs: capture_next_job
+            done: goodbye
+          default: goodbye
+      - name: enqueue_cancel
+        transition_to:
+          field: status
+          cases:
+            more_jobs: capture_next_job
+            done: goodbye
+          default: goodbye
+      - name: enqueue_reschedule
+        transition_to:
+          field: status
+          cases:
+            more_jobs: capture_next_job
+            done: goodbye
+          default: goodbye
+      - name: record_final_intent
+        transition_to: resolve_constraints
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  capture_next_job:
+    task_messages:
+      - role: developer
+        content: >
+          That item is queued. Ask what else they need. Call
+          capture_intent for another booking, cancel, or move, or
+          finish_jobs if they are done.
+    functions:
+      - name: capture_intent
+        transition_to: identify_patient
+      - name: finish_jobs
+        transition_only: true
+        description: No further bookings, cancels, or moves on this call.
+        transition_to: goodbye
+      - name: flag_emergency
+        transition_to: escalate_close
+      - name: decline_out_of_scope
+        transition_to: refuse_close
+
+  refuse_close:
+    task_messages:
+      - role: developer
+        content: >
+          Explain the clinic cannot do this, using the reason the tool
+          already set. Do not invent a workaround that breaks a rule.
+          Then call compile_and_submit.
+    functions:
+      - name: compile_and_submit
+        transition_to: goodbye
+
+  escalate_close:
+    task_messages:
+      - role: developer
+        content: >
+          Stop scheduling. Tell them to get urgent medical help. Do not
+          diagnose. Then call compile_and_submit.
+    functions:
+      - name: compile_and_submit
+        transition_to: goodbye
+
+  goodbye:
+    task_messages:
+      - role: developer
+        content: >
+          Thank them in one short sentence and end. Do not offer extra
+          bookings.
+    pre_actions:
+      - type: function
+        handler: compile_and_submit
+    post_actions:
+      - type: end_conversation
+
+global_functions:
+  - name: pin_language
+  - name: record_final_intent
+  - name: answer_clinic_question
