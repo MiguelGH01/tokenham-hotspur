@@ -123,7 +123,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
-            filter_incomplete_user_turns=True,
+            filter_incomplete_user_turns=False,
             user_turn_strategies=UserTurnStrategies(
                 stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
             ),
@@ -180,15 +180,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         logger.warning("Call {} hit {}s: forcing submission", call_id, FORCED_SUBMIT_AFTER_SECS)
         await submission.flush()
 
-    timer = asyncio.create_task(forced_submit())
+    timer: asyncio.Task | None = None
 
     flow_started = False
 
     async def start_flow():
-        nonlocal flow_started
+        nonlocal flow_started, timer
         if flow_started:
             return
         flow_started = True
+        timer = asyncio.create_task(forced_submit())  # 150s from call start, not process start
         await flow_manager.initialize(create_identify_node())
         await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
 
@@ -207,14 +208,16 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        timer.cancel()
+        if timer:
+            timer.cancel()
         await submission.flush()
         await runner.cancel()
 
     try:
         await runner.run()
     finally:
-        timer.cancel()
+        if timer:
+            timer.cancel()
         await submission.flush()
 
 

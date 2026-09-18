@@ -343,3 +343,16 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   `on_client_connected` solo para Twilio, como en la plantilla oficial.
 - 2026-09-19 — `gemini-2.5-flash` ya no está disponible para cuentas nuevas (404 de la
   API); modelo por defecto `gemini-3.6-flash`.
+- 2026-09-19 — A mitad de implementación entró un `git stash`/`pull`/`stash pop` ajeno a
+  esta sesión (commits upstream: Krisp VIVA, Makefile, túnel ngrok) con conflictos en
+  `bot.py`, `.env.example` y `uv.lock`. Adolfo los resolvió; `bot.py` conserva Krisp +
+  la lógica de este plan.
+- 2026-09-19 — Evals con reloj fijado al 18-09: **chloe pasa y su oferta coincide
+  exactamente con el JSON aceptado** (P00011/PR03/sur/review/2026-09-21T09:00/mapfre).
+  josefa/amelia/ignacio: inestables. Dos causas vistas en el log: (1) Gemini a veces
+  contesta con texto (~40 tokens) en vez de llamar a `search_patient`; (2) el servidor
+  eval reutiliza UNA sesión de `bot()` para todas las conexiones, así que el estado del
+  flujo se arrastra entre escenarios — para runs aislados hay que usar
+  `pipecat eval suite` (bot nuevo por run), no `eval run` en bucle.
+- 2026-09-19 — El temporizador de 150s arranca ahora al empezar el flujo (no al arrancar
+  el proceso).
