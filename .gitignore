@@ -219,7 +219,4 @@ __marimo__/
 *.eval.log
 *.debug.log
 
-# Cached Krisp VIVA .kef models (downloaded with KRISP_VIVA_API_KEY)
-server/.krisp-models/
-
 # Node.js (client/)
