@@ -202,7 +202,7 @@ Max board from full roster: **49** (`SC-max`). Public walkthroughs for open prob
 
 ## Client examples
 
-Open problems (1–6) ingested from team dashboard extracts (18 Sep 2026): see [scenarios/](scenarios/README.md). Remaining problems (`PR-07`…`PR-18`) still await examples when they open.
+Open problems (1–6) ingested from team dashboard extracts (18 Sep 2026): see [scenarios/](scenarios/README.md). Those JSON answers are **leaderboard fixtures**; Run All and the jury pass use private cases. Remaining problems (`PR-07`…`PR-18`) still await examples when they open.
 
 ## Related docs
 

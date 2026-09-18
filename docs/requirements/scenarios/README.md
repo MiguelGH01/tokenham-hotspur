@@ -14,7 +14,9 @@ Pages:
 - https://hackspain.getprosperapp.com/leaderboard/problems/when_exactly
 - https://hackspain.getprosperapp.com/leaderboard/problems/the_rules
 
-**26 public cases** documented here (12 + 14). Slot times in booking cases are the extract’s anchor; official docs say public “earliest” answers re-anchor to **09:00 Europe/Madrid on the dial day** — treat ids and constraints as stable, slots as “earliest matching that day”. Relative-date cases in `when_exactly` confirm calendar days that assume connect on **Friday 18 September 2026**.
+**26 public cases** documented here (12 + 14). These are **practice fixtures for the leaderboard**, not an exhaustive list. Run All / the final pass will use private cases. Implement the general rule (catalogue, connect clock, `blocked[]`); treat the JSON below as a regression check.
+
+Slot times in booking cases are the extract’s anchor; official docs say public “earliest” answers re-anchor to **09:00 Europe/Madrid on the dial day**. Relative-date cases in `when_exactly` confirm calendar days that assume connect on **Friday 18 September 2026** — another dial day must recompute, not reuse those timestamps.
 
 | File | Problem | Cases |
 |---|---|---|

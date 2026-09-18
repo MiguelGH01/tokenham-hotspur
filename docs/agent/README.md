@@ -11,3 +11,5 @@ Process map and Pipecat Flows graph for the Clínica Arenal receptionist. Requir
 **Contract:** the LLM talks and extracts; **code** owns directory match, dates, nearest site, appointment type, leave/site fallbacks, `blocked` → `reason`, and every `POST /submit/*`. The model never authors `patient_id`, `slot`, or `reason`.
 
 This YAML is the intended graph. It is **not** loaded by `server/bot.py` yet. Handlers named here are the Python module to implement next.
+
+When wiring [add-pr04-06.md](add-pr04-06.md): public cases are tests. The bot must still behave if the caller, date phrase, or plan×specialty pair is one we have not seen — drive decisions from the clinic bundle and `/availability`, not from copied answer JSON.
