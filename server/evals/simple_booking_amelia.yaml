@@ -1,0 +1,25 @@
+# PR-01 case simple_booking-12dc84a98cb2 — Amelia Hughes White (DNI, never seen, GP at Arenal Centro)
+# Expected BOOK: P00012 / PR07 / centro / first_visit / 2026-09-21T11:45:00+02:00 / sanitas
+name: simple_booking_amelia
+turns:
+  - user: "Hello, I need an appointment. I'm Amelia Hughes White, DNI 13309713G."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+  - user: "A GP, the earliest you have, but it has to be at Arenal Centro."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: centro }
+      - event: response
+  - user: "Perfect, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

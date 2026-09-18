@@ -1,280 +1,266 @@
-#
-# Copyright (c) 2024-2026, Daily
-#
-# SPDX-License-Identifier: BSD 2-Clause License
-#
+"""Pipecat Flows graph for PR-01 Simple Booking.
 
-"""Food-ordering flow in Python so tool inputs can be restricted at runtime.
-
-Each order tool is advertised as a FlowsFunctionSchema whose JSON-schema
-``enum`` is built from ``flow_manager.state`` (see ``menu.current_menu``).
-The same handler also rejects values that are not on that list — the schema
-guides the LLM; the handler is the actual gate.
+Identify -> Consultar hueco -> Confirmar -> Despedida. The LLM only maps language to
+enum values and reads summaries back; ids, dates and the submission never reach it.
+Schemas restrict what the model can pass; handlers re-validate (schema guides, handler gates).
 """
 
-from datetime import datetime, timedelta
-from typing import TypedDict
+from datetime import datetime
 
 from loguru import logger
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 
+from booking import MADRID, WEEKDAYS, pick_offer, search_window
+from clinic_catalog import location_ids, location_name, specialty_ids
+from national_id import is_valid_national_id, normalize_national_id
 
-class PizzaOrderResult(TypedDict):
-    size: str
-    type: str
-    price: float
+MAX_IDENTIFY_ATTEMPTS = 3
+GREETING = "Clínica Arenal, how can I help you?"
+
+ROLE_MESSAGE = (
+    "You are the receptionist for Clínica Arenal, on the phone. Your responses will be "
+    "spoken aloud, so avoid emojis, bullet points, or other formatting that cannot be "
+    "spoken. Keep replies to one or two short sentences. Answer in the caller's language. "
+    "Never invent a slot, doctor, site, or rule: use only what the tools return. Never read "
+    "out anyone's national id or phone number. Always use the available functions to move "
+    "the conversation forward."
+)
 
 
-class SushiOrderResult(TypedDict):
-    count: int
-    type: str
-    price: float
+def _phone_digits(value: str) -> str:
+    return "".join(ch for ch in value if ch.isdigit())[-9:]
 
 
-class DeliveryEstimateResult(TypedDict):
-    time: str
+# --- actions -------------------------------------------------------------------
 
 
-async def check_kitchen_status(action: dict, flow_manager: FlowManager) -> None:
-    """Check if kitchen is open and log status."""
-    logger.info(
-        "Kitchen status pizza={} sushi={}",
-        flow_manager.state.get("pizza_available"),
-        flow_manager.state.get("sushi_available"),
+async def flush_submission(action: dict, flow_manager: FlowManager) -> None:
+    await flow_manager.state["submission"].flush()
+
+
+# --- tools ---------------------------------------------------------------------
+
+
+async def search_patient(args: FlowArgs, flow_manager: FlowManager):
+    state = flow_manager.state
+    id_type, id_value, stated_name = args["id_type"], args["id_value"], args["stated_name"]
+
+    def failed(status: str):
+        state["identify_attempts"] += 1
+        if state["identify_attempts"] >= MAX_IDENTIFY_ATTEMPTS:
+            return {"status": status, "attempts_left": 0}, create_giveup_node()
+        return {"status": status, "attempts_left": MAX_IDENTIFY_ATTEMPTS - state["identify_attempts"]}, None
+
+    if id_type == "national_id":
+        if not is_valid_national_id(id_value):
+            return failed("misheard_id")
+        wanted = normalize_national_id(id_value)
+        query = {"name": stated_name, "national_id": wanted}
+        exact = lambda m: normalize_national_id(m["national_id"]) == wanted  # noqa: E731
+    else:
+        wanted = _phone_digits(id_value)
+        query = {"name": stated_name, "phone": wanted}
+        exact = lambda m: _phone_digits(m["phone"]) == wanted  # noqa: E731
+
+    try:
+        matches = [m for m in await state["client"].search_directory(**query) if exact(m)]
+    except Exception as exc:
+        logger.error("directory lookup failed: {}", exc)
+        return {"status": "lookup_failed"}, None
+
+    if len(matches) != 1:
+        return failed("not_found")
+
+    patient = matches[0]
+    state["patient"] = patient
+    visited = "a returning patient" if patient["has_visited_before"] else "a first-time patient"
+    summary = f"Found {patient['given_name']} {patient['first_surname']}, {visited}."
+    return {"status": "found", "patient_summary": summary}, create_slot_node(flow_manager)
+
+
+async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
+    state = flow_manager.state
+    specialty, site = args["specialty"], args.get("site")
+    weekday, part_of_day = args.get("weekday"), args.get("part_of_day")
+    if specialty not in specialty_ids() or (site and site not in location_ids()):
+        return {"status": "invalid", "specialties": specialty_ids(), "sites": location_ids()}, None
+
+    connected_at: datetime = state["connected_at"]
+    date_from, date_to = search_window(connected_at)
+    try:
+        availability = await state["client"].availability(
+            date_from, date_to, specialty, state["patient"]["patient_id"], location_id=site
+        )
+    except Exception as exc:
+        logger.error("availability lookup failed: {}", exc)
+        return {"status": "lookup_failed"}, None
+
+    offer = pick_offer(availability, state["patient"], connected_at, weekday, part_of_day)
+    if offer is None:
+        return {"status": "no_slots"}, None
+
+    slot = next(s for s in availability["slots"] if s["provider_id"] == offer["provider_id"]
+                and datetime.fromisoformat(s["start_time"]).astimezone(MADRID).isoformat() == offer["slot"])
+    start = datetime.fromisoformat(offer["slot"])
+    offer_id = f"offer-{len(state['offers']) + 1}"
+    state["offers"][offer_id] = offer
+    summary = (
+        f"{slot['provider_name']} at {location_name(offer['location_id'])}, "
+        f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
+    logger.info("Offer {}: {}", offer_id, offer)
+    return {"status": "offer", "offer_id": offer_id, "summary": summary}, create_confirm_node(flow_manager)
 
 
-async def choose_pizza(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-    """The caller wants to order pizza."""
-    return None, create_pizza_node(flow_manager)
+async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
+    offer = flow_manager.state["offers"].get(args["offer_id"])
+    if offer is None:
+        return {"status": "expired"}, None
+    flow_manager.state["submission"].set_book(offer)
+    return {"status": "confirmed"}, create_goodbye_node()
 
 
-async def choose_sushi(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-    """The caller wants to order sushi."""
-    return None, create_sushi_node(flow_manager)
+async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
+    """The caller wants a different specialty, site, day or time."""
+    return None, create_slot_node(flow_manager)
 
 
-async def select_pizza_order(args: FlowArgs, flow_manager: FlowManager):
-    """Record the pizza order if size and type are currently available."""
-    allowed_sizes = flow_manager.state.get("available_pizza_sizes", [])
-    allowed_types = flow_manager.state.get("available_pizza_types", [])
-    size = args.get("size")
-    pizza_type = args.get("pizza_type")
-
-    if size not in allowed_sizes or pizza_type not in allowed_types:
-        return {
-            "status": "invalid",
-            "allowed_sizes": allowed_sizes,
-            "allowed_types": allowed_types,
-        }, None
-
-    price = {"small": 10.00, "medium": 15.00, "large": 20.00}[size]
-    flow_manager.state["order"] = {
-        "type": "pizza",
-        "size": size,
-        "pizza_type": pizza_type,
-        "price": price,
-    }
-    return PizzaOrderResult(size=size, type=pizza_type, price=price), create_confirmation_node()
+# --- schemas (built per call so enums reflect real state) --------------------------
 
 
-async def select_sushi_order(args: FlowArgs, flow_manager: FlowManager):
-    """Record the sushi order if count and roll type are currently available."""
-    allowed_rolls = flow_manager.state.get("available_roll_types", [])
-    count = args.get("count")
-    roll_type = args.get("roll_type")
-
-    if not isinstance(count, int) or count < 1 or count > 10 or roll_type not in allowed_rolls:
-        return {
-            "status": "invalid",
-            "allowed_roll_types": allowed_rolls,
-            "count_range": [1, 10],
-        }, None
-
-    price = count * 8.00
-    flow_manager.state["order"] = {
-        "type": "sushi",
-        "count": count,
-        "roll_type": roll_type,
-        "price": price,
-    }
-    return SushiOrderResult(count=count, type=roll_type, price=price), create_confirmation_node()
-
-
-async def complete_order(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-    """The caller confirms the order is correct."""
-    return None, create_end_node()
-
-
-async def revise_order(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
-    """The caller wants to make changes to their order."""
-    return None, create_initial_node(flow_manager)
-
-
-async def get_delivery_estimate(flow_manager: FlowManager):
-    """Provide delivery estimate information."""
-    delivery_time = datetime.now() + timedelta(minutes=30)
-    return DeliveryEstimateResult(time=f"{delivery_time}"), None
-
-
-def _select_pizza_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
-    allowed_sizes = flow_manager.state.get("available_pizza_sizes", [])
-    allowed_types = flow_manager.state.get("available_pizza_types", [])
+def _search_patient_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
-        name="select_pizza_order",
-        description="Record the pizza size and type. Only use currently available values.",
+        name="search_patient",
+        description="Look the patient up in the clinic records by name plus one exact identifier.",
         properties={
-            "size": {
+            "stated_name": {"type": "string", "description": "Patient's full name as the caller said it."},
+            "id_type": {"type": "string", "enum": ["national_id", "phone"]},
+            "id_value": {
                 "type": "string",
-                "enum": allowed_sizes,
-                "description": "Pizza size.",
-            },
-            "pizza_type": {
-                "type": "string",
-                "enum": allowed_types,
-                "description": "Pizza type currently in stock.",
+                "description": "DNI/NIE including the final letter, or the phone number, digits as heard.",
             },
         },
-        required=["size", "pizza_type"],
-        handler=select_pizza_order,
+        required=["stated_name", "id_type", "id_value"],
+        handler=search_patient,
     )
 
 
-def _select_sushi_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
-    allowed_rolls = flow_manager.state.get("available_roll_types", [])
+def _get_earliest_slot_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
-        name="select_sushi_order",
-        description="Record the sushi roll count and type. Only use currently available rolls.",
+        name="get_earliest_slot",
+        description="Find the earliest bookable appointment for the identified patient.",
         properties={
-            "count": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 10,
-                "description": "Number of rolls, from 1 to 10.",
-            },
-            "roll_type": {
+            "specialty": {"type": "string", "enum": specialty_ids()},
+            "site": {"type": "string", "enum": location_ids(), "description": "Only if the caller asked for a site."},
+            "weekday": {"type": "string", "enum": WEEKDAYS, "description": "Only if the caller asked for a weekday."},
+            "part_of_day": {
                 "type": "string",
-                "enum": allowed_rolls,
-                "description": "Sushi roll type currently in stock.",
+                "enum": ["morning", "afternoon"],
+                "description": "Only if the caller asked for morning (before 2pm) or afternoon.",
             },
         },
-        required=["count", "roll_type"],
-        handler=select_sushi_order,
+        required=["specialty"],
+        handler=get_earliest_slot,
     )
 
 
-def create_initial_node(flow_manager: FlowManager) -> NodeConfig:
-    """Create the initial node; only advertise food types the kitchen can make."""
-    functions = []
-    if flow_manager.state.get("pizza_available"):
-        functions.append(choose_pizza)
-    if flow_manager.state.get("sushi_available"):
-        functions.append(choose_sushi)
+def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
+    return FlowsFunctionSchema(
+        name="confirm_offer",
+        description="The caller accepted the offered appointment.",
+        properties={"offer_id": {"type": "string", "enum": list(flow_manager.state["offers"])}},
+        required=["offer_id"],
+        handler=confirm_offer,
+    )
 
-    options = []
-    if flow_manager.state.get("pizza_available"):
-        options.append("pizza")
-    if flow_manager.state.get("sushi_available"):
-        options.append("sushi")
-    choice = " or ".join(options) if options else "nothing — the kitchen is closed"
 
+# --- nodes ---------------------------------------------------------------------
+
+
+def create_identify_node() -> NodeConfig:
     return NodeConfig(
-        name="initial",
-        role_message=(
-            "You are an order-taking assistant for {{ restaurant_name }}. You must "
-            "ALWAYS use the available functions to progress the conversation. This is "
-            "a phone conversation and your responses will be converted to audio. Keep "
-            "the conversation friendly, casual, and polite. Keep every reply to one "
-            "or two short sentences. Only give a delivery time that came from "
-            "get_delivery_estimate. Avoid outputting special characters and emojis."
-        ),
+        name="identify",
+        role_message=ROLE_MESSAGE,
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    f"Greet the caller briefly and ask whether they'd like {choice}, "
-                    "then wait for them to use a function to choose. Do not offer an "
-                    "item that has no matching function."
+                    "Establish the patient's full name and ONE exact identifier: their DNI or NIE "
+                    "including the letter, or their phone number. Ask for whatever is missing, one "
+                    "short question at a time, then call search_patient. Never search by name "
+                    "alone. If the result is misheard_id or not_found, say you could not find them "
+                    "and ask them to repeat the identifier slowly, digit by digit."
                 ),
             }
         ],
-        pre_actions=[{"type": "function", "handler": check_kitchen_status}],
-        functions=functions,
+        pre_actions=[{"type": "tts_say", "text": GREETING}],
+        respond_immediately=False,
+        functions=[_search_patient_schema()],
     )
 
 
-def create_pizza_node(flow_manager: FlowManager) -> NodeConfig:
-    allowed = ", ".join(flow_manager.state.get("available_pizza_types", []))
+def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
+    patient = flow_manager.state["patient"]
     return NodeConfig(
-        name="choose_pizza",
+        name="find_slot",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    "Your only job on this step is to get the pizza's size and type and "
-                    "call select_pizza_order with them. If the caller has already given "
-                    "both, call it immediately; if one is missing, ask for it in one "
-                    "short sentence. Available types: "
-                    f"{allowed}. If they ask for something not on that list, say it is "
-                    "not available and offer those types. Don't quote a price or say "
-                    "the order is in.\n\n"
-                    "Pricing, for questions only:\n- Small: $10\n- Medium: $15\n- Large: $20"
+                    f"The patient is {patient['given_name']} {patient['first_surname']}. Find out "
+                    "which specialty they need, mapping their words to one of the allowed values. "
+                    "Only pass site, weekday or part_of_day if the caller asked for them. Then call "
+                    "get_earliest_slot. If it returns no_slots, say nothing is available for that "
+                    "request and ask whether they would drop a constraint. If lookup_failed, "
+                    "apologise and ask them to call back shortly."
                 ),
             }
         ],
-        functions=[_select_pizza_schema(flow_manager)],
+        functions=[_get_earliest_slot_schema()],
     )
 
 
-def create_sushi_node(flow_manager: FlowManager) -> NodeConfig:
-    allowed = ", ".join(flow_manager.state.get("available_roll_types", []))
-    return NodeConfig(
-        name="choose_sushi",
-        task_messages=[
-            {
-                "role": "developer",
-                "content": (
-                    "Your only job on this step is to get the roll count and type and "
-                    "call select_sushi_order with them. If the caller has already given "
-                    "both, call it immediately; if one is missing, ask for it in one "
-                    "short sentence. Available rolls: "
-                    f"{allowed}. If they ask for something not on that list, say it is "
-                    "not available and offer those rolls. Don't quote a price or say "
-                    "the order is in.\n\n"
-                    "Pricing, for questions only:\n- $8 per roll"
-                ),
-            }
-        ],
-        functions=[_select_sushi_schema(flow_manager)],
-    )
-
-
-def create_confirmation_node() -> NodeConfig:
+def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
     return NodeConfig(
         name="confirm",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    'Say the order back once with the total and ask if that\'s right, for '
-                    'example "So that\'s one large pepperoni, twenty dollars. Sound good?" '
-                    "Nothing is ordered until the caller confirms. Use complete_order when "
-                    "they confirm, or revise_order if they want to change something."
+                    "Offer the appointment from the summary the tool returned: doctor, site, day "
+                    "and time. Ask if that works. Nothing is booked until they say yes. On yes, "
+                    "call confirm_offer. If they want something different, call revise_search."
                 ),
             }
         ],
-        functions=[complete_order, revise_order],
+        functions=[_confirm_offer_schema(flow_manager), revise_search],
     )
 
 
-def create_end_node() -> NodeConfig:
+def create_goodbye_node() -> NodeConfig:
     return NodeConfig(
-        name="end",
+        name="goodbye",
         task_messages=[
             {
                 "role": "developer",
-                "content": "Thank the caller for the order and say goodbye, in one or two sentences.",
+                "content": "Confirm the appointment is booked and say goodbye, in one short sentence.",
             }
         ],
-        post_actions=[{"type": "end_conversation"}],
+        post_actions=[{"type": "function", "handler": flush_submission}, {"type": "end_conversation"}],
+    )
+
+
+def create_giveup_node() -> NodeConfig:
+    return NodeConfig(
+        name="giveup",
+        task_messages=[
+            {
+                "role": "developer",
+                "content": (
+                    "Apologise that you could not find them in the clinic records, suggest they "
+                    "call back with their document at hand, and say goodbye. One or two sentences."
+                ),
+            }
+        ],
+        post_actions=[{"type": "function", "handler": flush_submission}, {"type": "end_conversation"}],
     )

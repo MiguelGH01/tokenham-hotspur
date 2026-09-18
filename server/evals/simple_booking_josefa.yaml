@@ -1,0 +1,27 @@
+# PR-01 case simple_booking-14a8720daa02 — Josefa Domínguez Navarro (DNI, returning, GP, earliest)
+# Expected BOOK: P00001 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / mapfre
+# The exact offer is logged by the bot as "Offer offer-1: {...}" — grep the bot log after the run.
+name: simple_booking_josefa
+turns:
+  - user: "Hi, I'd like to book an appointment. My name is Josefa Domínguez Navarro and my DNI is 48064716Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+  - user: "With a general practitioner, as soon as possible."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice }
+      - event: response
+        text_contains: Ortiz
+  - user: "Yes, that works for me."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

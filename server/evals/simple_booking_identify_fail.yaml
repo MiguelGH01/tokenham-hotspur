@@ -1,0 +1,23 @@
+# Three failed identifications -> bot gives up and closes; pending stays NO_ACTION(patient_not_found).
+# 12345678A has a wrong check letter, so every attempt is rejected locally (misheard_id).
+name: simple_booking_identify_fail
+turns:
+  - user: "Hello, I'm Josefa Domínguez Navarro, my DNI is 12345678A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+  - user: "It is 1 2 3 4 5 6 7 8 A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+  - user: "I'm sure, 12345678A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+        eval: "the bot apologises that it cannot find the caller and ends the call without booking anything"

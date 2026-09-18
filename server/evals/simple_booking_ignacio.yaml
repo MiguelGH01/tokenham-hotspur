@@ -1,0 +1,26 @@
+# PR-01 case simple_booking-3371b9ac9462 — Ignacio Vázquez Moreno (phone, returning, orthopaedics)
+# Expected BOOK: P00005 / PR10 / sur / orthopaedic_review / 2026-09-21T09:30:00+02:00 / cigna
+name: simple_booking_ignacio
+turns:
+  - user: "Good morning, this is Ignacio Vázquez Moreno. I don't have my ID on me, but my phone number is 731 169 716."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: phone }
+      - event: response
+  - user: "I need to see the orthopaedic doctor, the first slot you have."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: orthopaedics }
+      - event: response
+        text_contains: Peral
+  - user: "Yes please."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response
