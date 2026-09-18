@@ -1,0 +1,30 @@
+---
+description: Look up or confirm a Prosper/HackSpain track rule, API behavior, reason code, or problem spec when it's unclear or you're not fully confident in what you know. Use before guessing at anything scoring-affecting.
+alwaysApply: false
+---
+
+# Consult Prosper docs before guessing
+
+When a Prosper track rule, API field behavior, `reason` code, appointment
+type, or problem's answer shape is unclear, follow
+`docs/prosper-docs-navigation.md` ("When something is unclear, consult
+before guessing"):
+
+1. Read `docs/prosper-track-reference.md` first — it's the local snapshot,
+   no network needed, and covers most of what's been gathered.
+2. If that doesn't resolve it, or the detail is one that changes during the
+   event (a problem's `open` status, its weight, the Scoring page's version
+   string), fetch the live page directly. The docs site
+   (`https://hackspain.getprosperapp.com/leaderboard/docs`) is a
+   client-side JS SPA — a plain HTTP fetch returns nothing but the word
+   "Prosper". Use whatever browser-rendering tool is available (an MCP
+   browser/devtools tool if one is configured, or ask the person running
+   this session to check the page) and navigate to the specific path from
+   the page map in `docs/prosper-docs-navigation.md`.
+3. If the live page disagrees with the snapshot, trust the live page and
+   patch the specific fact into `docs/prosper-track-reference.md` so the
+   next lookup is fast and correct.
+
+Say which page confirmed the answer when reporting back. This rule mirrors
+Claude Code's `consult-prosper-docs` skill in this repo — same procedure,
+different harness.

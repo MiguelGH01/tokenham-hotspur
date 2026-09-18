@@ -19,10 +19,13 @@ Run the bot using::
 
     uv run bot.py
 """
+from dotenv import load_dotenv
 
 import os
 
+import uvicorn
 from dotenv import load_dotenv
+from fastapi import FastAPI, WebSocket
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import LLMRunFrame
@@ -41,6 +44,16 @@ from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.workers.runner import WorkerRunner
+
+
+from server_utils import (
+    DialoutResponse,
+    dialout_request_from_request,
+    generate_twiml,
+    make_twilio_call,
+    parse_twiml_request,
+)
+
 
 load_dotenv(override=True)
 
@@ -147,6 +160,57 @@ async def bot(runner_args: RunnerArguments):
 
     await run_bot(transport, runner_args)
 
+
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""server.py
+
+Webhook server to handle outbound call requests, initiate calls via Twilio API,
+and handle subsequent WebSocket connections for Media Streams.
+"""
+
+
+load_dotenv(override=True)
+
+
+app = FastAPI()
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """Handle WebSocket connection from Twilio Media Streams.
+
+    This endpoint receives the WebSocket connection from Twilio's Media Streams
+    and runs the bot to handle the voice conversation. Stream parameters passed
+    from TwiML are available to the bot for customization.
+
+    Args:
+        websocket (WebSocket): FastAPI WebSocket connection from Twilio.
+    """
+    from pipecat.runner.types import WebSocketRunnerArguments
+
+    from bot import bot
+
+    await websocket.accept()
+    logger.info("WebSocket connection accepted for outbound call")
+
+    try:
+        runner_args = WebSocketRunnerArguments(websocket=websocket)
+        await bot(runner_args)
+    except Exception as e:
+        logger.error(f"Error in WebSocket endpoint: {e}")
+        await websocket.close()
+
+
+if __name__ == "__main__":
+    # Run the server
+    port = int(os.getenv("PORT", "7860"))
+    logger.info(f"Starting Twilio outbound chatbot server on port {port}")
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
     from pipecat.runner.run import main

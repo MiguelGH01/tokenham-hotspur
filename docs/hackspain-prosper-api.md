@@ -2,6 +2,8 @@
 
 Referencia de trabajo sacada de `openapi.json` (versión 0.1.0). Los nombres de campos son literales. Lo marcado como "por confirmar" necesita una respuesta real con nuestra clave.
 
+Para reglas de negocio, scoring y los 18 problemas ver `docs/prosper-track-reference.md` (sacado de la web de docs, no del schema). Esta hoja es la referencia de campos; esa es la de reglas. Discrepancia conocida: la web dice que las coordenadas de sede para el problema 15 están en `/availability`, pero ese schema no las trae — están en `/locations` (ver más abajo).
+
 ## Generalidades
 
 - Base: la URL que da la organización en el registro. Todas las rutas cuelgan de `/api/v1`.
@@ -75,7 +77,7 @@ Respuesta:
 
 Lectura: `slots` vacío con `blocked` vacío es agenda llena. `slots` vacío con `blocked` relleno es una regla. La respuesta lista también huecos de hoy, que nunca valen: el filtro desde mañana es nuestro.
 
-Por confirmar: que el texto de `restriction` sea literalmente el valor de `reason` (la documentación dice que se corresponden uno a uno).
+Por confirmar → confirmado por la web de docs (página Scoring/contract): los primeros once valores de `reason` "mirror the clinic's own restrictions one-for-one" — se corresponden uno a uno con `restriction`. Sigue sin confirmar el formato exacto de `referrals` en `/directory` (¿ids de especialidad?).
 
 ## 2. Catálogo
 
