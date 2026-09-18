@@ -356,3 +356,17 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   `pipecat eval suite` (bot nuevo por run), no `eval run` en bucle.
 - 2026-09-19 — El temporizador de 150s arranca ahora al empezar el flujo (no al arrancar
   el proceso).
+- 2026-09-19 — CAUSA RAÍZ de los evals inestables: **429 de Gemini, clave en free tier**
+  (límite 20 requests para `gemini-3.6-flash`). Todos los runs fallidos tienen el 429 en
+  el log del bot; los que pasan no. Las dos hipótesis anteriores (filtro de turnos
+  incompletos; Gemini respondiendo texto en vez de tool) quedan REFUTADAS — A/B con bot
+  fresco: filtro ON 1/3, filtro OFF 0/3, todos los fallos con 429. El filtro se deja
+  como estaba (ON).
+- 2026-09-19 — Verificado con bot fresco y reloj al 18-09: josefa y chloe producen
+  exactamente el JSON aceptado. `clinic.json` comparado con `GET /v1/clinic` en vivo:
+  idénticos.
+- 2026-09-19 — Decisión de Adolfo: LLM pasa a Helmcode (gateway compatible con OpenAI,
+  `https://api.helmcode.com/v1`, modelo `deepseek-v4-flash`: tool calling + streaming,
+  100 rpm, 5 requests concurrentes por clave). Proveedor `helmcode` añadido a
+  `build_llm()` vía `OpenAILLMService(base_url=...)` y puesto por defecto; `gemini` y
+  `openai` siguen disponibles con `LLM_PROVIDER`.

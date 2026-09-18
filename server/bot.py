@@ -31,6 +31,7 @@ from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.google.llm import GoogleLLMService
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
@@ -95,7 +96,13 @@ def _connected_at() -> datetime:
 
 
 def build_llm():
-    provider = os.getenv("LLM_PROVIDER", "gemini")
+    provider = os.getenv("LLM_PROVIDER", "helmcode")
+    if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
+        return OpenAILLMService(
+            api_key=os.environ["HELMCODE_API_KEY"],
+            base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
+            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+        )
     if provider == "gemini":
         return GoogleLLMService(
             api_key=os.environ.get("GEMINI_API_KEY") or os.environ["GOOGLE_API_KEY"],
@@ -123,7 +130,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
-            filter_incomplete_user_turns=False,
+            filter_incomplete_user_turns=True,
             user_turn_strategies=UserTurnStrategies(
                 stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
             ),
