@@ -7,7 +7,8 @@
 """pipecat-quickstart - Pipecat Voice Agent
 
 This bot uses a cascade pipeline: Speech-to-Text → LLM → Text-to-Speech,
-with a Pipecat Flows YAML graph for the conversation stages.
+with a Pipecat Flows Python graph so tool argument enums can be built from
+runtime menu availability.
 
 Required AI services:
 - Deepgram (Speech-to-Text)
@@ -20,14 +21,14 @@ Run the bot using::
 """
 
 import os
-from pathlib import Path
 
-import handlers
 from dotenv import load_dotenv
+from handlers import create_initial_node, get_delivery_estimate
 from loguru import logger
+from menu import current_menu
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.flows import Flow, FlowConfig, FlowManager
+from pipecat.flows import FlowManager
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -48,8 +49,6 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 load_dotenv(override=True)
-
-FLOW_CONFIG_PATH = Path(__file__).with_name("flow.yaml")
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -126,25 +125,25 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     await runner.add_workers(worker)
 
-    config = FlowConfig.from_file(FLOW_CONFIG_PATH)
-    flow = Flow(config, handlers=handlers)
-
     flow_manager = FlowManager(
         worker=worker,
         llm=llm,
         context_aggregator=context_aggregator,
         transport=transport,
-        global_functions=flow.global_functions,
+        global_functions=[get_delivery_estimate],
     )
 
     flow_manager.state.update(
-        {"restaurant_name": os.getenv("RESTAURANT_NAME", "Pipecat Pizza and Sushi")}
+        {
+            "restaurant_name": os.getenv("RESTAURANT_NAME", "Pipecat Pizza and Sushi"),
+            **current_menu(),
+        }
     )
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected")
-        await flow_manager.initialize(flow.initial_node)
+        await flow_manager.initialize(create_initial_node(flow_manager))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
