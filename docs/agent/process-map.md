@@ -173,9 +173,11 @@ Happy path is always A → B → C → D. Each problem is one extra branch, not 
 
 ## Flexibility vs the pen
 
-**Allowed:** wording, question order, empathy, reading the note, offering two **real** slots (“Ortiz Thursday or Sáez tomorrow”).
+Public cases (and the names in [add-pr04-06.md](add-pr04-06.md)) are **leaderboard fixtures**. Private cases and the jury pass will use people and wordings we have not seen. Extra branches are **engines** (identity, date, catalogue policy), not a switch on `case_id`.
 
-**Forbidden:** inventing a slot, booking a fuzzy namesake, swapping `review` for `orthopaedic_review`, booking the caller instead of the child, booking GP for a child, booking Sunday/Fiesta, leaking a nid/phone, empty submit.
+**Allowed:** wording, question order, empathy, reading the note, offering two **real** slots; any relative date the clock+hours+closures can resolve; any plan×specialty×site the catalogue encodes.
+
+**Forbidden:** inventing a slot or `patient_id`; booking a fuzzy namesake; hard-coding a public `patient_id` / slot as the answer; swapping `review` for a specialty type; booking the caller instead of the patient; leaking a nid/phone; empty submit.
 
 ---
 
