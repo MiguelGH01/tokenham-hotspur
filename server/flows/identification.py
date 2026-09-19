@@ -141,30 +141,11 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
             ),
         }, None
 
+    if not matches:
+        # Zero exact hits: speak a clarification, then register if they confirm.
+        # Jumping straight to registration with nothing to say is the silence cut.
+        return _clarify_not_on_file(state, flow_manager, stated_name, id_type, wanted)
     if len(matches) != 1:
-        # A valid identifier that matches nobody is a new patient (PR-04), not a
-        # third try then give-up. Name-only homonyms never reach here: the
-        # exact nid/phone filter already dropped them.
-        from flows.registration import create_registration_node
-
-        known_id = id_type == "national_id" and is_valid_national_id(id_value)
-        known_phone = id_type == "phone" and len(wanted) == 9
-        if known_id or known_phone:
-            state["intent"] = "register"
-            state["registration_seed"] = {
-                "stated_name": stated_name,
-                "national_id": wanted if known_id else "",
-                "phone": wanted if known_phone else "",
-            }
-            return {
-                "status": "not_on_file",
-                "instruction": (
-                    "This person is not in the clinic records. Register them now. "
-                    "Do not book anyone with a similar name. Do not ask for the "
-                    "identifier again. Collect any missing demographics in as few "
-                    "turns as possible and call prepare_registration. Do not book."
-                ),
-            }, create_registration_node(flow_manager)
         return failed("not_found")
 
     patient = matches[0]
@@ -189,6 +170,53 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
             "Go straight to finding the appointment."
         ),
     }, create_slot_node(flow_manager)
+
+
+def _clarify_not_on_file(state, flow_manager, stated_name, id_type, wanted):
+    state["registration_seed"] = {
+        "stated_name": stated_name or "",
+        "national_id": wanted if id_type == "national_id" else "",
+        "phone": wanted if id_type == "phone" else "",
+    }
+    return {
+        "status": "not_on_file",
+        "instruction": (
+            "Speak now. There is no matching record. Ask whether they are new, or "
+            "whether the name or identifier should be tried again. Then stop. "
+            "Do not call start_registration in this turn. Do not book a similar name."
+        ),
+    }, create_not_on_file_node(flow_manager)
+
+
+def create_not_on_file_node(flow_manager=None):
+    from flows.reception import start_registration_schema
+
+    seed = {}
+    if flow_manager is not None:
+        seed = flow_manager.state.get("registration_seed") or {}
+    bits = ", ".join(f"{k}={v}" for k, v in seed.items() if v)
+    looked = bits or "those details"
+    return NodeConfig(
+        name="not_on_file",
+        respond_immediately=True,
+        task_messages=[
+            {
+                "role": "developer",
+                "content": (
+                    f"Speak in this turn. No clinic record matches {looked}. "
+                    "In one short sentence say you could not find them and ask if they "
+                    "are a new patient, or if the name or identifier should be tried "
+                    "again. Then stop talking. Do not stay silent. Do not read the "
+                    "identifier back. Do not book anyone with a similar name. "
+                    "Do not call start_registration until they have answered. "
+                    "When they confirm they are new, call start_registration. "
+                    "When they correct the name or identifier, call search_patient "
+                    "with the correction."
+                ),
+            }
+        ],
+        functions=[_search_patient_schema(), start_registration_schema()],
+    )
 
 
 def _search_patient_schema() -> FlowsFunctionSchema:
@@ -257,11 +285,14 @@ def create_identify_node(flow_manager=None) -> NodeConfig:
                     f"{already} "
                     "The moment you hold the full name plus one complete identifier, call "
                     "search_patient immediately. Never search by name alone. If the caller says "
-                    "they are new, call start_registration. If the result is misheard_id or "
-                    "not_found, say you could not find them and ask them to repeat the identifier "
-                    "slowly, digit by digit. A lookup_failed result is a fault in the clinic's "
-                    "records: apologise for the delay and call search_patient again with the same "
-                    "details. When they repeat or correct the identifier, call search_patient again."
+                    "they are new, call start_registration. If search_patient returns not_on_file, "
+                    "the next node asks whether they are new: speak that question, wait, then "
+                    "start_registration after they confirm. Do not stay silent and do not book a "
+                    "similar name. If the result is "
+                    "misheard_id, ask them to repeat the identifier slowly, digit by digit. A "
+                    "lookup_failed result is a fault in the clinic's records: apologise for the "
+                    "delay and call search_patient again with the same details. When they repeat "
+                    "or correct the identifier, call search_patient again."
                 ),
             }
         ],

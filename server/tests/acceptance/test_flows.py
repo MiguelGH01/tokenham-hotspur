@@ -603,9 +603,43 @@ def test_a_valid_id_with_no_directory_row_starts_registration():
         )
     )
     assert result["status"] == "not_on_file"
-    assert node["name"] == "registration"
-    assert manager.state["intent"] == "register"
-    assert "Do not book" in result["instruction"]
+    assert node["name"] == "not_on_file"
+    assert {fn.name for fn in node["functions"]} >= {"start_registration", "search_patient"}
+    assert manager.state["registration_seed"]["national_id"] == "12345678Z"
+    assert "Do not call start_registration in this turn" in result["instruction"]
+
+
+def test_an_empty_directory_result_starts_registration():
+    """Any completed lookup with zero exact rows goes to register, not give-up."""
+    from flows.identification import search_patient
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            return []
+
+    manager = SimpleNamespace(
+        state={
+            "identify_attempts": 0,
+            "intent": "book",
+            "client": Client(),
+            "submission": CallSubmission("x", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(
+        search_patient(
+            {
+                "stated_name": "Joaquin Gonzalez Ortega",
+                "id_type": "phone",
+                "id_value": "783869132",
+            },
+            manager,
+        )
+    )
+    assert result["status"] == "not_on_file"
+    assert node["name"] == "not_on_file"
+    assert node["respond_immediately"] is True
 
 
 def test_spoken_identity_and_booking_cues_reuse_what_was_said():

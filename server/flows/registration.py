@@ -153,11 +153,13 @@ def create_registration_node(flow_manager=None):
         )
     return NodeConfig(
         name="registration",
+        respond_immediately=True,
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    "Register a new patient only. Collect given name, both surnames, DNI/NIE, "
+                    "Speak in this turn. They are not on file; register them now. Do not stay "
+                    "silent after the lookup. Collect given name, both surnames, DNI/NIE, "
                     "full birth date with four-digit year, phone, email and insurer. "
                     f"{already}"
                     "If they already said several fields in one turn, do not re-ask them one by "
