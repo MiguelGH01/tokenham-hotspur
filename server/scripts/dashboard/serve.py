@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from eval_parser import list_eval_runs, parse_eval_run
@@ -41,6 +41,18 @@ def api_get_eval_run(run_id: str):
 @app.get("/api/real-calls")
 def api_real_calls():
     return parse_real_calls(RUN_LOGS_DIR)
+
+
+@app.get("/api/recordings/{filename}")
+def api_recording(filename: str):
+    # Real patient audio lives here (bot.py's own comment above RECORDINGS_DIR)
+    # -- serve only a bare filename from that exact directory, nothing else.
+    if filename != Path(filename).name:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    path = RUN_LOGS_DIR / "recordings" / filename
+    if not path.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(path, media_type="audio/wav")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

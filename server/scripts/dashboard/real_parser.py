@@ -52,7 +52,8 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
     call_started_at = base_ts.strftime("%Y%m%d-%H%M%S") if base_ts else None
 
     events, errors, warnings = [], [], []
-    last_ctx = None
+    transcript = []
+    seen_ctx_len = 0
 
     for line, m in zip(seg_lines, seg_matched):
         if not m:
@@ -64,9 +65,31 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         ctx_m = CTX_RE.search(line)
         if ctx_m:
             try:
-                last_ctx = ast.literal_eval(ctx_m.group(1))
+                ctx = ast.literal_eval(ctx_m.group(1))
             except Exception:
-                pass
+                ctx = None
+            if ctx is not None:
+                # Each snapshot is the full context so far; only the messages past
+                # what we've already stamped are new, and they entered the
+                # conversation right around this log line's timestamp `t`. A
+                # shorter snapshot than before means the flow reset the context
+                # (a new node) — treat everything in it as new rather than crash.
+                new_slice = ctx[seen_ctx_len:] if len(ctx) >= seen_ctx_len else ctx
+                for raw_msg in new_slice:
+                    if not isinstance(raw_msg, dict):
+                        continue
+                    role = raw_msg.get("role")
+                    entry = {"role": role, "t": t}
+                    if raw_msg.get("content"):
+                        entry["content"] = raw_msg["content"]
+                    if raw_msg.get("tool_calls"):
+                        entry["tool_calls"] = [
+                            {"name": tc.get("function", {}).get("name"),
+                             "arguments": tc.get("function", {}).get("arguments")}
+                            for tc in raw_msg["tool_calls"]
+                        ]
+                    transcript.append(entry)
+                seen_ctx_len = len(ctx)
 
         if CALL_ID_RE.search(msg):
             events.append({"t": t, "kind": "call_start", "detail": msg})
@@ -104,22 +127,6 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         elif level == "WARNING":
             warnings.append({"t": t, "src": src, "msg": msg})
             events.append({"t": t, "kind": "warning", "detail": msg})
-
-    transcript = []
-    if last_ctx:
-        for msg in last_ctx:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role")
-            entry = {"role": role}
-            if msg.get("content"):
-                entry["content"] = msg["content"]
-            if msg.get("tool_calls"):
-                entry["tool_calls"] = [
-                    {"name": tc.get("function", {}).get("name"), "arguments": tc.get("function", {}).get("arguments")}
-                    for tc in msg["tool_calls"]
-                ]
-            transcript.append(entry)
 
     duration = events[-1]["t"] if events else 0.0
     outcome = "IN_PROGRESS"

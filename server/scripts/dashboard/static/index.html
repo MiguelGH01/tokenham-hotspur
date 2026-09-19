@@ -194,6 +194,26 @@
   }
   .refresh-btn:hover{ background:var(--surface-2); }
   .live-dot{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--pass); margin-right:6px; }
+
+  .player{ padding:14px 18px; }
+  .player-controls{ display:flex; align-items:center; gap:12px; margin-bottom:10px; }
+  .play-btn{
+    width:36px; height:36px; border-radius:50%; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text); cursor:pointer; display:flex; align-items:center; justify-content:center; flex:none;
+    font-size:13px; padding:0; line-height:1;
+  }
+  .play-btn:hover{ background:var(--surface-3); }
+  .play-btn:disabled{ opacity:.4; cursor:default; }
+  .player-time{ font-family:var(--mono); font-size:12px; color:var(--text-dim); flex:none; min-width:96px; font-variant-numeric:tabular-nums; }
+  .waveform-wrap{ position:relative; height:88px; border-radius:8px; overflow:hidden; background:var(--surface-2); cursor:pointer; }
+  .waveform-wrap canvas{ display:block; width:100%; height:100%; }
+  .wave-playhead{ position:absolute; top:0; bottom:0; width:2px; background:var(--text); pointer-events:none; left:0%; }
+  .wave-status{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text-faint); font-size:12px; pointer-events:none; }
+
+  .t-badge{ font-family:var(--mono); font-size:10px; color:var(--text-faint); font-weight:400; float:right; }
+  .msg.seekable{ cursor:pointer; }
+  .msg.seekable:hover{ border-color:var(--accent); }
+  .msg.playing{ outline:2px solid var(--accent); }
 </style>
 
 <div class="app">
@@ -371,6 +391,9 @@
         document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b===btn); });
         document.getElementById('tab-evals').classList.toggle('active', state.tab==='evals');
         document.getElementById('tab-real').classList.toggle('active', state.tab==='real');
+        // The waveform may have been decoded while this tab was hidden (display:none
+        // gives the canvas a 0px clientWidth), so redraw it now that it's visible.
+        if (state.tab === 'real') redrawWaveformIfPending();
       };
     });
   }
@@ -669,6 +692,23 @@
     var main = el('main','main');
     main.innerHTML =
       '<div class="panel scenario-header"><h2 id="real-name">—</h2><div class="meta" id="real-meta"></div></div>' +
+      '<div class="panel player" id="real-player" hidden>' +
+      '<h3>Recording</h3>' +
+      '<div class="player-controls">' +
+      '<button class="play-btn" id="real-play-btn">▶</button>' +
+      '<div class="player-time" id="real-player-time">0:00 / 0:00</div>' +
+      '</div>' +
+      '<div class="waveform-wrap" id="real-waveform-wrap">' +
+      '<canvas id="real-waveform-canvas"></canvas>' +
+      '<div class="wave-status" id="real-wave-status">decoding audio…</div>' +
+      '<div class="wave-playhead" id="real-wave-playhead"></div>' +
+      '</div>' +
+      '<div class="legend">' +
+      '<span><i style="background:var(--lane-turn)"></i>caller (left)</span>' +
+      '<span><i style="background:var(--lane-fn)"></i>bot (right)</span>' +
+      '</div>' +
+      '<audio id="real-audio" preload="metadata" style="display:none"></audio>' +
+      '</div>' +
       '<div class="panel timeline-wrap"><h3>Timeline</h3><div class="lanes" id="real-lanes"></div>' +
       '<div class="axis-row" id="real-axis"></div>' +
       '<div class="legend">' +
@@ -740,6 +780,7 @@
     renderRealEventLog(c);
     renderRealTranscript(c);
     renderRealBackend(c);
+    setupPlayer(c);
   }
 
   function renderRealTimeline(c){
@@ -820,17 +861,42 @@
       list.appendChild(el('div','empty','No transcript captured — real-call runs default to LOG_LEVEL=INFO (no conversation content on disk). Set LOG_LEVEL=DEBUG to capture it.'));
       return;
     }
+    var seekable = !!c.recording;
     c.transcript.forEach(function(msg){
-      var box = el('div','msg role-'+msg.role);
-      box.appendChild(el('div','role', msg.role));
+      var box = el('div','msg role-'+msg.role + (seekable && msg.t!=null ? ' seekable' : ''));
+      if (msg.t != null) box.dataset.t = msg.t;
+      var roleHtml = msg.role + (msg.t != null ? '<span class="t-badge">' + fmtClock(msg.t) + '</span>' : '');
+      box.appendChild(el('div','role', roleHtml));
       if (msg.content) box.appendChild(el('div','content', escapeHtml(msg.content)));
       if (msg.tool_calls){
         msg.tool_calls.forEach(function(tc){
           box.appendChild(el('div','tool-call', '<span class="fn">'+escapeHtml(tc.name)+'</span>(' + escapeHtml(tc.arguments||'') + ')'));
         });
       }
+      if (seekable && msg.t != null){
+        box.onclick = function(){
+          var audioEl = document.getElementById('real-audio');
+          if (audioEl && audioEl.duration) audioEl.currentTime = Math.min(msg.t, audioEl.duration);
+        };
+      }
       list.appendChild(box);
     });
+  }
+
+  function highlightTranscriptByTime(t){
+    var rows = document.querySelectorAll('#real-transcript-list .msg');
+    var current = null;
+    rows.forEach(function(r){
+      var rt = parseFloat(r.dataset.t);
+      r.classList.remove('playing');
+      if (!isNaN(rt) && rt <= t + 0.05) current = r;
+    });
+    if (current){
+      current.classList.add('playing');
+      var listEl = document.getElementById('real-transcript-list');
+      var r = current.getBoundingClientRect(), lr = listEl.getBoundingClientRect();
+      if (r.top < lr.top || r.bottom > lr.bottom) current.scrollIntoView({block:'center', behavior:'smooth'});
+    }
   }
 
   function renderRealBackend(c){
@@ -852,6 +918,147 @@
       row.innerHTML = '<span class="src">'+escapeHtml(w.src)+'</span> — '+escapeHtml(w.msg);
       list.appendChild(row);
     });
+  }
+
+  // ============================================================ RECORDING PLAYER + WAVEFORM
+  var player = { token: 0, buffer: null, canvas: null };
+
+  function redrawWaveformIfPending(){
+    if (player.canvas && player.buffer) drawWaveform(player.canvas, player.buffer);
+  }
+  window.addEventListener('resize', redrawWaveformIfPending);
+
+  function fmtClock(s){
+    s = Math.max(0, s || 0);
+    var m = Math.floor(s / 60), sec = Math.floor(s % 60);
+    return m + ':' + (sec < 10 ? '0' : '') + sec;
+  }
+
+  function getCssVar(name){
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function setupPlayer(c){
+    var panel = document.getElementById('real-player');
+    var audioEl = document.getElementById('real-audio');
+    audioEl.pause();
+    audioEl.removeAttribute('src');
+    audioEl.onplay = audioEl.onpause = audioEl.onended = audioEl.onloadedmetadata = audioEl.ontimeupdate = null;
+
+    player.canvas = null;
+    player.buffer = null;
+
+    if (!c.recording){
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    var token = ++player.token;
+
+    var playBtn = document.getElementById('real-play-btn');
+    var timeLbl = document.getElementById('real-player-time');
+    var canvas = document.getElementById('real-waveform-canvas');
+    var wrap = document.getElementById('real-waveform-wrap');
+    var playhead = document.getElementById('real-wave-playhead');
+    var status = document.getElementById('real-wave-status');
+
+    status.style.display = 'flex';
+    status.textContent = 'decoding audio…';
+    var ctx2d = canvas.getContext('2d');
+    ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+    playhead.style.left = '0%';
+    playBtn.disabled = false;
+    playBtn.textContent = '▶';
+    timeLbl.textContent = '0:00 / ' + fmtClock(c.duration);
+
+    var src = '/api/recordings/' + encodeURIComponent(c.recording);
+    audioEl.src = src;
+
+    function updateTimeLabel(){
+      timeLbl.textContent = fmtClock(audioEl.currentTime) + ' / ' + fmtClock(audioEl.duration || c.duration);
+    }
+    function updatePlayhead(){
+      var dur = audioEl.duration || c.duration || 1;
+      playhead.style.left = Math.min(100, (audioEl.currentTime / dur) * 100) + '%';
+    }
+    function tick(){
+      if (token !== player.token) return;
+      updatePlayhead();
+      highlightTranscriptByTime(audioEl.currentTime);
+      if (!audioEl.paused) requestAnimationFrame(tick);
+    }
+
+    playBtn.onclick = function(){
+      if (audioEl.paused) audioEl.play(); else audioEl.pause();
+    };
+    audioEl.onplay = function(){ playBtn.textContent = '❚❚'; tick(); };
+    audioEl.onpause = function(){ playBtn.textContent = '▶'; };
+    audioEl.onended = function(){ playBtn.textContent = '▶'; };
+    audioEl.onloadedmetadata = function(){ updateTimeLabel(); };
+    audioEl.ontimeupdate = function(){ updateTimeLabel(); updatePlayhead(); highlightTranscriptByTime(audioEl.currentTime); };
+
+    wrap.onclick = function(e){
+      if (!audioEl.duration) return;
+      var rect = wrap.getBoundingClientRect();
+      var frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+      audioEl.currentTime = frac * audioEl.duration;
+    };
+
+    fetch(src).then(function(r){
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.arrayBuffer();
+    }).then(function(buf){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var actx = new AC();
+      return actx.decodeAudioData(buf).then(function(audioBuffer){ actx.close(); return audioBuffer; });
+    }).then(function(audioBuffer){
+      if (token !== player.token) return;
+      status.style.display = 'none';
+      player.canvas = canvas;
+      player.buffer = audioBuffer;
+      drawWaveform(canvas, audioBuffer);
+    }).catch(function(err){
+      if (token !== player.token) return;
+      status.textContent = 'could not decode audio: ' + err.message;
+    });
+  }
+
+  function drawWaveform(canvas, audioBuffer){
+    var dpr = window.devicePixelRatio || 1;
+    var w = canvas.width = Math.max(1, canvas.clientWidth * dpr);
+    var h = canvas.height = Math.max(1, canvas.clientHeight * dpr);
+    var ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+
+    var caller = audioBuffer.getChannelData(0);
+    var bot = audioBuffer.numberOfChannels > 1 ? audioBuffer.getChannelData(1) : caller;
+    var buckets = Math.max(60, Math.floor(w));
+    var perBucket = Math.max(1, Math.floor(caller.length / buckets));
+    var mid = h / 2;
+    var laneH = h / 2 - 3 * dpr;
+    var barW = Math.max(1, w / buckets);
+
+    function drawLane(data, sign, color){
+      ctx.fillStyle = color;
+      for (var i = 0; i < buckets; i++){
+        var start = i * perBucket;
+        var end = Math.min(data.length, start + perBucket);
+        var peak = 0;
+        for (var j = start; j < end; j++){
+          var v = Math.abs(data[j]);
+          if (v > peak) peak = v;
+        }
+        var barH = Math.max(0.8 * dpr, peak * laneH);
+        var x = i * barW;
+        if (sign > 0) ctx.fillRect(x, mid - barH, Math.max(1, barW - dpr), barH);
+        else ctx.fillRect(x, mid, Math.max(1, barW - dpr), barH);
+      }
+    }
+
+    drawLane(caller, 1, getCssVar('--lane-turn'));
+    drawLane(bot, -1, getCssVar('--lane-fn'));
+    ctx.fillStyle = getCssVar('--border');
+    ctx.fillRect(0, mid - 0.5 * dpr, w, Math.max(1, dpr));
   }
 
   // ============================================================ LIVE DATA (local server API)
