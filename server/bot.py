@@ -9,7 +9,9 @@ Run the bot using::
 import os
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
@@ -27,6 +29,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
@@ -97,18 +100,89 @@ def _reprompt(context: LLMContext) -> str:
     spoken = [
         m["content"]
         for m in context.get_messages()
-        if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()
+        if m.get("role") == "assistant"
+        and isinstance(m.get("content"), str)
+        and m["content"].strip()
     ]
     return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
 
 
+_CLOUDFLARE_DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+
+
+def _cloudflare_messages_base_url(account_id: str) -> str:
+    """Anthropic SDK posts to ``{base_url}/v1/messages``.
+
+    Cloudflare's unified Messages endpoint is
+    ``/accounts/{account_id}/ai/v1/messages``, so the base URL must stop at
+    ``/ai`` — not ``/ai/v1``.
+    """
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai"
+
+
+class _CloudflareMessages:
+    """Pipecat calls ``client.beta.messages.create``, which hits ``/v1/messages?beta=true``.
+
+    Cloudflare's unified endpoint rejects that query string (``unrecognized_keys: query``).
+    Route those calls to the stable Messages API instead.
+    """
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def create(self, **kwargs):
+        kwargs.pop("betas", None)
+        return await self._messages.create(**kwargs)
+
+
+def _cloudflare_llm() -> AnthropicLLMService:
+    """Claude (default Sonnet 4.6) via Cloudflare's Anthropic-compatible API.
+
+    Billed with AI Gateway Unified Billing credits — Workers Paid unlocks
+    Workers AI hosted models, not third-party Claude tokens. Token needs
+    Account > Workers AI > Read.
+    """
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id or not token:
+        raise RuntimeError(
+            "LLM_PROVIDER=cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN "
+            "(Account > Workers AI > Read). Claude is billed with AI Gateway Unified "
+            "Billing credits, not Workers Paid neurons."
+        )
+    model = os.getenv("CLOUDFLARE_LLM_MODEL", _CLOUDFLARE_DEFAULT_MODEL)
+    headers: dict[str, str] = {}
+    gateway_id = os.getenv("CLOUDFLARE_AI_GATEWAY_ID")
+    if gateway_id:
+        headers["cf-aig-gateway-id"] = gateway_id
+    inner = AsyncAnthropic(
+        auth_token=token,
+        base_url=_cloudflare_messages_base_url(account_id),
+        default_headers=headers or None,
+    )
+    client = SimpleNamespace(beta=SimpleNamespace(messages=_CloudflareMessages(inner.messages)))
+    return AnthropicLLMService(
+        api_key=token,
+        client=client,
+        settings=AnthropicLLMService.Settings(
+            model=model,
+            # Voice: don't wait on extended thinking before the first spoken token.
+            thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
+        ),
+    )
+
+
 def build_llm():
-    provider = os.getenv("LLM_PROVIDER", "helmcode")
+    provider = os.getenv("LLM_PROVIDER", "cloudflare")
+    if provider in {"cloudflare", "claude"}:
+        return _cloudflare_llm()
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return StallGuardedLLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=StallGuardedLLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            settings=StallGuardedLLMService.Settings(
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")
+            ),
             # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s. This covers
             # opening the stream; StallGuardedLLMService covers a stream that dies mid-response.
             retry_on_timeout=True,
@@ -245,7 +319,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     flow_manager.state.update(
         {
             "call_id": call_id,
-            "connected_at": _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments)),
+            "connected_at": _connected_at(
+                allow_override=isinstance(runner_args, EvalRunnerArguments)
+            ),
             "client": client,
             "submission": submission,
             "patient": None,
@@ -264,7 +340,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @context_aggregator.user().event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
         text = _reprompt(context)
-        logger.info("Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text)
+        logger.info(
+            "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
+        )
         await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
 
     flow_started = False
@@ -314,7 +392,9 @@ async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) ->
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
     if transport_type != "twilio":
         # Sample rates and the call id both hang off this detection; fail loudly, not silently.
-        logger.error("Telephony handshake detected as {!r}, expected 'twilio': {}", transport_type, call_data)
+        logger.error(
+            "Telephony handshake detected as {!r}, expected 'twilio': {}", transport_type, call_data
+        )
     runner_args.transport_type = transport_type
     runner_args.call_data = call_data
     params.add_wav_header = False

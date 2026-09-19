@@ -428,3 +428,10 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   exactas. NO verificado: que el vigilante salte en vivo — el eval de texto no genera
   "Bot stopped speaking" (no hay audio), que es lo que arma el reloj. Solo se puede ver
   en una llamada con audio: buscar "of silence, re-prompting" en el log.
+- 2026-09-19 — Claude vía Cloudflare (default): `LLM_PROVIDER=cloudflare` usa
+  `AnthropicLLMService` contra la API unificada
+  `https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1/messages`, modelo
+  `anthropic/claude-sonnet-4.6`. Requiere `CLOUDFLARE_ACCOUNT_ID` + token con
+  Workers AI Read, y créditos de AI Gateway Unified Billing (Workers Paid no
+  cubre tokens de Claude). `helmcode`, `gemini` y `openai` siguen como
+  alternativas.
