@@ -5,6 +5,7 @@ or a ``NodeConfig`` from ``flow.nodes`` to change stage. Ids, dates and POSTs
 are decided here, not by the model.
 """
 
+import asyncio
 from datetime import date, datetime
 
 from loguru import logger
@@ -53,12 +54,42 @@ async def _say_filler(flow_manager: FlowManager) -> None:
     await flow_manager.worker.queue_frames([TTSSpeakFrame(text=FILLER, append_to_context=False)])
 
 
+async def _dedupe(flow_manager: FlowManager, key: str, run):
+    """Coalesce a duplicate concurrent call to the same tool into one execution.
+
+    Pipecat can trigger two overlapping LLM inferences for what sounds like one
+    caller turn (e.g. a mid-sentence pause long enough to trip the turn-stop
+    fallback), and each can independently call the same booking tool. Racing
+    both through unconditionally means we might run a real POST (search,
+    availability, confirmation) twice, or get a "was just unregistered between
+    queueing and execution" fallback that confuses the model. Instead, the
+    second caller waits for the first in-flight call with this key and reuses
+    its result rather than repeating the side effect.
+    """
+    inflight: dict[str, asyncio.Task] = flow_manager.state.setdefault("_inflight_calls", {})
+    existing = inflight.get(key)
+    if existing is not None:
+        logger.warning("Call {}: coalescing duplicate concurrent call to {}", flow_manager.state["call_id"], key)
+        return await existing
+
+    task = asyncio.ensure_future(run())
+    inflight[key] = task
+    try:
+        return await task
+    finally:
+        inflight.pop(key, None)
+
+
 async def flush_submission(action: dict, flow_manager: FlowManager) -> None:
     """POST the pending action when a terminal node ends."""
     await flow_manager.state["submission"].flush()
 
 
 async def search_patient(args: FlowArgs, flow_manager: FlowManager):
+    return await _dedupe(flow_manager, "search_patient", lambda: _search_patient(args, flow_manager))
+
+
+async def _search_patient(args: FlowArgs, flow_manager: FlowManager):
     from flow.nodes import create_giveup_node, create_register_offer_node, create_slot_node
 
     state = flow_manager.state
@@ -106,6 +137,10 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
 
 
 async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
+    return await _dedupe(flow_manager, "get_earliest_slot", lambda: _get_earliest_slot(args, flow_manager))
+
+
+async def _get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     from flow.nodes import create_confirm_node, create_declined_node
 
     state = flow_manager.state
@@ -208,6 +243,12 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
 
 
 async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
+    return await _dedupe(
+        flow_manager, f"confirm_offer:{args['offer_id']}", lambda: _confirm_offer(args, flow_manager)
+    )
+
+
+async def _confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     from flow.nodes import create_goodbye_node
 
     offer = flow_manager.state["offers"].get(args["offer_id"])
