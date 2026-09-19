@@ -1,10 +1,15 @@
 """Parse server/run-logs/<mode>-<timestamp>/bot.log directories (real
 webrtc/twilio calls, as opposed to the eval harness) for the local dashboard.
 
-A single `make run-webrtc`/`make run-twilio` process can serve many calls
-back to back without restarting, so one bot.log can contain several calls'
-worth of lines. Each "Starting bot for call <id>" line marks the start of a
-new call; everything up to the next such line (or EOF) belongs to it.
+A single `make run-webrtc`/`make run-twilio` process can serve many calls,
+including CONCURRENTLY (one asyncio task per websocket) -- their lines then
+interleave in one bot.log. bot.py tags every line for a call's lifetime with
+`call=<id>` (via loguru's `logger.contextualize`), so this now groups a call's
+lines by that tag directly rather than assuming calls never overlap. Logs
+captured before that tag existed have no `call=` segment on any line, so as a
+fallback for those specifically, each "Starting bot for call <id>" line still
+marks a new call and everything up to the next such line (or EOF) belongs to
+it -- correct only when calls in that older log truly ran one at a time.
 """
 import ast
 import json
@@ -14,13 +19,11 @@ from pathlib import Path
 
 from transcript_utils import build_transcript, extract_caller_name
 
-LINE_RE = re.compile(r"^(?P<ts>[\d\-: .]+) \| (?P<level>\w+)\s*\| (?P<src>[^-]+) - (?P<msg>.*)$")
+LINE_RE = re.compile(
+    r"^(?P<ts>[\d\-: .]+) \| (?P<level>\w+)\s*\| (?:call=(?P<call_tag>\S+) \| )?(?P<src>[^-]+) - (?P<msg>.*)$"
+)
 CTX_RE = re.compile(r"Generating chat from context (\[.*\])\s*$")
 CALL_ID_RE = re.compile(r"Starting bot for call (\S+)")
-OFFER_RE = re.compile(r"^Offer (\S+): (\{.*\})$")
-SUBMIT_OK_RE = re.compile(r"^Submitted (\S+) for call (\S+): (.*)$")
-SUBMIT_FAIL_RE = re.compile(r"^Submission failed for call (\S+) \((.*)\): (.*)$")
-REPROMPT_RE = re.compile(r"^Call (\S+): (\d+)s of silence, re-prompting: (.*)$")
 AUDIT_ID_RE = re.compile(r"[^A-Za-z0-9_.-]")
 
 
@@ -94,6 +97,36 @@ def _find_call_boundaries(lines, matched):
     return boundaries
 
 
+def _pair_spans(marks):
+    """Turn a list of (t, "start"|"stop") marks into closed (start, end) spans.
+
+    An unmatched trailing "start" (call ended mid-turn) is dropped rather than
+    guessed at; a "stop" with no open "start" is ignored the same way.
+    """
+    spans = []
+    open_start = None
+    for t, kind in marks:
+        if kind == "start":
+            if open_start is None:
+                open_start = t
+        elif kind == "stop" and open_start is not None:
+            spans.append((open_start, t))
+            open_start = None
+    return spans
+
+
+def _overlap_spans(a, b):
+    """Intersection intervals between two lists of (start, end) spans -- the
+    stretches where both sides were talking at once (barge-ins/talk-over)."""
+    out = []
+    for a_start, a_end in a:
+        for b_start, b_end in b:
+            lo, hi = max(a_start, b_start), min(a_end, b_end)
+            if hi > lo:
+                out.append((lo, hi))
+    return out
+
+
 def _parse_segment(lines, matched, start_i, end_i, call_id):
     """Parse one call's slice of a bot.log ([start_i, end_i)) into events/transcript."""
     seg_lines = lines[start_i:end_i]
@@ -109,6 +142,11 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
     events, errors, warnings = [], [], []
     last_ctx = None
     ctx_snapshots = []  # [(t, parsed_context), ...] in chronological order
+    # Pipecat/pipecat-flows log these at DEBUG (LOG_LEVEL=DEBUG only) from
+    # their own frame processors and flow manager, not bot.py -- absent
+    # entirely on INFO-level runs, in which case the *_spans below just come
+    # out empty for that call.
+    user_marks, bot_marks, tool_marks = [], [], []
 
     for line, m in zip(seg_lines, seg_matched):
         if not m:
@@ -135,27 +173,23 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         if "Client disconnected" in msg:
             events.append({"t": t, "kind": "disconnected", "detail": msg}); continue
 
-        om = OFFER_RE.match(msg)
-        if om:
-            try:
-                offer = ast.literal_eval(om.group(2))
-            except Exception:
-                offer = {"raw": om.group(2)}
-            events.append({"t": t, "kind": "offer", "detail": msg, "offer": offer})
-            continue
+        if "User started speaking" in msg:
+            user_marks.append((t, "start")); continue
+        if "User stopped speaking" in msg:
+            user_marks.append((t, "stop")); continue
+        if msg == "Bot started speaking":
+            bot_marks.append((t, "start")); continue
+        if msg == "Bot stopped speaking":
+            bot_marks.append((t, "stop")); continue
 
-        sm = SUBMIT_OK_RE.match(msg)
-        if sm:
-            events.append({"t": t, "kind": "submitted", "detail": msg, "action": sm.group(1), "result": sm.group(3)})
-            continue
-
-        fm = SUBMIT_FAIL_RE.match(msg)
-        if fm:
-            events.append({"t": t, "kind": "submit_failed", "detail": msg}); continue
-
-        rm = REPROMPT_RE.match(msg)
-        if rm:
-            events.append({"t": t, "kind": "reprompt", "detail": msg, "message": rm.group(3)}); continue
+        # pipecat_flows.manager:transition_func brackets a tool's own handler
+        # this way; the function name isn't unique across a call's flow (the
+        # same tool can be called more than once), so pairing is by simple
+        # chronological order, not by matching names.
+        if msg.startswith("Function called: "):
+            tool_marks.append((t, "start")); continue
+        if msg.startswith("Function handler completed for "):
+            tool_marks.append((t, "stop")); continue
 
         if level in ("ERROR", "CRITICAL"):
             errors.append({"t": t, "src": src, "msg": msg})
@@ -168,12 +202,18 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
     _attach_entry_timestamps(transcript, ctx_snapshots)
 
     duration = events[-1]["t"] if events else 0.0
+    # The real outcome comes from audit-logs (parse_real_calls, below) or the
+    # disconnect-without-audit ABANDONED fallback; nothing here sets it, since
+    # bot.log carries no reliable booking-outcome text of its own.
     outcome = "IN_PROGRESS"
-    for e in events:
-        if e["kind"] == "submitted":
-            outcome = e["action"]
-        elif e["kind"] == "submit_failed":
-            outcome = "SUBMIT_FAILED"
+
+    user_spans = _pair_spans(user_marks)
+    bot_spans = _pair_spans(bot_marks)
+    tool_spans = _pair_spans(tool_marks)
+    overlap_spans = _overlap_spans(user_spans, bot_spans)
+
+    def _spans_json(spans):
+        return [{"start": round(s, 2), "end": round(e, 2)} for s, e in spans]
 
     return {
         "call_id": call_id,
@@ -183,22 +223,56 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         "events": events,
         "transcript": transcript,
         "caller_name": extract_caller_name(transcript),
+        "user_spans": _spans_json(user_spans),
+        "assistant_spans": _spans_json(bot_spans),
+        "tool_spans": _spans_json(tool_spans),
+        "overlap_spans": _spans_json(overlap_spans),
         "errors": errors,
         "warnings": warnings,
     }
+
+
+def _parse_by_call_tag(lines, matched):
+    """Group lines by their explicit `call=<id>` tag -- correct even when
+    several calls' lines interleave, since it doesn't rely on position."""
+    order = []
+    seen = set()
+    for m in matched:
+        if not m:
+            continue
+        tag = m.group("call_tag")
+        if tag and tag != "-" and tag not in seen:
+            seen.add(tag)
+            order.append(tag)
+
+    calls = []
+    for call_id in order:
+        idxs = [i for i, m in enumerate(matched) if m and m.group("call_tag") == call_id]
+        seg_lines = [lines[i] for i in idxs]
+        seg_matched = [matched[i] for i in idxs]
+        calls.append(_parse_segment(seg_lines, seg_matched, 0, len(seg_lines), call_id))
+    return calls
+
+
+def _parse_by_position(lines, matched):
+    """Fallback for logs predating the `call=<id>` tag: assumes calls never
+    overlap, splitting purely on "Starting bot for call" line position."""
+    boundaries = _find_call_boundaries(lines, matched)
+    calls = []
+    for idx, (start_i, call_id) in enumerate(boundaries):
+        end_i = boundaries[idx + 1][0] if idx + 1 < len(boundaries) else len(lines)
+        calls.append(_parse_segment(lines, matched, start_i, end_i, call_id))
+    return calls
 
 
 def parse_bot_log(path: Path):
     """Split one bot.log into one dict per call it contains (possibly zero)."""
     lines = path.read_text(errors="replace").splitlines()
     matched = [LINE_RE.match(l) for l in lines]
-    boundaries = _find_call_boundaries(lines, matched)
-
-    calls = []
-    for idx, (start_i, call_id) in enumerate(boundaries):
-        end_i = boundaries[idx + 1][0] if idx + 1 < len(boundaries) else len(lines)
-        calls.append(_parse_segment(lines, matched, start_i, end_i, call_id))
-    return calls
+    has_call_tags = any(m and m.group("call_tag") not in (None, "-") for m in matched)
+    if has_call_tags:
+        return _parse_by_call_tag(lines, matched)
+    return _parse_by_position(lines, matched)
 
 
 def parse_real_calls(run_logs_dir: Path):

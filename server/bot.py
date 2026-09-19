@@ -41,11 +41,6 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
-from pipecat.runner.utils import create_transport
-from pipecat.services.anthropic.llm import AnthropicLLMService
-from pipecat.services.deepgram.stt import DeepgramSTTService
-from pipecat.services.deepgram.tts import DeepgramTTSService
-from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.anthropic.llm import AnthropicLLMService
@@ -73,15 +68,11 @@ try:
 except ImportError:  # daily-python has no Windows wheels
     DailyParams = None
 
-try:
-    from pipecat.transports.daily.transport import DailyParams
-except ImportError:  # daily-python has no Windows wheels
-    DailyParams = None
-
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
+from emergency_watch import EmergencyWatch
 from flows.common import GREETING
 from flows.rails import RAILS
 from flows.reception import create_reception_node
@@ -109,6 +100,22 @@ LOG_DIR = os.getenv("LOG_DIR", "run-logs")
 _LOG_FILE: str | None = None
 
 
+# A single process can run several calls concurrently (one asyncio task per
+# websocket), all sharing this one global logger and these same log files --
+# without a per-call tag, their lines interleave and there is no way to tell
+# afterwards which call a given line belongs to (server/scripts/dashboard/
+# real_parser.py used to just assume calls never overlap). run_bot() below
+# binds call_id into every line for a call's lifetime via logger.contextualize;
+# {extra[call_id]} here is what prints it, and the default covers lines logged
+# before any call_id is bound (startup, or a second concurrent call's own
+# contextualize scope not yet entered).
+logger.configure(extra={"call_id": "-"})
+_LOG_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | call={extra[call_id]} | "
+    "{name}:{function}:{line} - {message}"
+)
+
+
 def _attach_log_sinks() -> str:
     """Stderr plus a file under LOG_DIR. Safe to call again after logger.remove()."""
     global _LOG_FILE
@@ -117,8 +124,8 @@ def _attach_log_sinks() -> str:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         _LOG_FILE = os.path.join(LOG_DIR, f"bot-{stamp}.log")
     logger.remove()
-    logger.add(sys.stderr, level=LOG_LEVEL)
-    logger.add(_LOG_FILE, level=LOG_LEVEL, encoding="utf-8", enqueue=True)
+    logger.add(sys.stderr, level=LOG_LEVEL, format=_LOG_FORMAT)
+    logger.add(_LOG_FILE, level=LOG_LEVEL, encoding="utf-8", enqueue=True, format=_LOG_FORMAT)
     logger.add(
         os.path.join(LOG_DIR, "bot.log"),
         level=LOG_LEVEL,
@@ -126,6 +133,7 @@ def _attach_log_sinks() -> str:
         enqueue=True,
         rotation="20 MB",
         retention=10,
+        format=_LOG_FORMAT,
     )
     return _LOG_FILE
 
@@ -552,235 +560,243 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     log_path = _attach_log_sinks()
 
     call_id = _call_id(runner_args)
-    logger.info("Writing logs to {}", os.path.abspath(log_path))
-    logger.info("Starting bot for call {}", call_id)
-    telephony = _is_twilio_session(runner_args)
+    with logger.contextualize(call_id=call_id):
+        logger.info("Writing logs to {}", os.path.abspath(log_path))
+        logger.info("Starting bot for call {}", call_id)
+        telephony = _is_twilio_session(runner_args)
 
-    audio_recorder = None
-    if RECORD_CALLS:
-        audio_recorder = AudioBufferProcessor(num_channels=1, auto_start_recording=True)
+        audio_recorder = None
+        if RECORD_CALLS:
+            audio_recorder = AudioBufferProcessor(num_channels=1, auto_start_recording=True)
 
-        @audio_recorder.event_handler("on_audio_data")
-        async def on_audio_data(processor, audio, sample_rate, num_channels):
-            await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
+            @audio_recorder.event_handler("on_audio_data")
+            async def on_audio_data(processor, audio, sample_rate, num_channels):
+                await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
 
-    stt = build_stt()
-    tts = build_tts(telephony)
-    llm = build_llm(call_id)
+        stt = build_stt()
+        tts = build_tts(telephony)
+        llm = build_llm(call_id)
 
-    context = LLMContext()
-    context_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
-            user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
-            # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
-            # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
-            user_turn_strategies=_user_turn_strategies(),
-        ),
-    )
-
-    user_aggregator = context_aggregator.user()
-    assistant_aggregator = context_aggregator.assistant()
-
-    # Speaks a holding line instead of leaving dead air when the bot stalls.
-    # Placed before the LLM so both frames it emits travel downstream correctly.
-    watchdog = SilenceWatchdog(
-        silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
-        rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
-        max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "0")),
-        is_active=lambda: flow_started,
-    )
-
-    # Submits a plan the caller has just agreed to, without waiting for the
-    # model's own confirm turn (see affirmation_watch.py). Triggered by the
-    # aggregator's own turn event, wired just below.
-    affirmation_watch = AffirmationWatch()
-
-    @user_aggregator.event_handler("on_user_turn_message_added")
-    async def on_user_turn_message_added(aggregator, message):
-        """The caller's finalized turn is now in the context.
-
-        This is the moment a yes becomes actionable. The user aggregator
-        consumes the final ``TranscriptionFrame`` rather than forwarding it, so a
-        processor further down the pipeline never sees the turn a watcher would
-        exist for.
-        """
-        content = getattr(message, "content", None)
-        if is_backchannel(content):
-            messages = list(context.get_messages())
-            if messages and messages[-1].get("role") == "user":
-                context.set_messages(messages[:-1])
-            return
-        affirmation_watch.consider(content)
-
-    @user_aggregator.event_handler("on_user_turn_started")
-    async def on_user_turn_started(aggregator, strategy):
-        logger.warning(
-            "USER TURN STARTED | strategy={} | bot_speaking={}",
-            type(strategy).__name__ if strategy else "unknown",
-            getattr(transport.output(), "_bot_speaking", "unknown"),
-        )
-
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            user_aggregator,
-            watchdog,
-            llm,
-            tts,
-            transport.output(),
-            *([audio_recorder] if audio_recorder is not None else []),
-            assistant_aggregator,
-        ]
-    )
-
-    pipeline_params = {"enable_metrics": True, "enable_usage_metrics": True}
-    if telephony:
-        pipeline_params["audio_in_sample_rate"] = 8000
-        pipeline_params["audio_out_sample_rate"] = 8000
-
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(**pipeline_params),
-        idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[],
-    )
-    runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
-    await runner.add_workers(worker)
-
-    flow_manager = FlowManager(
-        worker=worker,
-        llm=llm,
-        context_aggregator=context_aggregator,
-        transport=transport,
-        global_functions=RAILS,
-    )
-    affirmation_watch.bind(flow_manager)
-    client = (
-        DryRunSubmit(ClinicClient())
-        if isinstance(runner_args, EvalRunnerArguments)
-        else ClinicClient()
-    )
-    submission = CallSubmission(
-        call_id,
-        # The eval lane is dialled by the harness, not by the platform, so the
-        # platform refuses its minted call_id with a 404 and every booking in the
-        # lane "fails" for a reason that has nothing to do with the bot. Its writes
-        # are answered locally instead; reads still go to the real clinic API.
-        client,
-        # Only asked when the call ends having decided nothing: the best ending
-        # it can still stand behind beats the ``out_of_scope`` that matches no
-        # published case. See ``resolution.py``.
-        fallback=lambda: resolve_fallback(flow_manager.state),
-    )
-    flow_manager.state.update(
-        {
-            "call_id": call_id,
-            "connected_at": _connected_at(
-                allow_override=isinstance(runner_args, EvalRunnerArguments)
+        context = LLMContext()
+        context_aggregator = LLMContextAggregatorPair(
+            context,
+            user_params=LLMUserAggregatorParams(
+                vad_analyzer=SileroVADAnalyzer(),
+                user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
+                # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
+                # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
+                user_turn_strategies=_user_turn_strategies(),
             ),
-            "client": client,
-            "submission": submission,
-            "patient": None,
-            "offers": {},
-            "identify_attempts": 0,
-        }
-    )
-
-    hung_up = False
-
-    @user_aggregator.event_handler("on_user_turn_idle")
-    async def on_user_turn_idle(aggregator):
-        if hung_up:
-            return
-        text = _reprompt(context)
-        logger.info(
-            "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
-        )
-        await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
-
-    flow_started = False
-    _start_task: asyncio.Task | None = None
-    _deliver_task: asyncio.Task | None = None
-
-    async def start_flow():
-        nonlocal flow_started
-        if flow_started:
-            return
-        flow_started = True
-        await flow_manager.initialize(create_reception_node())
-        # Fixed audio, not an LLM turn: composing the greeting costs seconds,
-        # gets barged into, and paraphrases the clinic name.
-        await worker.queue_frames(
-            [TTSSpeakFrame(text=GREETING, append_to_context=True)]
         )
 
-    async def start_flow_after_grace():
-        """Greet anyway if client-ready never arrives.
+        user_aggregator = context_aggregator.user()
+        assistant_aggregator = context_aggregator.assistant()
 
-        A call whose greeting is never queued is dead air from the first second,
-        and the scorer attributes that silence to the agent. ``start_flow`` is
-        idempotent, so the normal path makes this a no-op.
-        """
-        await asyncio.sleep(float(os.getenv("FLOW_START_GRACE_SECS", "8")))
-        if not flow_started:
-            logger.warning("Client-ready never arrived; starting the flow anyway")
+        # Speaks a holding line instead of leaving dead air when the bot stalls.
+        # Placed before the LLM so both frames it emits travel downstream correctly.
+        watchdog = SilenceWatchdog(
+            silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
+            rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
+            max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "0")),
+            is_active=lambda: flow_started,
+        )
+
+        # Submits a plan the caller has just agreed to, without waiting for the
+        # model's own confirm turn (see affirmation_watch.py). Triggered by the
+        # aggregator's own turn event, wired just below.
+        affirmation_watch = AffirmationWatch()
+        # Escalates a red flag the model did not notice (see emergency_watch.py).
+        emergency_watch = EmergencyWatch(call_id)
+
+        @user_aggregator.event_handler("on_user_turn_message_added")
+        async def on_user_turn_message_added(aggregator, message):
+            """The caller's finalized turn is now in the context.
+
+            This is the moment a yes becomes actionable. The user aggregator
+            consumes the final ``TranscriptionFrame`` rather than forwarding it, so a
+            processor further down the pipeline never sees the turn a watcher would
+            exist for.
+            """
+            content = getattr(message, "content", None)
+            if is_backchannel(content):
+                messages = list(context.get_messages())
+                if messages and messages[-1].get("role") == "user":
+                    context.set_messages(messages[:-1])
+                return
+            affirmation_watch.consider(content)
+            emergency_watch.consider()
+
+        @user_aggregator.event_handler("on_user_turn_started")
+        async def on_user_turn_started(aggregator, strategy):
+            logger.warning(
+                "USER TURN STARTED | strategy={} | bot_speaking={}",
+                type(strategy).__name__ if strategy else "unknown",
+                getattr(transport.output(), "_bot_speaking", "unknown"),
+            )
+
+        pipeline = Pipeline(
+            [
+                transport.input(),
+                stt,
+                user_aggregator,
+                watchdog,
+                llm,
+                tts,
+                transport.output(),
+                *([audio_recorder] if audio_recorder is not None else []),
+                assistant_aggregator,
+            ]
+        )
+
+        pipeline_params = {"enable_metrics": True, "enable_usage_metrics": True}
+        if telephony:
+            pipeline_params["audio_in_sample_rate"] = 8000
+            pipeline_params["audio_out_sample_rate"] = 8000
+
+        worker = PipelineWorker(
+            pipeline,
+            params=PipelineParams(**pipeline_params),
+            idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
+            observers=[],
+        )
+        runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
+        await runner.add_workers(worker)
+
+        flow_manager = FlowManager(
+            worker=worker,
+            llm=llm,
+            context_aggregator=context_aggregator,
+            transport=transport,
+            global_functions=RAILS,
+        )
+        affirmation_watch.bind(flow_manager)
+        emergency_watch.bind(flow_manager, worker)
+        client = (
+            DryRunSubmit(ClinicClient())
+            if isinstance(runner_args, EvalRunnerArguments)
+            else ClinicClient()
+        )
+        submission = CallSubmission(
+            call_id,
+            # The eval lane is dialled by the harness, not by the platform, so the
+            # platform refuses its minted call_id with a 404 and every booking in the
+            # lane "fails" for a reason that has nothing to do with the bot. Its writes
+            # are answered locally instead; reads still go to the real clinic API.
+            client,
+            # Only asked when the call ends having decided nothing: the best ending
+            # it can still stand behind beats the ``out_of_scope`` that matches no
+            # published case. See ``resolution.py``.
+            fallback=lambda: resolve_fallback(flow_manager.state),
+        )
+        flow_manager.state.update(
+            {
+                "call_id": call_id,
+                "connected_at": _connected_at(
+                    allow_override=isinstance(runner_args, EvalRunnerArguments)
+                ),
+                "client": client,
+                "submission": submission,
+                "patient": None,
+                "offers": {},
+                "identify_attempts": 0,
+            }
+        )
+
+        hung_up = False
+
+        @user_aggregator.event_handler("on_user_turn_idle")
+        async def on_user_turn_idle(aggregator):
+            if hung_up:
+                return
+            text = _reprompt(context)
+            logger.info(
+                "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
+            )
+            await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
+
+        flow_started = False
+        _start_task: asyncio.Task | None = None
+        _deliver_task: asyncio.Task | None = None
+
+        async def start_flow():
+            nonlocal flow_started
+            if flow_started:
+                return
+            flow_started = True
+            await flow_manager.initialize(create_reception_node())
+            # Fixed audio, not an LLM turn: composing the greeting costs seconds,
+            # gets barged into, and paraphrases the clinic name.
+            await worker.queue_frames(
+                [TTSSpeakFrame(text=GREETING, append_to_context=True)]
+            )
+
+        async def start_flow_after_grace():
+            """Greet anyway if client-ready never arrives.
+
+            A call whose greeting is never queued is dead air from the first second,
+            and the scorer attributes that silence to the agent. ``start_flow`` is
+            idempotent, so the normal path makes this a no-op.
+            """
+            await asyncio.sleep(float(os.getenv("FLOW_START_GRACE_SECS", "8")))
+            if not flow_started:
+                logger.warning("Client-ready never arrived; starting the flow anyway")
+                await start_flow()
+
+        # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
+        # interrupts and drops anything queued earlier; telephony has no RTVI client.
+        @worker.rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
             await start_flow()
 
-    # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
-    # interrupts and drops anything queued earlier; telephony has no RTVI client.
-    @worker.rtvi.event_handler("on_client_ready")
-    async def on_client_ready(rtvi):
-        await start_flow()
+        @transport.event_handler("on_client_connected")
+        async def on_client_connected(transport, client):
+            nonlocal _start_task
+            logger.info("Client connected")
+            emergency_watch.pick_up()
+            # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
+            # nothing else would ever start the flow and the bot would stay silent until cut off.
+            if isinstance(runner_args, WebSocketRunnerArguments):
+                await start_flow()
+                return
+            if not flow_started:
+                _start_task = asyncio.create_task(start_flow_after_grace())
 
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
-        nonlocal _start_task
-        logger.info("Client connected")
-        # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
-        # nothing else would ever start the flow and the bot would stay silent until cut off.
-        if isinstance(runner_args, WebSocketRunnerArguments):
-            await start_flow()
-            return
-        if not flow_started:
-            _start_task = asyncio.create_task(start_flow_after_grace())
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(transport, client):
+            nonlocal hung_up, _deliver_task
+            hung_up = True
+            logger.info("Client disconnected")
+            await emergency_watch.aclose()
+            await submission.close()
+            await runner.cancel()
 
-    @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport, client):
-        nonlocal hung_up, _deliver_task
-        hung_up = True
-        logger.info("Client disconnected")
-        await submission.close()
-        await runner.cancel()
+        async def deliver_until_accepted():
+            """Keep re-offering a decided plan for as long as the call lives.
 
-    async def deliver_until_accepted():
-        """Keep re-offering a decided plan for as long as the call lives.
+            A call with no accepted record scores nothing, and the platform can
+            refuse a submission transiently. ``flush`` only ever sends actions the
+            call has actually decided, so this cannot freeze a plan prematurely.
+            """
+            interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
+            while True:
+                await asyncio.sleep(interval)
+                if submission.needs_delivery:
+                    await submission.flush()
 
-        A call with no accepted record scores nothing, and the platform can
-        refuse a submission transiently. ``flush`` only ever sends actions the
-        call has actually decided, so this cannot freeze a plan prematurely.
-        """
-        interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
-        while True:
-            await asyncio.sleep(interval)
-            if submission.needs_delivery:
-                await submission.flush()
+        _deliver_task = asyncio.create_task(deliver_until_accepted())
 
-    _deliver_task = asyncio.create_task(deliver_until_accepted())
+        try:
+            await runner.run()
+        finally:
+            if _start_task is not None:
+                _start_task.cancel()
+            if _deliver_task is not None:
+                _deliver_task.cancel()
+            await submission.close()
+            inner = getattr(client, "_client", client)
+            if hasattr(inner, "aclose"):
+                await inner.aclose()
 
-    try:
-        await runner.run()
-    finally:
-        if _start_task is not None:
-            _start_task.cancel()
-        if _deliver_task is not None:
-            _deliver_task.cancel()
-        await submission.close()
-        inner = getattr(client, "_client", client)
-        if hasattr(inner, "aclose"):
-            await inner.aclose()
 
 
 def _audio_kwargs() -> dict:
