@@ -267,3 +267,18 @@ caught (evals never open a real audio path):
    fix the misjudgment at its source rather than only its downstream symptom. Verified no
    regression on `the_new_patient_joaquin` (register flow); confirming the fix requires
    another real call starting with a bare greeting.
+
+6. **Added proactive "are you there?" idle handling** (feature request, not a bug fix).
+   Looked this up via Pipecat's `detecting-user-idle.md` Fundamentals guide rather than
+   guessing at a mechanism — it's a purpose-built, separate system from the
+   `filter_incomplete_user_turns` marker machinery behind items 4/5 (it fires from
+   silence after the bot stops speaking, not from an ambiguous turn-completion verdict),
+   so it doesn't reuse or interact with that confusing check-in path. Set
+   `user_idle_timeout=6.0` on `LLMUserAggregatorParams` and added an escalating
+   `on_user_turn_idle` handler in `bot.py`, matching the guide's recommended pattern:
+   attempt 1 is a gentle "are you still there?", attempt 2 is more direct and warns the
+   call may end, attempt 3 speaks a deterministic goodbye and ends the call — deterministic
+   rather than one more LLM turn, so the third strike can't itself get stuck rambling.
+   `idle_retries` resets on `on_user_turn_started`. Verified no regression on
+   `simple_booking_amelia`; the idle path itself needs a real call with a deliberate long
+   silence to confirm.

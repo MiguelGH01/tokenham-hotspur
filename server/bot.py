@@ -18,7 +18,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import LLMMessagesAppendFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -132,6 +132,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
             filter_incomplete_user_turns=True,
+            user_idle_timeout=6.0,  # escalating "are you there?" — see _on_user_turn_idle below
             user_turn_strategies=UserTurnStrategies(
                 # First to fire wins: smart-turn normally decides end-of-turn from audio +
                 # transcript; the speech-timeout strategy is a fast fallback for when it
@@ -237,6 +238,41 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             timer.cancel()
         await submission.flush()
         await runner.cancel()
+
+    user_aggregator = context_aggregator.user()
+    idle_retries = 0
+
+    @user_aggregator.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        nonlocal idle_retries
+        idle_retries += 1
+        logger.info("Call {}: user idle, attempt {}", call_id, idle_retries)
+        if idle_retries == 1:
+            content = "The caller has gone quiet. In one short sentence, ask if they're still there or if you can still hear them."
+        elif idle_retries == 2:
+            content = (
+                "They are still quiet. Ask once more, briefly, whether they'd like to "
+                "continue — mention you may have to end the call if there's no reply."
+            )
+        else:
+            # Third strike: end deterministically rather than trust another LLM turn to
+            # comply — whatever action was already decided (or the default) still flushes.
+            await worker.queue_frames(
+                [TTSSpeakFrame(text="It seems we've been disconnected. Goodbye.", append_to_context=False)]
+            )
+            if timer:
+                timer.cancel()
+            await submission.flush()
+            await runner.cancel()
+            return
+        await aggregator.push_frame(
+            LLMMessagesAppendFrame(messages=[{"role": "developer", "content": content}], run_llm=True)
+        )
+
+    @user_aggregator.event_handler("on_user_turn_started")
+    async def on_user_turn_started(aggregator, strategy):
+        nonlocal idle_retries
+        idle_retries = 0
 
     try:
         await runner.run()
