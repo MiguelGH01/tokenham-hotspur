@@ -6,14 +6,12 @@ Run the bot using::
     uv run bot.py -t eval    # headless eval server for `pipecat eval run`
 """
 
-import asyncio
 import os
 import uuid
 from datetime import datetime
 
 from dotenv import load_dotenv
 from loguru import logger
-from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
@@ -32,7 +30,6 @@ from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.google.llm import GoogleLLMService
-from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.websocket.fastapi import (
@@ -51,11 +48,15 @@ from pipecat.workers.runner import WorkerRunner
 from booking import MADRID
 from clinic.clinic_client import ClinicClient
 from flow import GREETING, create_identify_node
+from gateway_llm import StallGuardedLLMService
 from submission import CallSubmission
 
 load_dotenv(override=True)
 
-FORCED_SUBMIT_AFTER_SECS = 150  # the harness caps calls at 3 minutes
+# The platform cuts a call after ~30-35s without audible agent audio (SC-silence-cut) and
+# the simulated caller takes a median of 11s (max measured 42.5s) to answer. Counted from when the bot
+# STOPS speaking; 16s here is ~20s from when it started asking.
+REPROMPT_AFTER_SILENCE_SECS = 16.0
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -77,14 +78,29 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
+def _reprompt(context: LLMContext) -> str:
+    """Repeat the bot's last message so silence never outlasts the platform's window.
+
+    The whole message, not just its closing question: a caller who missed the offer cannot
+    answer a bare "Does that work for you?".
+    """
+    spoken = [
+        m["content"]
+        for m in context.get_messages()
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()
+    ]
+    return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
+
+
 def build_llm():
     provider = os.getenv("LLM_PROVIDER", "helmcode")
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
-        return OpenAILLMService(
+        return StallGuardedLLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
-            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s.
+            settings=StallGuardedLLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s. This covers
+            # opening the stream; StallGuardedLLMService covers a stream that dies mid-response.
             retry_on_timeout=True,
             retry_timeout_secs=3.0,
         )
@@ -115,7 +131,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
-            filter_incomplete_user_turns=True,
+            user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
+            # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
+            # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
             user_turn_strategies=UserTurnStrategies(
                 stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
             ),
@@ -167,21 +185,26 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
-    async def forced_submit():
-        await asyncio.sleep(FORCED_SUBMIT_AFTER_SECS)
-        logger.warning("Call {} hit {}s: forcing submission", call_id, FORCED_SUBMIT_AFTER_SECS)
-        await submission.flush()
+    # No forced submit on a timer: flush() runs once, so a flush at 150s threw away the last
+    # 30s of the call (9 of 28 calls in Run All #2 were flushed as NO_ACTION that way; none was
+    # seen confirming afterwards, so the gain is unproven). The submit window stays open 30s
+    # after the socket closes (CR-window) and the harness closed capped calls at 182-186s in
+    # Run All #1, so flushing on disconnect is in time. Not covered: a socket that never
+    # closes on our side (tunnel drop) submits nothing.
 
-    timer: asyncio.Task | None = None
+    @context_aggregator.user().event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        text = _reprompt(context)
+        logger.info("Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text)
+        await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
 
     flow_started = False
 
     async def start_flow():
-        nonlocal flow_started, timer
+        nonlocal flow_started
         if flow_started:
             return
         flow_started = True
-        timer = asyncio.create_task(forced_submit())  # 150s from call start, not process start
         await flow_manager.initialize(create_identify_node())
         await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
 
@@ -200,16 +223,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        if timer:
-            timer.cancel()
         await submission.flush()
         await runner.cancel()
 
     try:
         await runner.run()
     finally:
-        if timer:
-            timer.cancel()
         await submission.flush()
 
 
@@ -235,12 +254,12 @@ async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) ->
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
 
+    # Noise suppression is deliberately off: not needed until the noisy-audio problems
+    # (PR-12). When it is, add `"audio_in_filter": <filter>` here — and test it on a real
+    # call first: RNNoiseFilter with pyrnnoise 0.4.3 + av 17 crashes on the first frame,
+    # which kills audio input and leaves the bot deaf for the whole call.
     def _audio_kwargs() -> dict:
-        return {
-            "audio_in_enabled": True,
-            "audio_out_enabled": True,
-            "audio_in_filter": RNNoiseFilter(),
-        }
+        return {"audio_in_enabled": True, "audio_out_enabled": True}
 
     transport_params = {
         "webrtc": lambda: TransportParams(**_audio_kwargs()),

@@ -115,8 +115,9 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     start = datetime.fromisoformat(offer["slot"])
     offer_id = f"offer-{len(state['offers']) + 1}"
     state["offers"][offer_id] = offer
+    state["submission"].set_offer(offer)
     summary = (
-        f"{_spoken_name(slot['provider_name'])} at{location_name(offer['location_id'])}, "
+        f"{_spoken_name(slot['provider_name'])} at {location_name(offer['location_id'])}, "
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
     logger.info("Offer {}: {}", offer_id, offer)
@@ -139,6 +140,7 @@ async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
     """The caller wants a different specialty, site, day or time."""
     from flow.nodes import create_slot_node
 
+    flow_manager.state["submission"].clear_offer()  # declined: never submit it as a fallback
     return None, create_slot_node(flow_manager)
 
 
