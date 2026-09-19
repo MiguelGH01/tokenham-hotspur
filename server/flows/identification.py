@@ -67,6 +67,9 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     from flows.requests import revise_request
 
     revise_request(flow_manager)
+    relationship = args.get("relationship") or "self"
+    if relationship == "self":
+        state["caller"] = patient
     state["patient"] = patient
     visited = "a returning patient" if patient["has_visited_before"] else "a first-time patient"
     summary = f"Found {patient['given_name']} {patient['first_surname']}, {visited}."
@@ -91,6 +94,11 @@ def _search_patient_schema() -> FlowsFunctionSchema:
                 "type": "string",
                 "description": "DNI/NIE including the final letter, or the phone number, digits as heard.",
             },
+            "relationship": {
+                "type": "string",
+                "enum": ["self", "parent", "carer", "other"],
+                "description": "self if the caller is the patient; otherwise who they are to the patient.",
+            },
         },
         required=["stated_name", "id_type", "id_value"],
         handler=search_patient,
@@ -109,7 +117,9 @@ def create_identify_node() -> NodeConfig:
                 "role": "developer",
                 "content": (
                     "Establish who the appointment is for. Example: 'my son's had a temperature' "
-                    "→ the patient is the child, not the caller. Establish the patient's full name "
+                    "→ the patient is the child, not the caller. If they first gave their own "
+                    "details and then said it is for someone else, keep them as the caller and "
+                    "search again for the patient with relationship other than self. Establish the patient's full name "
                     "and ONE exact identifier: their DNI or NIE "
                     "including the letter, or their phone number. Ask for whatever is missing, one "
                     "short question at a time. The moment you hold the full name plus one complete "

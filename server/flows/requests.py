@@ -101,7 +101,10 @@ def begin_request(manager, intent):
         )})
     state["request_id"] = f"request-{len(requests) + 1}"
     state["intent"] = intent
+    caller = state.get("caller")
     state["patient"] = None
+    if caller is not None:
+        state["caller"] = caller
     state["identify_attempts"] = 0
     state.pop("appointment", None)
     state.pop("appointments", None)

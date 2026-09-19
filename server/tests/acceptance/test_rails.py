@@ -3,7 +3,14 @@ from types import SimpleNamespace
 
 from flows.common import ROLE_MESSAGE
 from flows.identification import create_identify_node
-from flows.rails import RAILS, decline_out_of_scope, flag_emergency
+from flows.rails import (
+    RAILS,
+    answer_clinic_question,
+    decline_out_of_scope,
+    flag_emergency,
+    pin_language,
+    record_final_intent,
+)
 from submission import CallSubmission
 
 
@@ -20,8 +27,14 @@ def test_identify_prompt_names_the_child_as_the_patient():
     assert "the patient is the child" in content
 
 
-def test_rails_advertise_emergency_and_scope_tools():
-    assert [tool.name for tool in RAILS] == ["flag_emergency", "decline_out_of_scope"]
+def test_rails_advertise_the_always_on_tools():
+    assert [tool.name for tool in RAILS] == [
+        "flag_emergency",
+        "decline_out_of_scope",
+        "pin_language",
+        "record_final_intent",
+        "answer_clinic_question",
+    ]
 
 
 def test_flag_emergency_submits_escalate():
@@ -49,3 +62,31 @@ def test_decline_out_of_scope_states_the_refusal():
     assert result["status"] == "declined"
     assert manager.state["submission"].pending["reason"] == "out_of_scope"
     assert node["name"] == "out_of_scope"
+
+
+def test_pin_language_normalises_catalan():
+    manager = SimpleNamespace(state={})
+    result, node = asyncio.run(pin_language({"language": "Català"}, manager))
+    assert result["status"] == "pinned"
+    assert manager.state["language"] == "ca"
+    assert node is None
+
+
+def test_record_final_intent_bumps_the_revision():
+    manager = SimpleNamespace(state={"revision": 1})
+    result, node = asyncio.run(
+        record_final_intent({"intent_text": "book myself instead"}, manager)
+    )
+    assert result["status"] == "revised"
+    assert manager.state["revision"] == 2
+    assert manager.state["final_intent"] == "book myself instead"
+    assert node is None
+
+
+def test_answer_clinic_question_is_catalogue_only():
+    manager = SimpleNamespace(state={})
+    result, node = asyncio.run(answer_clinic_question({"question": "which sites?"}, manager))
+    assert result["status"] == "answered"
+    names = {site["name"] for site in result["facts"]["sites"]}
+    assert names == {"Arenal Centro", "Arenal Norte", "Arenal Sur"}
+    assert node is None

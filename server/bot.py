@@ -12,7 +12,9 @@ import sys
 import uuid
 import wave
 from datetime import datetime
+from types import SimpleNamespace
 
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
@@ -31,11 +33,15 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
+from pipecat.services.soniox.stt import SonioxSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
@@ -147,6 +153,69 @@ def _connected_at() -> datetime:
 #: request. The watchdog's deferred re-run is the backstop beyond that.
 LLM_RETRY_TIMEOUT_SECS = float(os.getenv("LLM_RETRY_TIMEOUT_SECS", "8"))
 
+_CLOUDFLARE_DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+
+
+def _cloudflare_messages_base_url(account_id: str) -> str:
+    """Anthropic SDK posts to ``{base_url}/v1/messages``.
+
+    Cloudflare's unified Messages endpoint is
+    ``/accounts/{account_id}/ai/v1/messages``, so the base URL must stop at
+    ``/ai`` — not ``/ai/v1``.
+    """
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai"
+
+
+class _CloudflareMessages:
+    """Pipecat calls ``client.beta.messages.create``, which hits ``/v1/messages?beta=true``.
+
+    Cloudflare's unified endpoint rejects that query string (``unrecognized_keys: query``).
+    Route those calls to the stable Messages API instead.
+    """
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def create(self, **kwargs):
+        kwargs.pop("betas", None)
+        return await self._messages.create(**kwargs)
+
+
+def _cloudflare_llm() -> AnthropicLLMService:
+    """Claude via Cloudflare's Anthropic-compatible Messages API."""
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id or not token:
+        raise RuntimeError(
+            "LLM_PROVIDER=cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN "
+            "(Account > Workers AI > Read)."
+        )
+    model = os.getenv("CLOUDFLARE_LLM_MODEL") or os.getenv(
+        "ANTHROPIC_MODEL", _CLOUDFLARE_DEFAULT_MODEL
+    )
+    headers: dict[str, str] = {}
+    gateway_id = os.getenv("CLOUDFLARE_AI_GATEWAY_ID")
+    if gateway_id:
+        headers["cf-aig-gateway-id"] = gateway_id
+    inner = AsyncAnthropic(
+        auth_token=token,
+        base_url=_cloudflare_messages_base_url(account_id),
+        default_headers=headers or None,
+    )
+    client = SimpleNamespace(beta=SimpleNamespace(messages=_CloudflareMessages(inner.messages)))
+    return AnthropicLLMService(
+        api_key=token,
+        client=client,
+        retry_timeout_secs=LLM_RETRY_TIMEOUT_SECS,
+        retry_on_timeout=True,
+        settings=AnthropicLLMService.Settings(
+            model=model,
+            temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
+            thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
+        ),
+    )
+
 
 def build_llm(call_id: str | None = None):
     """The service that answers the phone.
@@ -165,7 +234,9 @@ def build_llm(call_id: str | None = None):
     stops at the response headers and re-issues without any deadline at all
     (``llm_deadline.py`` has the post-mortem).
     """
-    provider = os.getenv("LLM_PROVIDER", "helmcode")
+    provider = os.getenv("LLM_PROVIDER", "cloudflare")
+    if provider in {"cloudflare", "claude", "anthropic"}:
+        return _cloudflare_llm()
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return FirstTokenDeadlineLLM(
             api_key=os.environ["HELMCODE_API_KEY"],
@@ -328,6 +399,67 @@ def _stt_settings() -> DeepgramSTTService.Settings:
     return DeepgramSTTService.Settings(**options)
 
 
+def build_stt():
+    provider = os.getenv("STT_PROVIDER", "soniox")
+    if provider == "soniox":
+        return SonioxSTTService(
+            api_key=os.environ["SONIOX_API_KEY"],
+            settings=SonioxSTTService.Settings(
+                model=os.getenv("SONIOX_MODEL") or os.getenv("SONIOX_STT_MODEL", "stt-rt-v5"),
+                language_hints=[Language.EN, Language.ES, Language.CA],
+                context=" ".join(_stt_keyterms()),
+            ),
+        )
+    return DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        settings=_stt_settings(),
+    )
+
+
+def build_tts(telephony: bool):
+    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
+    sample_rate = int(
+        os.getenv(
+            "TTS_SAMPLE_RATE",
+            "8000" if telephony else "0",
+        )
+    ) or None
+    if provider == "elevenlabs":
+        voice = os.getenv("ELEVENLABS_VOICE_ID")
+        if not voice:
+            raise RuntimeError(
+                "ELEVENLABS_VOICE_ID is required. Pick a voice id from the ElevenLabs library."
+            )
+        # There is no ElevenLabs model id `eleven_flash_v3`. Flash realtime is
+        # `eleven_flash_v2_5`; Eleven v3 realtime is `eleven_v3_conversational`.
+        model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+        if model.startswith("eleven_v3"):
+            from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
+
+            return ElevenLabsDialogueTTSService(
+                api_key=os.environ["ELEVENLABS_API_KEY"],
+                sample_rate=sample_rate,
+                settings=ElevenLabsDialogueTTSService.Settings(voice=voice, model=model),
+            )
+        return ElevenLabsTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            sample_rate=sample_rate,
+            settings=ElevenLabsTTSService.Settings(
+                voice=voice,
+                model=model,
+                speed=float(os.getenv("ELEVENLABS_TTS_SPEED", "1.0")),
+            ),
+        )
+    return DeepgramTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        sample_rate=sample_rate,
+        settings=DeepgramTTSService.Settings(
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
+            speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
+        ),
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
     # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
@@ -346,24 +478,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         async def on_audio_data(processor, audio, sample_rate, num_channels):
             await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
 
-    stt = DeepgramSTTService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=_stt_settings(),
-    )
-    tts = DeepgramTTSService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        # Telephony is 8 kHz end to end, so asking the synthesiser for 8 kHz
-        # avoids a resample per call — one less thing competing for the CPU when
-        # a Run All holds ten calls open at once.
-        sample_rate=int(os.getenv("DEEPGRAM_TTS_SAMPLE_RATE", "8000" if telephony else "0"))
-        or None,
-        settings=DeepgramTTSService.Settings(
-            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
-            # Manner is not scored, but the three-minute cap is: speaking a
-            # little faster is a little more room before the wall clock bites.
-            speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
-        ),
-    )
+    stt = build_stt()
+    tts = build_tts(telephony)
     llm = build_llm(call_id)
 
     context = LLMContext()

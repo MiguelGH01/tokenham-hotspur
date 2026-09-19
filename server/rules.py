@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from clinic_catalog import load_catalog
+from service_locations import origin_from_spoken_place as _origin_from_sites
 
 #: Self-pay. A plan a patient holds or does not — never a plan we quote to
 #: unlock a booking their real plan refuses.
@@ -420,6 +421,76 @@ def nearest_location(
         return dlat * dlat + dlon * dlon
 
     return min(candidates, key=distance_sq)
+
+
+_LANGUAGE_ALIASES = {
+    "ca": "ca",
+    "catalan": "ca",
+    "catala": "ca",
+    "es": "es",
+    "spanish": "es",
+    "espanol": "es",
+    "castellano": "es",
+    "en": "en",
+    "english": "en",
+    "ingles": "en",
+    "gl": "gl",
+    "galician": "gl",
+    "gallego": "gl",
+    "eu": "eu",
+    "basque": "eu",
+    "euskera": "eu",
+    "euskara": "eu",
+}
+
+
+def normalize_language(spoken: str | None) -> str | None:
+    """Map a spoken language name onto the catalogue's language codes."""
+    if not spoken:
+        return None
+    key = fold(spoken).replace("-", " ").split()[0]
+    return _LANGUAGE_ALIASES.get(key)
+
+
+def language_constrains_booking(catalogue: dict, language: str | None) -> bool:
+    """Whether this language is a booking filter.
+
+    ``CL-language-default``: every provider already speaks Spanish, so pinning
+    Spanish must not shrink the roster. A language only some of them speak
+    (Catalan, English, …) is the constraint the case is testing.
+    """
+    if not language:
+        return False
+    return any(language not in (p.get("languages") or []) for p in catalogue["providers"])
+
+
+def provider_speaks(catalogue: dict, provider_id: str, language: str | None) -> bool:
+    if not language_constrains_booking(catalogue, language):
+        return True
+    provider = next((p for p in catalogue["providers"] if p["id"] == provider_id), None)
+    return provider is not None and language in (provider.get("languages") or [])
+
+
+def origin_from_spoken_place(spoken: str) -> tuple[float, float] | None:
+    """Latitude/longitude of the hardcoded site neighbourhood the caller named."""
+    return _origin_from_sites(spoken)
+
+
+def location_from_spoken_place(
+    spoken: str,
+    specialty_id: str | None = None,
+) -> dict | None:
+    """The closest site that can serve, from a spoken street or neighbourhood.
+
+    The origin is the published coordinate of whichever hardcoded service site
+    the speech matches. Distance is then straight-line among sites that can
+    serve (PR-15), so a neighbourhood next to a site that cannot take the
+    specialty still lands on the next one that can.
+    """
+    origin = origin_from_spoken_place(spoken)
+    if origin is None:
+        return None
+    return nearest_location(specialty_id, origin)
 
 
 def today_in_madrid(now: datetime) -> date:

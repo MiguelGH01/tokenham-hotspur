@@ -24,7 +24,13 @@ from flows.common import (
     create_refusal_node,
     gated_confirmation,
 )
-from rules import check_patient_rules, check_provider_rules, resolve_plan
+from rules import (
+    check_patient_rules,
+    check_provider_rules,
+    location_from_spoken_place,
+    provider_speaks,
+    resolve_plan,
+)
 from submission import book_action, reschedule_action
 
 #: The titles a caller and the roster actually use, and the gender each one
@@ -158,6 +164,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     catalogue = load_catalog()
 
     specialty, site = args.get("specialty"), args.get("site")
+    near_place = (args.get("near_place") or "").strip()
     site_name = location_name(site) if site else None
 
     # Resolved before the doctor: the plan is one of the facts that decides
@@ -197,6 +204,12 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 "not_eligible_age"
             )
         specialty, note = age_verdict.redirect_specialty, "redirected_by_age"
+
+    if not site and near_place:
+        nearest = location_from_spoken_place(near_place, specialty)
+        if nearest is not None:
+            site = nearest["id"]
+            site_name = nearest["name"]
 
     # 2. A named doctor the plan or the roster rules out is a redirect, not a refusal.
     if provider_id:
@@ -279,6 +292,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         (r for r in restrictions if isinstance(r, str)),
         (rules_verdict.reason if rules_verdict else None) or "no_availability",
     )
+    language = state.get("language")
     availability = {
         **availability,
         "slots": [
@@ -286,6 +300,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             for s in availability["slots"]
             if (not site or s["location_id"] == site)
             and s.get("specialty_id", specialty) == specialty
+            and provider_speaks(catalogue, s["provider_id"], language)
         ],
     }
     if state.get("intent") == "reschedule":
@@ -333,6 +348,18 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             offer = pick_offer(alternatives, state["patient"], connected_at, weekday, part_of_day)
     else:
         offer = pick_offer(availability, state["patient"], connected_at, weekday, part_of_day)
+        if offer is None and (weekday or part_of_day):
+            # PR-07: the asked window is empty. Offer the earliest slot that
+            # still respects site and specialty, never a different ask.
+            relaxed = pick_offer(availability, state["patient"], connected_at, None, part_of_day)
+            if relaxed is None:
+                relaxed = pick_offer(
+                    availability, state["patient"], connected_at, weekday, None
+                )
+            if relaxed is None:
+                relaxed = pick_offer(availability, state["patient"], connected_at, None, None)
+            if relaxed is not None:
+                offer, note = relaxed, "negotiated"
     if offer is None:
         state["submission"].set_no_action(reason)
         result = {"status": "no_slots", "blocked": availability.get("blocked", [])}
@@ -379,6 +406,11 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         # it explains instead of presenting the redirect as the original answer.
         result["note"] = note
         result["specialty"] = specialty
+        if note == "negotiated":
+            result["instruction"] = (
+                "The window they asked for was empty. Offer this as the closest that "
+                "fits; do not present it as the original time."
+            )
     return result, create_confirm_node(flow_manager)
 
 
@@ -472,7 +504,14 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
             "site": {
                 "type": "string",
                 "enum": location_ids(),
-                "description": "Only if the caller asked for a site.",
+                "description": "Only if the caller named a clinic site. Never guess from the enum.",
+            },
+            "near_place": {
+                "type": "string",
+                "description": (
+                    "Street, neighbourhood or town the caller said they are at when they "
+                    "want the closest site. Pass their words; never a site id."
+                ),
             },
             "policy_name": {
                 "type": "string",
@@ -602,11 +641,17 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     "surname is ambiguous, so never drop one of the two. "
                     "A named GP, site or doctor the caller said wins over an invented enum value. "
                     "Do not guess a site or doctor from the enum. "
-                    "Only pass site, weekday or part_of_day if the caller asked for them. Never "
-                    "pass policy_name unless the caller named a plan out loud. Then call "
+                    "Only pass site, weekday or part_of_day if the caller asked for them. If they "
+                    "gave a street or neighbourhood instead of a site name, pass near_place as "
+                    "they said it and do not guess a site. Never "
+                    "pass policy_name unless the caller named a plan out loud. If coverage blocks, "
+                    "ask whether they hold another plan and only then retry with policy_name. "
+                    "Then call "
                     "get_earliest_slot. If it returns no_slots, say nothing is available for that "
                     "request; when reason_words is set, say that rule in plain words as well, and "
-                    "only ask whether they would drop a constraint when no rule applies. If it "
+                    "only ask whether they would drop a constraint when no rule applies. If the "
+                    "offer note is negotiated, say this is the closest that fits, not the window "
+                    "they first asked for. If it "
                     "returns "
                     "redirected_by_age, explain plainly that this patient belongs with the other "
                     "team and offer what came back — never call it an error. If blocked, say the "
@@ -631,7 +676,8 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
                 "role": "developer",
                 "content": (
                     "Offer the appointment from the summary the tool returned: doctor, site, day "
-                    "and time. Ask if that works. Nothing is booked until they say yes. On yes, "
+                    "and time, including the address if they asked which site is closest. "
+                    "Ask if that works. Nothing is booked until they say yes. On yes, "
                     "call confirm_offer. If they want something different, call revise_search. If "
                     "confirm_offer returns CANCELLED, or says the call is still running, the "
                     "booking is not recorded yet: say you are finishing it off and call "
