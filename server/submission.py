@@ -1,4 +1,5 @@
 """The call's action list, delivered until the platform accepts it.
+
 One call submits **a list**: ``record.actions: [...]`` is the documented response
 shape, and two problems need more than one verb in a single call (cancel plus
 book, or two intents stacked). The list is ordered and immutable once an action
@@ -16,8 +17,6 @@ Two entry points, and the difference matters:
   back to a reasoned refusal, because an empty list scores nothing while a
   wrong-but-stated refusal at least states something. That fallback belongs to
   the **call**, not to each intent: a call that asked three things and decided
-  none of them states one refusal, not three. That fallback belongs to
-  the **call**, not to each intent: a call that asked three things and decided
   none of them states one refusal, not three.
 
 **A refusal the conversation can still revise is not a decision.** A call that
@@ -31,6 +30,7 @@ that simply ends keeps the guarantee that it never submits nothing.
 """
 
 import asyncio
+import os
 from copy import deepcopy
 
 from loguru import logger
@@ -75,9 +75,18 @@ def register_action(patient: dict) -> dict:
 class CallSubmission:
     """Ordered actions for one call, delivered in order and retried until taken."""
 
-    def __init__(self, call_id, client):
+    def __init__(self, call_id, client, *, fallback=None, fallback_timeout_secs=None):
         self.call_id = call_id
         self._client = client
+        #: Asked once, when the call ends having decided nothing: see
+        #: ``_resolve_fallback`` and ``resolution.py``.
+        self._fallback = fallback
+        self._fallback_timeout_secs = (
+            fallback_timeout_secs
+            if fallback_timeout_secs is not None
+            else float(os.getenv("FALLBACK_TIMEOUT_SECS", "12"))
+        )
+        self._fallback_decision: dict | None = None
         self._actions: list[dict] = []
         #: Parallel to ``_actions``: True while the action is still revisable.
         self._provisional: list[bool] = []
@@ -118,9 +127,9 @@ class CallSubmission:
     @property
     def needs_delivery(self) -> bool:
         """Unaccepted decided actions remain, even after partial acceptance."""
-        return bool(
-            self._outstanding(release_provisional=self._closed, fallback=False)
-        ) or any(request.needs_delivery for request in self._requests)
+        return bool(self._outstanding(release_provisional=self._closed)) or any(
+            request.needs_delivery for request in self._requests
+        )
 
     def carries(self, action: dict) -> bool:
         """Whether the plan this call will submit already holds this exact action.
@@ -198,61 +207,92 @@ class CallSubmission:
 
     # --- delivery ---------------------------------------------------------
 
-    def _outstanding(self, *, release_provisional: bool, fallback: bool) -> list[dict]:
+    def _outstanding(self, *, release_provisional: bool) -> list[dict]:
         """This plan's unaccepted actions, in order, stopping at a live refusal.
 
         A provisional refusal is not a decision yet. Delivering it would freeze
         the record while the conversation is still able to produce a booking,
         and nothing behind it may overtake it either, so the run stops there
         rather than skipping ahead.
-
-        ``fallback`` is the refusal a call with *nothing* decided still owes the
-        platform (``SC-no-silence``), and it belongs to the call rather than to
-        one intent: it is offered at most once, and only when the call is over.
         """
-        if self._actions:
-            pending: list[dict] = []
-            for index, action in enumerate(self._actions):
-                if index < self._delivered:
-                    continue
-                if not release_provisional and self._provisional[index]:
-                    break
-                pending.append(action)
-            return pending
-        if not fallback or self._delivered:
-            return []
-        return [dict(DEFAULT_ACTION)]
+        pending: list[dict] = []
+        for index, action in enumerate(self._actions):
+            if index < self._delivered:
+                continue
+            if not release_provisional and self._provisional[index]:
+                break
+            pending.append(action)
+        return pending
+
+    def _plan_exists(self) -> bool:
+        """Whether anything at all is left to send, this plan's or a request's."""
+        return bool(self._outstanding(release_provisional=True)) or any(
+            request._plan_exists() for request in self._requests
+        )
+
+    async def _resolve_fallback(self) -> dict:
+        """The call's last action, from the resolver the session wired in.
+
+        Never raises and never blocks the close: a resolver that fails or hangs
+        leaves the unscored refusal, which is still a stated answer. Asked once,
+        so a repeated ``close()`` retries that same ending instead of searching
+        again.
+        """
+        if self._fallback_decision is not None:
+            return deepcopy(self._fallback_decision)
+        action = dict(DEFAULT_ACTION)
+        if self._fallback is not None:
+            try:
+                resolved = await asyncio.wait_for(
+                    self._fallback(), timeout=self._fallback_timeout_secs
+                )
+            except Exception as exc:
+                logger.error("Fallback resolution failed: {}", type(exc).__name__)
+                audit.audit(
+                    self.call_id,
+                    "submission_result",
+                    verb="FALLBACK",
+                    ok=False,
+                    error=type(exc).__name__,
+                )
+            else:
+                if resolved:
+                    action = dict(resolved)
+        self._fallback_decision = action
+        return deepcopy(action)
 
     async def flush(self) -> bool:
         """Deliver what the call has decided so far. Never invents an action."""
-        accepted = await self._deliver(release_provisional=False, fallback=False)
+        accepted = await self._deliver(self._outstanding(release_provisional=False), final=False)
         for request in self._requests:
             accepted = await request.flush() and accepted
         return accepted
 
     async def close(self) -> bool:
-        """End of call: deliver the plan, or the one refusal that covers the call."""
+        """End of call: deliver the plan, or the one ending that covers the call."""
         self._closed = True
-        accepted = await self._deliver(release_provisional=True, fallback=False)
+        accepted = await self._deliver(self._outstanding(release_provisional=True), final=True)
         for request in self._requests:
             accepted = await request._close_request() and accepted
-        if not self._actions and not self._delivered_anything():
-            # Silence is never cheaper than a stated answer, but a per-intent
-            # request is not a call: the fallback is stated once, for the call.
-            accepted = await self._deliver(release_provisional=True, fallback=True) and accepted
-        return accepted
+        if self._plan_exists() or self._delivered_anything():
+            return accepted
+        # Silence is never cheaper than a stated answer, but "nothing decided"
+        # is not the same as "nothing known": the call resolves the best ending
+        # it can still stand behind before settling for the unscored refusal.
+        # One ending per call, not one per intent.
+        return await self._deliver([await self._resolve_fallback()], final=True) and accepted
 
     async def _close_request(self) -> bool:
         """Close one intent of the call, without inventing the call's fallback."""
         self._closed = True
-        return await self._deliver(release_provisional=True, fallback=False)
+        return await self._deliver(self._outstanding(release_provisional=True), final=True)
 
     def _delivered_anything(self) -> bool:
         return self._delivered > 0 or any(
             request._delivered_anything() for request in self._requests
         )
 
-    async def _deliver(self, *, release_provisional: bool, fallback: bool) -> bool:
+    async def _deliver(self, pending: list[dict], *, final: bool) -> bool:
         """Deliver every outstanding action, in order. True when all were taken.
 
         Ordering matters: a cancel that must precede a book cannot be swapped,
@@ -264,16 +304,14 @@ class CallSubmission:
         stamped on here — the one place that owns both the plan and the id.
         """
         async with self._lock:
-            for action in self._outstanding(
-                release_provisional=release_provisional, fallback=fallback
-            ):
+            for action in pending:
                 payload = {"call_id": self.call_id, **deepcopy(action)}
                 audit.audit(
                     self.call_id,
                     "submission_attempt",
                     verb=action.get("action"),
                     payload={k: v for k, v in action.items()},
-                    final=release_provisional,
+                    final=final,
                 )
                 self._attempted = True
                 try:

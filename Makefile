@@ -25,7 +25,7 @@ CLOCK ?=
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
 
-.PHONY: help run-webrtc run-twilio tunnel test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -35,6 +35,12 @@ help:
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
+	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
+	@echo "make oracle       - offline scoring: where the 196 points are and what each problem expects"
+	@echo "make oracle-fetch - refresh the organisers' published roster (do it each morning)"
+	@echo "make oracle-check - run the judge against every published answer (must reject none)"
+	@echo "                    score one call's trail: cd server && uv run python -m evals.corpus \\"
+	@echo "                      --case <case-id> --audit audit-logs/audit-<call>.ndjson"
 	@echo "                    (set NGROK_DOMAIN=your-reserved-domain to keep the URL fixed across restarts)"
 	@echo "make test         - run the server's pytest suite (unit + acceptance)"
 	@echo "make concurrency  - dial $(N) concurrent sockets at a local telephony bot and report"
@@ -48,6 +54,28 @@ help:
 
 test:
 	cd $(SERVER_DIR) && uv run pytest tests/
+
+# A scored run dials the endpoint ten calls at a time and scores each call's
+# record, so restarting the bot (or re-opening the tunnel) mid-run kills cases
+# that are already being scored. Run this first, or wire it into whatever
+# restarts the endpoint. Waits ~20 min for a run to finish, refuses after that,
+# and allows the restart when the dashboard cannot be read at all.
+#   make guard                 # wait/refuse as needed
+#   make guard FORCE=1         # skip the check
+FORCE ?=
+guard:
+	cd $(SERVER_DIR) && uv run python -m prosper_guard $(if $(filter 1,$(FORCE)),--force,)
+
+# The offline oracle: score a submission against the organisers' published cases
+# without spending a scored run (see docs/scoring-design-notes.md).
+oracle:
+	cd $(SERVER_DIR) && uv run python -m evals.corpus --coverage
+
+oracle-fetch:
+	cd $(SERVER_DIR) && uv run python -m evals.corpus --fetch
+
+oracle-check:
+	cd $(SERVER_DIR) && uv run python -m evals.corpus --selfcheck
 
 # PR-02 readiness: hold N concurrent Twilio-shaped sockets against a local
 # telephony bot. Not scored — it measures whether the endpoint can carry the

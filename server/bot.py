@@ -41,6 +41,7 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
+from affirmation_watch import AffirmationWatch
 from booking import MADRID
 from clients.clinic_client import ClinicClient
 from clinic_catalog import load_catalog
@@ -48,6 +49,8 @@ from flows.common import GREETING
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
 from liveness import SilenceWatchdog
+from llm_deadline import FirstTokenDeadlineLLM
+from resolution import resolve_fallback
 from submission import CallSubmission
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
@@ -107,7 +110,7 @@ def _connected_at() -> datetime:
 LLM_RETRY_TIMEOUT_SECS = float(os.getenv("LLM_RETRY_TIMEOUT_SECS", "8"))
 
 
-def build_llm():
+def build_llm(call_id: str | None = None):
     """The service that answers the phone.
 
     Latency here is not a comfort question. A call is capped at three minutes
@@ -118,15 +121,20 @@ def build_llm():
 
     The OpenAI-backed services are also given ``retry_on_timeout=True`` with
     ``LLM_RETRY_TIMEOUT_SECS``: an unresponsive stream is re-issued instead of
-    becoming dead air, which the scorer attributes to us outright.
+    becoming dead air, which the scorer attributes to us outright. The
+    chat-completions path goes one step further and uses
+    :class:`llm_deadline.FirstTokenDeadlineLLM`, because pipecat's own guard
+    stops at the response headers and re-issues without any deadline at all
+    (``llm_deadline.py`` has the post-mortem).
     """
     provider = os.getenv("LLM_PROVIDER", "helmcode")
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
-        return OpenAILLMService(
+        return FirstTokenDeadlineLLM(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
             retry_timeout_secs=LLM_RETRY_TIMEOUT_SECS,
             retry_on_timeout=True,
+            call_id=call_id,
             settings=OpenAILLMService.Settings(
                 model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash"),
                 temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
@@ -305,7 +313,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
         ),
     )
-    llm = build_llm()
+    llm = build_llm(call_id)
 
     context = LLMContext()
     context_aggregator = LLMContextAggregatorPair(
@@ -327,6 +335,22 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
         is_active=lambda: flow_started,
     )
+
+    # Submits a plan the caller has just agreed to, without waiting for the
+    # model's own confirm turn (see affirmation_watch.py). Triggered by the
+    # aggregator's own turn event, wired just below.
+    affirmation_watch = AffirmationWatch()
+
+    @user_aggregator.event_handler("on_user_turn_message_added")
+    async def on_user_turn_message_added(aggregator, message):
+        """The caller's finalized turn is now in the context.
+
+        This is the moment a yes becomes actionable. The user aggregator
+        consumes the final ``TranscriptionFrame`` rather than forwarding it, so a
+        processor further down the pipeline never sees the turn a watcher would
+        exist for.
+        """
+        affirmation_watch.consider(getattr(message, "content", None))
 
     @user_aggregator.event_handler("on_user_turn_started")
     async def on_user_turn_started(aggregator, strategy):
@@ -369,7 +393,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context_aggregator=context_aggregator,
         transport=transport,
     )
-    submission = CallSubmission(call_id, ClinicClient())
+    affirmation_watch.bind(flow_manager)
+    submission = CallSubmission(
+        call_id,
+        ClinicClient(),
+        # Only asked when the call ends having decided nothing: the best ending
+        # it can still stand behind beats the ``out_of_scope`` that matches no
+        # published case. See ``resolution.py``.
+        fallback=lambda: resolve_fallback(flow_manager.state),
+    )
     flow_manager.state.update(
         {
             "call_id": call_id,

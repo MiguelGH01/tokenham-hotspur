@@ -109,7 +109,60 @@ def is_affirmative(text: str) -> bool:
 def is_clean_yes(text: str) -> bool:
     """The caller's consent, in code: affirmative, with no qualification left open.
 
-    One definition for every path that needs it, so the gate cannot drift from
-    itself and lose a case either way.
+    One definition for the two paths that need it — the tool that confirms a
+    read-back, and the watcher that submits the moment the yes lands
+    (``affirmation_watch.py``). A second copy would drift, and the drift would
+    only show up as a case lost either way.
     """
     return is_affirmative(text) and gate_result(text) is None
+
+
+#: What the agent's read-back questions look like, when a plan exists to answer
+#: them. The ``prepared`` shortcut below is the stronger signal, so these are
+#: only needed before anything has been drawn up.
+_CONFIRMATION_CUES = (
+    "works",
+    "work for you",
+    "correct",
+    "right",
+    "confirm",
+    "shall i",
+    "should i",
+    "do you want",
+    "would you like",
+    "go ahead",
+    "okay with",
+    "ok with",
+    "te viene bien",
+    "le viene bien",
+    "correcto",
+    "confirmo",
+    "et va bé",
+)
+
+
+def looks_like_confirmation_question(text: str, *, prepared: bool = False) -> bool:
+    """Was the agent's last turn a read-back waiting for a yes?
+
+    A question mark is required either way. ``prepared`` says the call has
+    already drawn an action up, which is itself the closing step — the read-back
+    and the plan were produced together — so the cue words are only consulted
+    before that.
+    """
+    if "?" not in (text or ""):
+        return False
+    if prepared:
+        return True
+    lowered = _normalize(text)
+    return any(cue in lowered for cue in _CONFIRMATION_CUES)
+
+
+#: How long a turn may be and still count as a one-word-style yes. A backstop
+#: for the affirmative regex, which only looks at how the turn starts.
+MAX_AFFIRMATION_WORDS = 12
+
+
+def is_short_clean_yes(text: str) -> bool:
+    """A clean yes the agent does not have to interpret: short, and unqualified."""
+    words = _normalize(text).split()
+    return bool(words) and len(words) <= MAX_AFFIRMATION_WORDS and is_clean_yes(text)

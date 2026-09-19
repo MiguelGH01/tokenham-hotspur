@@ -124,14 +124,18 @@ class ClinicClient:
             query["insurer"] = list(insurer)
         return await self._request("GET", "/v1/availability", params=query)
 
-    async def appointments(self, patient_id: str) -> list[dict]:
-        """The patient's diary: what the caller can still act on (``when=upcoming``)."""
+    async def appointments(self, patient_id: str, when: str = "upcoming") -> list[dict]:
+        """The patient's diary. ``when`` is ``upcoming``, ``past`` or ``all``.
+
+        Past visits are what the end-of-call resolver mines for a habit (see
+        ``resolution.py``); they are not mutable and are never an answer.
+        """
         from urllib.parse import quote
 
         data = await self._request(
             "GET",
             f"/v1/patients/{quote(patient_id, safe='')}/appointments",
-            params={"when": "upcoming"},
+            params={"when": when},
         )
         return data["appointments"]
 
