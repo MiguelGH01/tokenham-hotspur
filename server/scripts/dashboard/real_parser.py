@@ -7,9 +7,12 @@ worth of lines. Each "Starting bot for call <id>" line marks the start of a
 new call; everything up to the next such line (or EOF) belongs to it.
 """
 import ast
+import json
 import re
 from datetime import datetime
 from pathlib import Path
+
+from transcript_utils import build_transcript, extract_caller_name
 
 LINE_RE = re.compile(r"^(?P<ts>[\d\-: .]+) \| (?P<level>\w+)\s*\| (?P<src>[^-]+) - (?P<msg>.*)$")
 CTX_RE = re.compile(r"Generating chat from context (\[.*\])\s*$")
@@ -18,6 +21,36 @@ OFFER_RE = re.compile(r"^Offer (\S+): (\{.*\})$")
 SUBMIT_OK_RE = re.compile(r"^Submitted (\S+) for call (\S+): (.*)$")
 SUBMIT_FAIL_RE = re.compile(r"^Submission failed for call (\S+) \((.*)\): (.*)$")
 REPROMPT_RE = re.compile(r"^Call (\S+): (\d+)s of silence, re-prompting: (.*)$")
+AUDIT_ID_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _read_audit_outcome(audit_dir: Path, call_id: str):
+    """Read the final `submission_result` from this call's audit-logs/audit-<id>.ndjson.
+
+    This is the authoritative outcome (see server/audit.py / submission.py) --
+    bot.log text is not, since its log message formats have drifted since the
+    old regex-based outcome tracking below was written.
+    """
+    if not call_id:
+        return None
+    safe_id = AUDIT_ID_RE.sub("_", call_id)[:128] or "unknown"
+    path = audit_dir / f"audit-{safe_id}.ndjson"
+    if not path.exists():
+        return None
+    last = None
+    for line in path.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("event") == "submission_result":
+            last = rec
+    if last is None:
+        return None
+    return last.get("verb"), bool(last.get("ok"))
 
 
 def _parse_ts(ts_str):
@@ -25,6 +58,28 @@ def _parse_ts(ts_str):
         return datetime.strptime(ts_str.strip()[:23], "%Y-%m-%d %H:%M:%S.%f")
     except ValueError:
         return None
+
+
+def _attach_entry_timestamps(transcript, ctx_snapshots):
+    """Stamp each transcript entry with the call-relative second it first appeared.
+
+    A call logs one "Generating chat from context [...]" snapshot per LLM
+    call, each a growing prefix of the final context (messages are appended,
+    never edited mid-call). Flattening each snapshot with the same
+    `build_transcript` used for the final one and diffing consecutive lengths
+    gives the wall-clock offset each entry first showed up at -- close enough
+    to line the transcript up with the call recording.
+    """
+    seen = 0
+    for t, ctx in ctx_snapshots:
+        try:
+            flat = build_transcript(ctx)
+        except Exception:
+            continue
+        n = min(len(flat), len(transcript))
+        for i in range(seen, n):
+            transcript[i]["t"] = round(t, 2)
+        seen = max(seen, n)
 
 
 def _find_call_boundaries(lines, matched):
@@ -53,6 +108,7 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
 
     events, errors, warnings = [], [], []
     last_ctx = None
+    ctx_snapshots = []  # [(t, parsed_context), ...] in chronological order
 
     for line, m in zip(seg_lines, seg_matched):
         if not m:
@@ -64,9 +120,12 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         ctx_m = CTX_RE.search(line)
         if ctx_m:
             try:
-                last_ctx = ast.literal_eval(ctx_m.group(1))
+                parsed_ctx = ast.literal_eval(ctx_m.group(1))
             except Exception:
-                pass
+                parsed_ctx = None
+            if parsed_ctx is not None:
+                last_ctx = parsed_ctx
+                ctx_snapshots.append((t, parsed_ctx))
 
         if CALL_ID_RE.search(msg):
             events.append({"t": t, "kind": "call_start", "detail": msg})
@@ -96,7 +155,7 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
 
         rm = REPROMPT_RE.match(msg)
         if rm:
-            events.append({"t": t, "kind": "reprompt", "detail": msg}); continue
+            events.append({"t": t, "kind": "reprompt", "detail": msg, "message": rm.group(3)}); continue
 
         if level in ("ERROR", "CRITICAL"):
             errors.append({"t": t, "src": src, "msg": msg})
@@ -105,21 +164,8 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
             warnings.append({"t": t, "src": src, "msg": msg})
             events.append({"t": t, "kind": "warning", "detail": msg})
 
-    transcript = []
-    if last_ctx:
-        for msg in last_ctx:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role")
-            entry = {"role": role}
-            if msg.get("content"):
-                entry["content"] = msg["content"]
-            if msg.get("tool_calls"):
-                entry["tool_calls"] = [
-                    {"name": tc.get("function", {}).get("name"), "arguments": tc.get("function", {}).get("arguments")}
-                    for tc in msg["tool_calls"]
-                ]
-            transcript.append(entry)
+    transcript = build_transcript(last_ctx)
+    _attach_entry_timestamps(transcript, ctx_snapshots)
 
     duration = events[-1]["t"] if events else 0.0
     outcome = "IN_PROGRESS"
@@ -136,6 +182,7 @@ def _parse_segment(lines, matched, start_i, end_i, call_id):
         "outcome": outcome,
         "events": events,
         "transcript": transcript,
+        "caller_name": extract_caller_name(transcript),
         "errors": errors,
         "warnings": warnings,
     }
@@ -158,14 +205,22 @@ def parse_real_calls(run_logs_dir: Path):
     calls = []
     if not run_logs_dir.exists():
         return {"calls": calls}
+    audit_dir = run_logs_dir.parent / "audit-logs"
     for d in sorted(run_logs_dir.iterdir()):
         if not d.is_dir() or d.name == "recordings":
             continue
         bot_log = d / "bot.log"
         if not bot_log.exists():
             continue
-        m = re.match(r"(webrtc|twilio)-(\d{8}-\d{6})", d.name)
-        mode, session_started_at = (m.group(1), m.group(2)) if m else ("unknown", d.name)
+        # Run dirs are <transport>-[<person>-]<timestamp>; the person tag
+        # (e.g. "carlos") distinguishes whose machine a call was run from --
+        # untagged runs are Migui's own, which is the default.
+        m = re.match(r"(?:webrtc|twilio)(?:-([A-Za-z0-9]+))?-(\d{8}-\d{6})$", d.name)
+        if m:
+            person, session_started_at = m.group(1), m.group(2)
+            mode = person.lower() if person else "migui"
+        else:
+            mode, session_started_at = "unknown", d.name
 
         rec_dir = run_logs_dir / "recordings"
         for call in parse_bot_log(bot_log):
@@ -178,6 +233,14 @@ def parse_real_calls(run_logs_dir: Path):
                 if hits:
                     recording = hits[0].name
             call["recording"] = recording
+
+            audit_result = _read_audit_outcome(audit_dir, call["call_id"])
+            if audit_result:
+                verb, ok = audit_result
+                call["outcome"] = verb if ok else "SUBMIT_FAILED"
+            elif call["outcome"] == "IN_PROGRESS" and any(e["kind"] == "disconnected" for e in call["events"]):
+                call["outcome"] = "ABANDONED"
+
             calls.append(call)
 
     calls.sort(key=lambda c: c["started_at"], reverse=True)

@@ -322,20 +322,11 @@ def build_llm(call_id: str | None = None):
 def build_eval_judge_llm(config: dict | None = None):
     """Factory for the eval harness judge (`judge.eval.factory:` in a scenario).
 
-    The judge is pinned to its own model **and its own provider**. It used to
-    reuse the bot's service, which coupled two decisions that have nothing to do
-    with each other: putting the phone on a gateway that does not serve
-    ``gpt-5.1`` would have silently changed every verdict, or failed them, while
-    looking like a bot regression. Verdicts must not move when the bot's model
-    does.
-
-    A scenario's ``model`` key still wins over ``EVAL_JUDGE_MODEL``.
+    Follows the bot's own ``LLM_PROVIDER`` (via :func:`build_llm`) instead of
+    hardcoding OpenAI, so the judge works with whichever gateway/keys the bot
+    itself is configured with.
     """
-    override = (config or {}).get("model") or os.getenv("EVAL_JUDGE_MODEL", "gpt-5.1")
-    return OpenAIResponsesLLMService(
-        api_key=os.environ["OPENAI_API_KEY"],
-        settings=OpenAIResponsesLLMService.Settings(model=override),
-    )
+    return build_llm()
 
 
 def _user_turn_strategies() -> UserTurnStrategies:
@@ -527,7 +518,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     audio_recorder = None
     if RECORD_CALLS:
-        audio_recorder = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
+        audio_recorder = AudioBufferProcessor(num_channels=1, auto_start_recording=True)
 
         @audio_recorder.event_handler("on_audio_data")
         async def on_audio_data(processor, audio, sample_rate, num_channels):

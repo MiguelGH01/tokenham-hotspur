@@ -26,7 +26,7 @@ CLOCK ?=
 DOTENV ?=
 JOBS ?= 4
 
-.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop evals-parallel dashboard
+.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop evals-parallel dashboard transform-logs
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -63,6 +63,9 @@ help:
 	@echo "make dashboard    - local live-reading dashboard over server/eval-runs/ and server/run-logs/"
 	@echo "                    (http://localhost:8787; PORT=N to change)"
 	@echo "make eval-bot-stop - kill any leftover eval bot on port $(EVAL_PORT)"
+	@echo "make transform-logs - normalize stray server/run-logs/*.log.txt files (e.g. dropped in"
+	@echo "                    from a teammate's older/Windows build) into <transport>-<label>-<timestamp>/bot.log"
+	@echo "                    (DRY_RUN=1 to preview; TRANSPORT=twilio default)"
 
 test:
 	cd $(SERVER_DIR) && uv run pytest tests/
@@ -85,6 +88,9 @@ run-twilio:
 
 evals-parallel:
 	@bash scripts/eval_parallel.sh $(JOBS)
+
+tunnel:
+	NGROK_DOMAIN=$(NGROK_DOMAIN) bash scripts/tunnel.sh 7860 /ws
 
 PORT ?= 8787
 dashboard:
@@ -185,3 +191,8 @@ eval-spec-%: $(EVAL_SPEC_DIR)/%.yaml
 
 eval-bot-stop:
 	@pkill -f "bot.py -t eval --port $(EVAL_PORT)" 2>/dev/null || true
+
+TRANSPORT ?= twilio
+DRY_RUN ?=
+transform-logs:
+	cd $(SERVER_DIR) && uv run python scripts/import_stray_run_logs.py --transport $(TRANSPORT) $(if $(filter 1,$(DRY_RUN)),--dry-run,)
