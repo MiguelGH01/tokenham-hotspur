@@ -1,0 +1,23 @@
+# SIMULATED version of PR-06/the_rules_gloria_plan_redirect.yaml: an LLM plays the caller, SPEAKING, and adapts to what the
+# bot says, as the platform's caller does. The `# submit:` check is the hard assertion.
+# submit: BOOK P00057 PR12 norte dermatology_review dkv
+name: sim_the_rules_gloria_plan_redirect
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+simulator:
+  factory: eval_judge.helmcode_judge
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+persona: |
+  Gloria González Blanco, DNI 15750638P. Has an eczema flare-up.
+  A patient phoning Clínica Arenal, speaking English. Polite, brief, answers one question at a time and repeats or spells anything the receptionist asks for. Knows nothing about the clinic's rules. Accepts or declines only an appointment that was actually offered with a doctor, site, day and time.
+goal: "See Dra. Iglesias for the eczema. If she cannot see you, accept another dermatologist. Then end the call."
+success: "the bot said Dra. Iglesias does not take her plan, offered Dr. Vilar instead of refusing, and booked it after a yes"
+max_turns: 12

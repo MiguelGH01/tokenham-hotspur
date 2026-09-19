@@ -1,0 +1,34 @@
+# submit: BOOK P01847 PR03 centro first_visit asisa
+# AUDIO version of PR-03/doctor_and_site_mario_wrong_weekday.yaml: the caller speaks, so VAD, STT and TTS run.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_doctor_and_site_mario_wrong_weekday
+turns:
+  - user: "Hello, Mario Gómez Blanco, DNI X2245876H. I'd like to see Dr. Sáez at Arenal Centro, on a Monday if possible."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: centro }
+      - event: response
+        eval: "the response explains Dr. Sáez is not at Arenal Centro on Mondays and offers his earliest slot there on the day he does hold Centro hours (Friday), rather than switching to a different doctor or a different site"
+  - user: "Alright, Friday works, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

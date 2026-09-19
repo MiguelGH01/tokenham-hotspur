@@ -1,0 +1,38 @@
+# submit: BOOK P00001 * * review mapfre
+# AUDIO version of PR-01 Josefa: the caller SPEAKS (local Kokoro voice), so the bot's real VAD,
+# STT and TTS run and turn-taking is exercised. Slower than the text eval; not run by default.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_simple_booking_josefa
+turns:
+  - user: "Hi, I'd like to book an appointment. My name is Josefa Domínguez Navarro and my DNI is 48064716Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+  - user: "With a general practitioner, as soon as possible."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice }
+      - event: response
+        eval: "the response offers one specific general practice appointment, naming the doctor, the site, the day and the time, and asks whether it works"
+  - user: "Yes, that works for me."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

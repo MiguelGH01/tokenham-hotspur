@@ -1,0 +1,23 @@
+# SIMULATED version of PR-03/doctor_and_site_emilio.yaml: an LLM plays the caller, SPEAKING, and adapts to what the
+# bot says, as the platform's caller does. The `# submit:` check is the hard assertion.
+# submit: BOOK P01850 PR03 sur review mapfre
+name: sim_doctor_and_site_emilio
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+simulator:
+  factory: eval_judge.helmcode_judge
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+persona: |
+  Emilio Rubio Jiménez, DNI 50714604H.
+  A patient phoning Clínica Arenal, speaking English. Polite, brief, answers one question at a time and repeats or spells anything the receptionist asks for. Knows nothing about the clinic's rules. Accepts or declines only an appointment that was actually offered with a doctor, site, day and time.
+goal: "See Dr. Sáez (S-A-E-Z, Martín Sáez, the GP, not Dra. Sáenz) at Arenal Sur. Accept his earliest appointment there, then end the call."
+success: "the bot offered Dr. Martín Sáez at Arenal Sur, never Dra. Sáenz, and booked it after a yes"
+max_turns: 12

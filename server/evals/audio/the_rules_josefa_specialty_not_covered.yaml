@@ -1,0 +1,27 @@
+# submit: NO_ACTION specialty_not_covered
+# AUDIO version of PR-06/the_rules_josefa_specialty_not_covered.yaml: the caller speaks, so VAD, STT and TTS run.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_the_rules_josefa_specialty_not_covered
+turns:
+  - user: "Hi, Josefa Sánchez Gutiérrez, DNI 49526979K. I'd like my yearly Gynaecology check-up, earliest available."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: gynaecology }
+      - event: response
+        eval: "the bot explains her plan does not cover gynaecology at any site, does not ask for a referral (this is not a referral problem), and does not book any appointment"

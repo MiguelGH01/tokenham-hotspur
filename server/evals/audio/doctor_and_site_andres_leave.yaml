@@ -1,0 +1,35 @@
+# submit: BOOK P01843 PR07 norte review dkv 2026-09-22T09:00:00+02:00
+# AUDIO version of PR-03/doctor_and_site_andres_leave.yaml: the caller speaks, so VAD, STT and TTS run.
+# clock: 2026-09-18T10:00:00+02:00
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_doctor_and_site_andres_leave
+turns:
+  - user: "Good morning, Andrés Rubio Vázquez, DNI 63663395Q. Could I get an appointment with Dr. Requena at Arenal Norte?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: norte }
+      - event: response
+        eval: "the response says Dr. Requena is unavailable (on leave) and offers instead the earliest general practice appointment with another doctor still at Arenal Norte, not at a different site"
+  - user: "That's fine, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

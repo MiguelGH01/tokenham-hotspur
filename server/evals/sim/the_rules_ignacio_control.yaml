@@ -1,0 +1,23 @@
+# SIMULATED version of PR-06/the_rules_ignacio_control.yaml: an LLM plays the caller, SPEAKING, and adapts to what the
+# bot says, as the platform's caller does. The `# submit:` check is the hard assertion.
+# submit: BOOK P00005 PR12 norte dermatology_review cigna
+name: sim_the_rules_ignacio_control
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+simulator:
+  factory: eval_judge.helmcode_judge
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+persona: |
+  Ignacio Vázquez Moreno, phone 731 169 716. Has a rash that keeps coming back.
+  A patient phoning Clínica Arenal, speaking English. Polite, brief, answers one question at a time and repeats or spells anything the receptionist asks for. Knows nothing about the clinic's rules. Accepts or declines only an appointment that was actually offered with a doctor, site, day and time.
+goal: "Get the earliest Dermatology appointment, accept it, then end the call."
+success: "the bot offered a dermatology appointment and booked it after a yes"
+max_turns: 12

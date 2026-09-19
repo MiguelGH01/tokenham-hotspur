@@ -1,0 +1,31 @@
+# submit: BOOK P00001 * * review mapfre
+# AUDIO version of the chunked-DNI scenario: the caller dictates the DNI in three spoken groups.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_simple_booking_josefa_chunked_id
+turns:
+  - user: "Josefa Dominguez Navarro. My DNI is four eight zero six"
+    expect:
+      - event: response
+        eval: "the reply is only a very brief prompt to keep going (a few words, e.g. 'Yes?' or 'Go on'); it does NOT say the patient could not be found, does NOT ask the caller to repeat or start over, and does NOT ask a new question"
+  - user: "four seven one six"
+    expect:
+      - event: response
+        eval: "the reply is only a very brief prompt to keep going (a few words, e.g. 'Yes?' or 'Go on'); it does NOT say the patient could not be found, does NOT ask the caller to repeat or start over, and does NOT ask a new question"
+  - user: "Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the reply indicates the patient was found (or moves on to ask what appointment they need); it does NOT say the patient could not be found"

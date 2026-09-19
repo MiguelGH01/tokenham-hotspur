@@ -1,0 +1,27 @@
+# submit: NO_ACTION provider_not_found
+# AUDIO version of PR-03/doctor_and_site_vicente_not_found.yaml: the caller speaks, so VAD, STT and TTS run.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_doctor_and_site_vicente_not_found
+turns:
+  - user: "Hi, Vicente Álvarez Castro, DNI 31179247X. I need to see Dr. Fuentes, the orthopaedic surgeon."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the bot says there is no Dr. Fuentes on the clinic's staff and asks whether another orthopaedics doctor would do"
+  - user: "No, it has to be Dr. Fuentes or nobody."
+    expect:
+      - event: response
+        eval: "the bot apologises that it cannot book Dr. Fuentes, does not offer or book any other appointment, and ends the call"

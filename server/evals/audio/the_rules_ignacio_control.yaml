@@ -1,0 +1,34 @@
+# submit: BOOK P00005 PR12 norte dermatology_review cigna
+# AUDIO version of PR-06/the_rules_ignacio_control.yaml: the caller speaks, so VAD, STT and TTS run.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_the_rules_ignacio_control
+turns:
+  - user: "Hi, Ignacio Vázquez Moreno, phone 731 169 716. This rash keeps coming back, could I see Dermatology as soon as possible?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: phone }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: dermatology }
+      - event: response
+        eval: "the response offers a dermatology appointment and does not refuse or ask for a referral he already has"
+  - user: "Yes, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

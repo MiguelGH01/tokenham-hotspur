@@ -1,0 +1,23 @@
+# SIMULATED version of PR-06/the_rules_josefa_specialty_not_covered.yaml: an LLM plays the caller, SPEAKING, and adapts to what the
+# bot says, as the platform's caller does. The `# submit:` check is the hard assertion.
+# submit: NO_ACTION specialty_not_covered
+name: sim_the_rules_josefa_specialty_not_covered
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+simulator:
+  factory: eval_judge.helmcode_judge
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+persona: |
+  Josefa Sánchez Gutiérrez, DNI 49526979K.
+  A patient phoning Clínica Arenal, speaking English. Polite, brief, answers one question at a time and repeats or spells anything the receptionist asks for. Knows nothing about the clinic's rules. Accepts or declines only an appointment that was actually offered with a doctor, site, day and time.
+goal: "Book the yearly Gynaecology check-up, earliest available. If the clinic cannot book it, accept that and end the call."
+success: "the bot explained her plan does not cover gynaecology and booked nothing"
+max_turns: 12

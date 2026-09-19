@@ -1,0 +1,33 @@
+# submit: BOOK P00009 PR08 norte paediatric_review privado
+# AUDIO version of PR-06/the_rules_sonia_age_boundary.yaml: the caller speaks, so VAD, STT and TTS run.
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: audio_the_rules_sonia_age_boundary
+turns:
+  - user: "Hi, this is Sonia's mother. My daughter is Sonia Álvarez Medina, DNI 62819257R — she's due her routine check-up, could I get her the earliest General Practice appointment?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: "the response books the child into paediatrics, not general practice, because at age 9 she is under the general-practice age boundary — it does not refuse the booking for being ineligible"
+  - user: "Yes, that's fine."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

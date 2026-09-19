@@ -1,0 +1,24 @@
+# SIMULATED version of PR-03/doctor_and_site_andres_leave.yaml: an LLM plays the caller, SPEAKING, and adapts to what the
+# bot says, as the platform's caller does. The `# submit:` check is the hard assertion.
+# submit: BOOK P01843 PR07 norte review dkv 2026-09-22T09:00:00+02:00
+# clock: 2026-09-18T10:00:00+02:00
+name: sim_doctor_and_site_andres_leave
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+simulator:
+  factory: eval_judge.helmcode_judge
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+persona: |
+  Andrés Rubio Vázquez, DNI 63663395Q.
+  A patient phoning Clínica Arenal, speaking English. Polite, brief, answers one question at a time and repeats or spells anything the receptionist asks for. Knows nothing about the clinic's rules. Accepts or declines only an appointment that was actually offered with a doctor, site, day and time.
+goal: "Get an appointment with Dr. Requena at Arenal Norte. If he is unavailable, accept another doctor at Arenal Norte. Then end the call."
+success: "the bot said Dr. Requena is on leave, offered another GP at Arenal Norte and booked it after a yes"
+max_turns: 12
