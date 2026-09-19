@@ -207,3 +207,23 @@ caught (evals never open a real audio path):
    the flow's context aggregator or a custom `process_frame` override, and isn't verified
    against a real reproduction; asking the caller to repeat is the safer, provable fix.
    Verified: bot boots clean, `ruff check` passes, `simple_booking_amelia` still passes.
+
+3. **A third real call spoke its own chain-of-thought aloud for the whole call.** After a
+   garbled/ambiguous transcription of the caller's DNI (Deepgram misheard part of it as
+   "C n"), the bot produced ~55 separate TTS utterances working through the ambiguity out
+   loud — literally computing the DNI check-digit by hand ("48064716 /23... remainder
+   6... Letter Y is correct") — and never called `search_patient` at all; the call ended
+   in `NO_ACTION(patient_not_found)` again. Confirmed by reading
+   `pipecat.services.openai.base_llm`: the streaming loop only reads
+   `chunk.choices[0].delta.content` and pushes every bit of it straight to TTS — there is
+   no separate reasoning channel it filters out. `deepseek-v4-flash` is a reasoning model;
+   most likely the Helmcode gateway's OpenAI-compat shim merges its reasoning tokens into
+   the same `content` field pipecat speaks, rather than a `reasoning_content` field it
+   would ignore, and the ambiguous input pushed the model into visibly working through it
+   instead of quietly deciding and answering. Only reproduced on a real call with messy
+   STT output — eval scenarios send clean text and never hit this path, so this can't be
+   verified by `make evals`. No gateway-level reasoning toggle attempted (no documented
+   Helmcode/deepseek param to check without guessing at one). Fix: added an explicit
+   "decide silently, never speak your reasoning or working aloud" line to `ROLE_MESSAGE`
+   in `flow/prompts.py`. Verified no regression on `simple_booking_amelia`; the underlying
+   fix can only be confirmed by another real call with ambiguous input.
