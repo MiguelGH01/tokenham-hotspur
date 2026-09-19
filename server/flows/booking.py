@@ -14,6 +14,7 @@ from pipecat.flows import (
 )
 
 import dates
+import audit
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
 from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node
@@ -303,6 +304,16 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     start = datetime.fromisoformat(offer["slot"])
     offer_id = f"offer-{len(state['offers']) + 1}"
     state["offers"][offer_id] = offer
+    audit.audit(
+        state.get("call_id", "unknown"),
+        "offer_prepared",
+        offer_id=offer_id,
+        provider_id=offer["provider_id"],
+        location_id=offer["location_id"],
+        appointment_type_id=offer["appointment_type_id"],
+        slot=offer["slot"],
+        policy_id=offer["policy_id"],
+    )
     summary = (
         f"{slot['provider_name']} at {location_name(offer['location_id'])}, "
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"

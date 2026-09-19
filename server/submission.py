@@ -32,6 +32,8 @@ from copy import deepcopy
 
 from loguru import logger
 
+import audit
+
 #: What a call that never decided anything still has to submit. Silence is
 #: never cheaper than a stated answer, so the fallback is the broadest
 #: non-rule ending in the closed vocabulary.
@@ -84,6 +86,13 @@ class CallSubmission:
         self._reject_write_after_decision()
         self._actions = [deepcopy(action), *self._actions[1:]]
         self._provisional = [provisional, *self._provisional[1:]]
+        audit.audit(
+            self.call_id,
+            "plan_set",
+            verb=action.get("action"),
+            reason=action.get("reason"),
+            provisional=provisional,
+        )
 
     def decide(self) -> None:
         """The conversation can no longer change its mind, so the plan is final.
@@ -172,6 +181,13 @@ class CallSubmission:
         async with self._lock:
             for action in self._outstanding(final=final):
                 payload = {"call_id": self.call_id, **deepcopy(action)}
+                audit.audit(
+                    self.call_id,
+                    "submission_attempt",
+                    verb=action.get("action"),
+                    payload={k: v for k, v in action.items()},
+                    final=final,
+                )
                 try:
                     await self._client.post_submission(payload)
                 except Exception as exc:
@@ -180,7 +196,20 @@ class CallSubmission:
                         action.get("action"),
                         exc,
                     )
+                    audit.audit(
+                        self.call_id,
+                        "submission_result",
+                        verb=action.get("action"),
+                        ok=False,
+                        error=type(exc).__name__,
+                    )
                     return False
                 self._delivered += 1
                 logger.info("Submission accepted: {}", action.get("action"))
+                audit.audit(
+                    self.call_id,
+                    "submission_result",
+                    verb=action.get("action"),
+                    ok=True,
+                )
             return True
