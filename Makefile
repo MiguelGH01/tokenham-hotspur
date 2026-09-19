@@ -3,8 +3,9 @@ SERVER_DIR := server
 # dashboard Endpoint stays fixed across restarts (OP-tunnel), then either
 # export NGROK_DOMAIN in your shell or pass it inline: make tunnel NGROK_DOMAIN=...
 NGROK_DOMAIN ?= grooving-april-subzero.ngrok-free.dev
+JOBS ?= 4
 
-.PHONY: help run-webrtc run-twilio run-eval evals tunnel
+.PHONY: help run-webrtc run-twilio run-eval evals evals-parallel tunnel
 
 help:
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
@@ -14,6 +15,10 @@ help:
 	@echo "make evals        - run every scenario under server/evals/PR-*, restarting the bot fresh before each"
 	@echo "                    one so Flow/context state never leaks between scenarios"
 	@echo "                    (full logs written to server/eval-runs/<scenario>.eval.log + .debug.log)"
+	@echo "make evals-parallel - same scenarios, split across JOBS concurrent bot instances on"
+	@echo "                    separate ports (default JOBS=4; pass JOBS=N to change it). Each worker"
+	@echo "                    keeps its own per-file bot restart, so isolation is unchanged — only the"
+	@echo "                    number of scenarios running at once does."
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "                    (set NGROK_DOMAIN=your-reserved-domain to keep the URL fixed across restarts)"
 
@@ -42,6 +47,9 @@ evals:
 	done; \
 	pkill -f "bot.py -t eval" 2>/dev/null; \
 	true
+
+evals-parallel:
+	@bash scripts/eval_parallel.sh $(JOBS)
 
 tunnel:
 	NGROK_DOMAIN=$(NGROK_DOMAIN) bash scripts/tunnel.sh 7860 /ws
