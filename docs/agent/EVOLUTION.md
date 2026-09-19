@@ -244,3 +244,26 @@ caught (evals never open a real audio path):
    turns are unaffected and a smart-turn stall now costs ~1.2s instead of 5s. Verified no
    regression on `simple_booking_amelia`; effectiveness on real stalled turns needs another
    real call to confirm.
+
+5. **Root-caused the reasoning-leak from item 3, and it's the same short-utterance problem
+   as item 4.** A bare `"Hello."` reply doesn't just confuse the smart-turn ML model — the
+   LLM's own turn-completion marker judgment misjudges it too, replying with a bare `○`
+   (needs more time). That arms Pipecat's built-in 10s "long incomplete" timeout, which
+   auto-injects its own developer message ("The user has been quiet... generate a friendly
+   check-in... You MUST respond with ● followed by your message"). Reconciling that
+   injected nudge against the earlier ambiguous exchange is what triggers the model to
+   reason out loud instead of complying cleanly. Confirmed in
+   `pipecat.turns.user_turn_completion_mixin` that this is by design, not a framework bug:
+   `_push_turn_text` correctly strips everything before a marker *when one is found*
+   (`remaining_text = buffer[marker_end:]`); the leak only happens via `_turn_reset`'s
+   documented safety net — "if no marker was found in this response, push the buffered
+   text so it's not lost" (with its own warning log) — which exists so a malformed
+   response isn't silently dropped, at the cost of speaking it raw when the model doesn't
+   comply. Two fixes, both general rather than specific to this one trigger: added
+   `max_completion_tokens=400` to the Helmcode settings in `bot.py` (bounds any future
+   rambling regardless of cause; verified it doesn't clip a normal multi-field
+   registration confirmation) and added a line to `ROLE_MESSAGE` stating that a short
+   reply — a bare greeting, a single word, a yes/no — is a complete turn on its own, to
+   fix the misjudgment at its source rather than only its downstream symptom. Verified no
+   regression on `the_new_patient_joaquin` (register flow); confirming the fix requires
+   another real call starting with a bare greeting.

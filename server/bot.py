@@ -94,7 +94,12 @@ def build_llm():
             # requests hang there with no response at all; normal TTFB is ~0.55s), not a
             # stream that opens fine and then goes silent mid-generation.
             settings=OpenAILLMService.Settings(
-                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash"), extra={"timeout": 10.0}
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash"),
+                # Bounds a runaway/visibly-reasoning response to a few sentences instead of
+                # unbounded rambling; normal replies (including a full registration
+                # readback) stay well under this in practice (~150-290 completion tokens).
+                max_completion_tokens=400,
+                extra={"timeout": 10.0},
             ),
             retry_on_timeout=True,
             retry_timeout_secs=3.0,
