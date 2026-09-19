@@ -443,10 +443,24 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         offer = (
             None
             if reason == "provider_on_leave"
-            else pick_offer(requested, state["patient"], connected_at, weekday, part_of_day)
+            else pick_offer(
+                requested,
+                state["patient"],
+                connected_at,
+                weekday,
+                part_of_day,
+                closed_days=closure_days(),
+            )
         )
         if offer is None and reason != "provider_on_leave":
-            offer = pick_offer(requested, state["patient"], connected_at, None, part_of_day)
+            offer = pick_offer(
+                requested,
+                state["patient"],
+                connected_at,
+                None,
+                part_of_day,
+                closed_days=closure_days(),
+            )
         if offer is None and args.get("allow_alternative") is not True:
             state["submission"].set_no_action(reason)
             result = {
@@ -462,7 +476,14 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 **availability,
                 "slots": [s for s in availability["slots"] if s["provider_id"] != provider_id],
             }
-            offer = pick_offer(alternatives, state["patient"], connected_at, weekday, part_of_day)
+            offer = pick_offer(
+                alternatives,
+                state["patient"],
+                connected_at,
+                weekday,
+                part_of_day,
+                closed_days=closure_days(),
+            )
     else:
         offer = pick_offer(availability, state["patient"], connected_at, weekday, part_of_day)
         if offer is None and (weekday or part_of_day):

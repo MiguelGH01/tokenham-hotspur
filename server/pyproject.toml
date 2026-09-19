@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
     "pipecat-ai[anthropic,cartesia,deepgram,elevenlabs,evals,google,openai,runner,silero,soniox,webrtc,websocket]>=1.11.0",
     "pipecat-ai[daily]>=1.11.0; sys_platform != 'win32'",
-    "pipecatcloud",
     "httpx",
     "tzdata; sys_platform == 'win32'",
 ]
