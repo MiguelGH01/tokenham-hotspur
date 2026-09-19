@@ -1,4 +1,4 @@
-"""Clínica Arenal receptionist — Pipecat cascade pipeline + Flows graph (see handlers.py).
+"""Clínica Arenal receptionist — cascade voice + three-node Flows (identify / act / close).
 
 Run the bot using::
 
@@ -45,8 +45,8 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from booking import MADRID
-from clinic_client import ClinicClient
-from flow import GREETING, create_identify_node
+from clinic.clinic_client import ClinicClient
+from flow import GREETING, RAILS, create_identify_node
 from submission import CallSubmission
 
 load_dotenv(override=True)
@@ -149,6 +149,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         llm=llm,
         context_aggregator=context_aggregator,
         transport=transport,
+        global_functions=RAILS,
     )
     submission = CallSubmission(call_id, ClinicClient())
     flow_manager.state.update(
@@ -160,6 +161,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             "patient": None,
             "offers": {},
             "identify_attempts": 0,
+            "language": None,
+            "final_intent": None,
         }
     )
 

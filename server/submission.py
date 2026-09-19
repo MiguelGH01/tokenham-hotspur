@@ -18,6 +18,12 @@ class CallSubmission:
     def set_no_action(self, reason: str) -> None:
         self.pending = {"action": "NO_ACTION", "reason": reason}
 
+    def set_escalate(self, reason: str) -> None:
+        self.pending = {"action": "ESCALATE", "reason": reason}
+
+    def set_register(self, fields: dict) -> None:
+        self.pending = {"action": "REGISTER", **fields}
+
     async def flush(self) -> None:
         if self._flushed:
             return

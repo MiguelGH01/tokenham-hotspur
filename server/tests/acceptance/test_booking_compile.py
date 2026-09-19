@@ -65,3 +65,13 @@ def test_tie_prefers_less_loaded_provider():
 
 def test_no_slots_returns_none():
     assert pick_offer(availability(), patient("P00001", "mapfre", True), CONNECTED) is None
+
+
+def test_skips_empty_payable_and_sunday():
+    av = availability(
+        slot("PR01", "centro", "review", "2026-09-20T09:00:00+02:00"),
+        {**slot("PR01", "centro", "review", "2026-09-21T09:15:00+02:00"), "payable_with": []},
+        slot("PR01", "centro", "review", "2026-09-21T09:30:00+02:00"),
+    )
+    offer = pick_offer(av, patient("P00011", "mapfre", True), CONNECTED)
+    assert offer["slot"] == "2026-09-21T09:30:00+02:00"

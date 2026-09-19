@@ -1,7 +1,7 @@
 """Pure slot selection over a real /availability response. No LLM, no network."""
 
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 MADRID = ZoneInfo("Europe/Madrid")
@@ -15,7 +15,14 @@ def search_window(connected_at: datetime) -> tuple[str, str]:
     return date_from.isoformat(), (date_from + timedelta(days=13)).isoformat()
 
 
-def _matches(start: datetime, weekday: str | None, part_of_day: str | None) -> bool:
+def _matches(
+    start: datetime,
+    weekday: str | None,
+    part_of_day: str | None,
+    target_date: date | None,
+) -> bool:
+    if target_date and start.date() != target_date:
+        return False
     if weekday and WEEKDAYS[start.weekday()] != weekday:
         return False
     if part_of_day == "morning" and start.hour >= AFTERNOON_STARTS_AT:
@@ -31,14 +38,30 @@ def pick_offer(
     connected_at: datetime,
     weekday: str | None = None,
     part_of_day: str | None = None,
+    *,
+    provider_ids: list[str] | None = None,
+    location_id: str | None = None,
+    target_date: date | None = None,
+    skip_closed: bool = True,
 ) -> dict | None:
+    from clinic.clinic_catalog import is_closed_day
+
     call_day = connected_at.astimezone(MADRID).date()
     load = Counter(slot["provider_id"] for slot in availability["slots"])
+    allowed = set(provider_ids) if provider_ids else None
 
     candidates = []
     for slot in availability["slots"]:
+        if allowed and slot["provider_id"] not in allowed:
+            continue
+        if location_id and slot["location_id"] != location_id:
+            continue
+        if not slot.get("payable_with"):
+            continue
         start = datetime.fromisoformat(slot["start_time"]).astimezone(MADRID)
-        if start.date() <= call_day or not _matches(start, weekday, part_of_day):
+        if start.date() <= call_day or not _matches(start, weekday, part_of_day, target_date):
+            continue
+        if skip_closed and is_closed_day(start.date(), slot["location_id"]):
             continue
         candidates.append((start, load[slot["provider_id"]], slot))
     if not candidates:

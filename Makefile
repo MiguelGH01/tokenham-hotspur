@@ -20,3 +20,9 @@ run-twilio:
 
 tunnel:
 	NGROK_DOMAIN=$(NGROK_DOMAIN) bash scripts/tunnel.sh 7860 /ws
+
+run-eval:
+	cd $(SERVER_DIR) && uv run bot.py -t eval
+
+evals:
+	cd $(SERVER_DIR) && PYTHONPATH=. uv run pipecat eval run evals/PR-* -v -d --logs-dir eval-runs

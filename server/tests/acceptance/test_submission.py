@@ -42,3 +42,22 @@ def test_flush_is_idempotent():
     asyncio.run(sub.flush())
     asyncio.run(sub.flush())
     assert len(client.posted) == 1
+
+
+def test_set_register():
+    client = FakeClient()
+    sub = CallSubmission("call-4", client)
+    sub.set_register({
+        "given_name": "Joaquín",
+        "first_surname": "González",
+        "second_surname": "Ortega",
+        "national_id": "18921027P",
+        "date_of_birth": "1970-06-25",
+        "phone": "783869132",
+        "email": "joaquingonzalez24@hotmail.com",
+        "insurer": "cigna",
+    })
+    asyncio.run(sub.flush())
+    assert client.posted[0]["action"] == "REGISTER"
+    assert client.posted[0]["insurer"] == "cigna"
+    assert client.posted[0]["national_id"] == "18921027P"
