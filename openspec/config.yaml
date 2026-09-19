@@ -1,0 +1,39 @@
+# SDD project context — tokenham-hotspur
+
+project: tokenham-hotspur
+artifact_store: openspec
+created: 2026-09-19
+
+## Layout
+
+- `server/` — Pipecat voice bot (Python, uv). Entry point `server/bot.py`.
+- `server/tests/` — pytest suite (unit + acceptance). Runner: `cd server && uv run pytest tests/`
+- `server/evals/` — behavioral eval scenarios (pipecat eval harness). Run via repo Makefile: `make eval`, `make eval-one S=<scenario>`.
+- `docs/` — Prosper/HackSpain track requirements mirror (requirements/, api/, agent/, scenarios/).
+- `odd/` — legacy Organic Driven Development feature docs (pre-SDD history; read-only reference).
+
+## Testing capability
+
+- test_runner: pytest
+- test_command: cd server && uv run pytest tests/
+- eval_harness: pipecat eval (make eval-one S=<scenario>, headless bot on port 7861)
+
+## Strict TDD
+
+strict_tdd: false
+rationale: The conversation flow logic is LLM-driven and validated primarily through
+the behavioral eval harness; a strict RED-GREEN cycle per task is impractical for
+prompt/flow tuning. Pytest must still pass before every task close, and new
+deterministic logic (rules, submission, logging) should ship with unit tests.
+
+## Phase rules
+
+- Phases: init → explore → proposal → spec → design → tasks → apply → verify (optional) → archive.
+- Execution mode: auto (gatekeeper validation between phases).
+- Delivery strategy: ask-on-risk; review budget: 400 changed lines.
+- Chain strategy: deferred until chained PRs are actually selected.
+- Language: all SDD artifacts and code in English.
+
+## Skill registry
+
+- Local registry: `.atl/skill-registry.md` may be absent; resolve skills from `.agents/skills/` in-repo first.

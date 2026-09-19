@@ -31,7 +31,7 @@ Official scoring version noted in source: **2.0-draft · 17 September 2026**.
 | ID | Requirement | Priority |
 |---|---|---|
 | `SC-formula` | Per problem: (fraction of its four cases passed: 0, .25, .5, .75, 1) × difficulty weight (1–5). Team score = **sum** over problems. No percentage, no denominator. | must |
-| `SC-max` | Full roster max score: **49**. | must |
+| `SC-max` | Full roster max score: **196** (points = passed cases × weight; live docs 19 Sep 2026 — earlier capture said 49, the sum of weights alone). | must |
 | `SC-best-run` | Leaderboard ranks each team’s **best** Run All (not latest, not cumulative). Board shows how many runs backed a score. | must |
 | `SC-unattempted` | A problem nobody attempted scores nothing (same as dialled and failed). Silence is never cheaper than a wrong answer. | must |
 | `SC-progressive` | Problems open progressively. Opening a new problem never changes scores of runs taken before it. | must |

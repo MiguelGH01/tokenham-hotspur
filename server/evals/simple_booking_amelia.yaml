@@ -1,7 +1,12 @@
 # PR-01 case simple_booking-12dc84a98cb2 — Amelia Hughes White (DNI, never seen, GP at Arenal Centro)
 # Expected BOOK: P00012 / PR07 / centro / first_visit / 2026-09-21T11:45:00+02:00 / sanitas
 name: simple_booking_amelia
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
 turns:
+  - expect:
+      - event: response
   - user: "Hello, I need an appointment. I'm Amelia Hughes White, DNI 13309713G."
     expect:
       - event: function_call

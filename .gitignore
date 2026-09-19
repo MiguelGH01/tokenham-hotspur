@@ -223,3 +223,17 @@ __marimo__/
 server/.krisp-models/
 
 # Node.js (client/)
+# Local Pi runtime state
+.atl/
+
+# macOS
+.DS_Store
+
+# CodeGraph local index
+.codegraph/
+
+# Pi runtime state inside the bot package
+server/.pi/
+
+# Per-call forensics (audit.py): private, local, never part of the tree
+server/audit-logs/

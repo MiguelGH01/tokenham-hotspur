@@ -25,7 +25,7 @@ Eighteen problems, seventeen scored. Each isolates **one** hard thing on top of 
 | `PR-17` | The Second Policy | `second_policy` | 4 | 4 | not yet |
 | `PR-18` | The Real Call | `the_real_call` | 3 | 5 | not yet |
 
-Max board from full roster: **49** (`SC-max`). Public walkthroughs for open problems: [scenarios/](scenarios/README.md).
+Max board from full roster: **196** (`SC-max`; passed cases × weight). Public walkthroughs for open problems: [scenarios/](scenarios/README.md).
 
 ---
 
