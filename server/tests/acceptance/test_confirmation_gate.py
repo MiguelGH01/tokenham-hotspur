@@ -75,3 +75,24 @@ def test_price_topic_alone_does_not_block():
 )
 def test_spoken_acceptance_without_yes_is_still_consent(utterance):
     assert is_clean_yes(utterance)
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Please book it.",
+        "Uh, yes, sorry.  Monday the 21st at 9. Go ahead.",
+        "Oh, yeah.",
+        "Well, yes, go ahead.",
+    ],
+)
+def test_filler_prefixed_confirmation_is_still_consent(utterance):
+    """A caller rarely opens a yes with the bare word "yes" — real calls (e.g.
+    call 7dc4da3b-4e52-5dd1-9fac-247815355eea) lose the case to five straight
+    rejections of these exact phrases because the affirmative check was
+    anchored past any disfluency or politeness opener."""
+    assert is_clean_yes(utterance)
+
+
+def test_filler_prefix_does_not_hide_a_real_correction():
+    assert not is_clean_yes("well, yes, but I need to check with my husband first")
