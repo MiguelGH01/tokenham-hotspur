@@ -5,12 +5,14 @@ Clinic fallbacks are tool results, not extra nodes. Rails are global on FlowMana
 
 from pipecat.flows import FlowManager, NodeConfig
 
+from clinic.clinic_catalog import chart_policy
 from flow.prompts import ROLE_MESSAGE
 from flow.tools import (
     act_functions,
     flush_submission,
     register_patient_schema,
     search_patient_schema,
+    speak_close_line,
 )
 
 _CLOSE_SPOKEN = {
@@ -30,7 +32,7 @@ def create_close_node(kind: str) -> NodeConfig:
         task_messages=[{"role": "developer", "content": text}],
         respond_immediately=False,
         pre_actions=[
-            {"type": "tts_say", "text": text, "append_text_to_context": False},
+            {"type": "function", "handler": speak_close_line, "text": text},
             {"type": "function", "handler": flush_submission},
         ],
     )
@@ -63,21 +65,28 @@ def create_identify_node() -> NodeConfig:
 
 def create_act_node(flow_manager: FlowManager) -> NodeConfig:
     patient = flow_manager.state["patient"]
+    chart = chart_policy(patient, flow_manager.state["connected_at"])
+    uncovered = ", ".join(chart["uncovered_specialties"]) or "none"
+    missing = ", ".join(chart["missing_referrals"]) or "none"
     return NodeConfig(
         name="act",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    f"The patient is {patient['given_name']} {patient['first_surname']}. Call "
-                    "get_earliest_slot as soon as you know the specialty; pass the spoken doctor, "
-                    "site, and when-phrase. Do not ask them to repeat a day, site, or doctor they "
-                    "already said. If provider_missing, wait for yes/no; if they refuse anyone "
-                    "else, call decline_other_providers. If they change their mind, call "
-                    "record_final_intent then get_earliest_slot again, or revise_search. "
-                    "If no_slots, ask whether they would drop a constraint then search again. "
-                    "The tools already speak offers and refusals — do not repeat them. "
-                    "As soon as they accept, call confirm_offer. Do not say goodbye without it."
+                    f"The patient is {patient['given_name']} {patient['first_surname']}, "
+                    f"plan {chart['plan']}. A general complaint books {chart['general_specialty']}. "
+                    f"Uncovered specialties: {uncovered}. Referrals not on file: {missing}. "
+                    "Call get_earliest_slot as soon as you know the specialty they asked for; "
+                    "pass the spoken doctor, site, and when-phrase. Do not ask them to repeat a "
+                    "day, site, or doctor they already said. If the tool refuses, that is the "
+                    "answer — do not book a different specialty, site, or doctor to be helpful. "
+                    "If provider_missing, wait for yes/no; if they refuse anyone else, call "
+                    "decline_other_providers. If they change their mind, call record_final_intent "
+                    "then get_earliest_slot again, or revise_search. If no_slots, ask whether they "
+                    "would drop a constraint then search again. The tools already speak offers and "
+                    "refusals — do not repeat them. As soon as they accept, call confirm_offer. "
+                    "Do not say goodbye without it."
                 ),
             }
         ],

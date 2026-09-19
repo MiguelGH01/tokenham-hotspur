@@ -53,3 +53,10 @@ def test_explicit_no_action_is_not_overridden_by_an_offer():
     sub.set_offer(OFFER); sub.set_no_action("no_availability")
     sent = flushed(sub, client)
     assert sent["action"] == "NO_ACTION" and sent["reason"] == "no_availability"
+
+
+def test_default_is_not_ready_to_submit():
+    sub = CallSubmission("c6", FakeClient())
+    assert sub.ready_to_submit() is False
+    sub.set_offer(OFFER)
+    assert sub.ready_to_submit() is True

@@ -35,6 +35,18 @@ def test_uncovered_specialty_refuses_without_fetch():
     assert result["reason"] == "specialty_not_covered"
 
 
+def test_child_named_gynaecology_is_age_not_coverage():
+    patient = {
+        "patient_id": "P00009",
+        "insurer": "privado",
+        "referrals": [],
+        "date_of_birth": "2017-05-12",
+    }
+    result, offer = asyncio.run(find_offer(Boom(), patient, CONNECTED, specialty="gynaecology"))
+    assert offer is None
+    assert result["reason"] == "not_eligible_age"
+
+
 def test_unknown_doctor_asks_before_refusing():
     patient = {"patient_id": "P018xx", "insurer": "asisa", "date_of_birth": "1980-01-01"}
     result, offer = asyncio.run(

@@ -5,5 +5,6 @@ def test_close_does_not_run_another_llm_turn():
     node = create_close_node("booked")
     assert node["respond_immediately"] is False
     types = [a["type"] for a in node["pre_actions"]]
-    assert types == ["tts_say", "function"]
+    assert types == ["function", "function"]
     assert "end_conversation" not in types
+    assert node["pre_actions"][0]["handler"].__name__ == "speak_close_line"

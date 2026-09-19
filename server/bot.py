@@ -49,8 +49,9 @@ from audio_models import CallSileroVADAnalyzer, CallSmartTurnAnalyzer, warm_audi
 from booking import MADRID
 from clinic.clinic_client import ClinicClient
 from flow import FILLER, GREETING, RAILS, create_identify_node
+from flow.speak import speak_as_llm
 from gateway_llm import StallGuardedLLMService
-from submission import DEFAULT_PENDING, CallSubmission
+from submission import CallSubmission
 
 load_dotenv(override=True)
 
@@ -133,7 +134,17 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     @llm.event_handler("on_function_calls_started")
     async def on_function_calls_started(service, function_calls):
-        # Speak while tools hit the clinic API so the silence window never elapses.
+        try:
+            names = {
+                getattr(call, "function_name", None)
+                or getattr(call, "name", None)
+                or (call.get("name") if isinstance(call, dict) else None)
+                for call in function_calls
+            }
+        except TypeError:
+            names = set()
+        if names and names <= {"confirm_offer"}:
+            return
         await service.push_frame(TTSSpeakFrame(text=FILLER, append_to_context=False))
 
     context = LLMContext()
@@ -200,25 +211,47 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
-    # Submit before the 180s cap, but do not close the socket: the harness hanging
-    # up is a normal end; we hanging up is scored as "connection lost".
+    # Submit a real answer before the 180s cap. Do not POST the unused
+    # patient_not_found default — that locks a mismatch and the call still
+    # runs to the wall-clock fail (SC-three-minutes).
+    committed_answer = False
+
     async def _commit_before_wall_clock():
+        nonlocal committed_answer
         await asyncio.sleep(WALL_CLOCK_COMMIT_SECS)
         if submission._flushed:
+            committed_answer = True
+            return
+        if not submission.ready_to_submit():
+            logger.warning("Call {}: 150s elapsed with no bookable record; not submitting default", call_id)
             return
         logger.warning("Call {}: committing before the wall-clock cap", call_id)
-        if submission.pending == DEFAULT_PENDING and submission.offered:
-            submission.set_book(submission.offered)
         await submission.flush()
+        committed_answer = True
         await worker.queue_frames(
             [TTSSpeakFrame(text="I've noted that. Thank you, goodbye.", append_to_context=False)]
         )
 
     @context_aggregator.user().event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
+        if committed_answer or submission._flushed:
+            return
         text = _reprompt(context)
         logger.info("Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text)
         await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
+
+    @context_aggregator.user().event_handler("on_user_turn_stopped")
+    async def on_user_turn_stopped(aggregator, strategy, message):
+        from clinic.speech import accepts_offer
+        from flow.tools import confirm_offer
+
+        text = getattr(message, "content", None) or ""
+        if submission._flushed or not submission.offered or not accepts_offer(text):
+            return
+        logger.info("Call {}: caller accepted, committing without waiting for the LLM", call_id)
+        _, nxt = await confirm_offer({}, flow_manager)
+        if nxt is not None:
+            await flow_manager.set_node_from_config(nxt)
 
     flow_started = False
 
@@ -229,7 +262,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         flow_started = True
         worker.create_task(_commit_before_wall_clock(), name="wall-clock-commit")
         await flow_manager.initialize(create_identify_node())
-        await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
+        # Text-mode eval asserts `response` → `llm_response`. TTSSpeakFrame only
+        # emits TTS events, which skip_tts drops, so turn 0 would wait 60s.
+        await speak_as_llm(llm, GREETING, in_context=True)
 
     # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
     # interrupts and drops anything queued earlier; telephony has no RTVI client.

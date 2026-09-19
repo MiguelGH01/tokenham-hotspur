@@ -1,7 +1,8 @@
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from clinic.clinic_catalog import location_ids, plan_literals, specialty_ids
-from flow.tools import confirm_offer_schema, get_earliest_slot_schema, register_patient_schema
+from flow.tools import act_functions, confirm_offer_schema, get_earliest_slot_schema, register_patient_schema
 
 
 def test_register_insurer_is_catalogue_only():
@@ -12,6 +13,24 @@ def test_register_insurer_is_catalogue_only():
     for plan_id in ("sanitas", "privado", "nueva_mutua"):
         assert plan_id in enum
     assert set(plan_literals()) == set(enum)
+
+
+def test_slot_search_schema_names_this_chart_uncovered():
+    connected = datetime(2026, 9, 18, 10, 0, tzinfo=timezone(timedelta(hours=2)))
+    schema = get_earliest_slot_schema(
+        SimpleNamespace(
+            state={
+                "patient": {
+                    "insurer": "adeslas",
+                    "referrals": [],
+                    "date_of_birth": "1967-03-20",
+                },
+                "connected_at": connected,
+            }
+        )
+    )
+    assert "uncovered: gynaecology" in schema.description
+    assert "gynaecology" in schema.properties["specialty"]["enum"]
 
 
 def test_slot_search_enums_are_catalogue_ids():
@@ -28,3 +47,20 @@ def test_confirm_offer_enum_is_live_availability_ids():
         SimpleNamespace(state={"offers": {"offer-1": {}, "offer-2": {}}})
     ).properties["offer_id"]["enum"]
     assert live == ["offer-1", "offer-2"]
+
+
+def _tool_name(tool):
+    return tool.name if not callable(tool) else tool.__name__
+
+
+def test_act_tools_hide_confirm_until_an_offer_and_drop_booking_after_refuse():
+    empty = SimpleNamespace(state={"patient": None, "offers": {}})
+    names = [_tool_name(t) for t in act_functions(empty)]
+    assert names == ["get_earliest_slot", "revise_search", "decline_other_providers"]
+
+    offered = SimpleNamespace(state={"patient": None, "offers": {"offer-1": {}}})
+    names = [_tool_name(t) for t in act_functions(offered)]
+    assert "confirm_offer" in names
+
+    refused = SimpleNamespace(state={"hard_refuse": "specialty_not_covered", "offers": {"offer-1": {}}})
+    assert act_functions(refused) == []

@@ -28,6 +28,15 @@ _EMAIL = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.IGNORECASE)
 _PHONE = re.compile(r"(?:\+34\s*)?((?:\d[\s.\-]*){9})")
 _ISO_DOB = re.compile(r"\b((?:19|20)\d{2}-\d{2}-\d{2})\b")
 _WANTS_REGISTER = re.compile(r"\b(register|registration|new patient|not on file|first time)\b", re.I)
+_ACCEPTS_OFFER = re.compile(
+    r"\b(yes|yeah|yep|yup|perfect|great|ok|okay|sure|please book|book it|go ahead|"
+    r"that works|that's fine|thats fine|that's it|sounds good)\b",
+    re.I,
+)
+_WANTS_SOONEST = re.compile(
+    r"\b(earliest|first available|as soon as possible|asap|soonest|first one you have)\b",
+    re.I,
+)
 
 _SPECIALTY_HINTS = (
     ("gynaecology", ("gynaecology", "gynecology", "gynaecolog", "ginecolog")),
@@ -228,6 +237,14 @@ def register_complete(fields: dict) -> bool:
 
 def wants_register(text: str | None) -> bool:
     return bool(text and _WANTS_REGISTER.search(text))
+
+
+def accepts_offer(text: str | None) -> bool:
+    return bool(text and _ACCEPTS_OFFER.search(text))
+
+
+def wants_soonest(text: str | None) -> bool:
+    return bool(text and _WANTS_SOONEST.search(text))
 
 
 def user_speech(flow_manager) -> str:

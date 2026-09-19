@@ -143,6 +143,27 @@ def remap_specialty(specialty_id: str, patient: dict, connected_at: datetime) ->
     return other if specialty_age_ok(other, months) else specialty_id
 
 
+def chart_policy(patient: dict, connected_at: datetime) -> dict:
+    """What this chart allows. Used to describe and filter act-node tools."""
+    plan = patient.get("insurer")
+    uncovered = [
+        spec["id"]
+        for spec in load_catalog()["specialties"]
+        if plan and not plan_covers_specialty(plan, spec["id"])
+    ]
+    missing_referrals = [
+        spec["id"]
+        for spec in load_catalog()["specialties"]
+        if spec.get("referral_required") and not holds_referral(patient, spec["id"])
+    ]
+    return {
+        "plan": plan,
+        "general_specialty": remap_specialty("general_practice", patient, connected_at),
+        "uncovered_specialties": uncovered,
+        "missing_referrals": missing_referrals,
+    }
+
+
 def plan_covers_specialty(plan_id: str, specialty_id: str) -> bool:
     spec = specialty_by_id(specialty_id)
     return plan_id not in {p["id"] for p in spec.get("not_covered_by") or []}

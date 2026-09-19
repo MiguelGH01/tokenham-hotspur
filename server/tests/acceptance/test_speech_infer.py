@@ -1,4 +1,5 @@
 from clinic.speech import (
+    accepts_offer,
     greeting_stripped,
     infer_provider_spoken,
     infer_site,
@@ -7,6 +8,7 @@ from clinic.speech import (
     register_complete,
     resolve_slot_query,
     wants_register,
+    wants_soonest,
 )
 
 
@@ -81,3 +83,11 @@ def test_resolve_named_doctor_sets_specialty():
     assert query["site"] == "centro"
     assert query["provider"] and "Sáez" in query["provider"]
     assert query["specialty"] == "general_practice"
+
+
+def test_accepts_offer_and_soonest():
+    assert accepts_offer("Perfect, book it.")
+    assert accepts_offer("yes that works")
+    assert not accepts_offer("tomorrow morning please")
+    assert wants_soonest("A GP, the earliest you have, at Arenal Centro.")
+    assert not wants_soonest("With doctor Saez at Arenal Centro, please.")

@@ -31,6 +31,12 @@ class CallSubmission:
     def set_register(self, fields: dict) -> None:
         self.pending = {"action": "REGISTER", **fields}
 
+    def ready_to_submit(self) -> bool:
+        """True when we have a real answer, not the unused patient_not_found default."""
+        if self.offered:
+            return True
+        return self.pending != DEFAULT_PENDING
+
     async def flush(self) -> None:
         if self._flushed:
             return

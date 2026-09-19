@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 
 from booking import MADRID, pick_offer, search_window
 from clinic.clinic_catalog import (
+    age_months,
     holds_referral,
     load_catalog,
     location_ids,
@@ -16,6 +17,7 @@ from clinic.clinic_catalog import (
     plan_covers_specialty,
     provider_refuses_plan,
     remap_specialty,
+    specialty_age_ok,
     specialty_by_id,
     specialty_ids,
 )
@@ -53,7 +55,7 @@ def _reason_from_blocked(blocked: list, provider_id: str | None = None) -> str |
     return None
 
 
-def _policy_refuse(patient: dict, specialty_id: str, site: str | None) -> str | None:
+def _policy_refuse(patient: dict, specialty_id: str, site: str | None, connected_at: datetime) -> str | None:
     spec = specialty_by_id(specialty_id)
     if spec.get("referral_required") and not holds_referral(patient, specialty_id):
         return "referral_required"
@@ -62,6 +64,9 @@ def _policy_refuse(patient: dict, specialty_id: str, site: str | None) -> str | 
         return "specialty_not_covered"
     if plan and site and not plan_covers_location(plan, site):
         return "location_not_covered"
+    dob = patient.get("date_of_birth")
+    if dob and not specialty_age_ok(specialty_id, age_months(dob, connected_at)):
+        return "not_eligible_age"
     return None
 
 
@@ -109,7 +114,7 @@ async def find_offer(
     keep_provider_site = bool(provider and site)
     plan = patient.get("insurer")
 
-    refuse = _policy_refuse(patient, specialty, site)
+    refuse = _policy_refuse(patient, specialty, site, connected_at)
     if refuse:
         return {"status": "refused", "reason": refuse, "specialty": specialty}, None
 

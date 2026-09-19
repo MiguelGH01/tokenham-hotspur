@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from clinic.clinic_catalog import match_plan, match_providers, remap_specialty
+from clinic.clinic_catalog import chart_policy, match_plan, match_providers, remap_specialty
 
 
 CONNECTED = datetime(2026, 9, 18, 10, 0, tzinfo=timezone(timedelta(hours=2)))
@@ -30,3 +30,17 @@ def test_child_gp_remaps_to_paediatrics():
 def test_adult_derm_is_not_remapped():
     patient = {"date_of_birth": "1996-08-14"}
     assert remap_specialty("dermatology", patient, CONNECTED) == "dermatology"
+
+
+def test_adeslas_chart_lists_gynaecology_uncovered():
+    patient = {"insurer": "adeslas", "referrals": [], "date_of_birth": "1967-03-20"}
+    chart = chart_policy(patient, CONNECTED)
+    assert "gynaecology" in chart["uncovered_specialties"]
+    assert "dermatology" in chart["missing_referrals"]
+    assert chart["general_specialty"] == "general_practice"
+
+
+def test_child_chart_general_complaint_is_paediatrics():
+    patient = {"insurer": "privado", "referrals": ["orthopaedics"], "date_of_birth": "2017-05-12"}
+    chart = chart_policy(patient, CONNECTED)
+    assert chart["general_specialty"] == "paediatrics"

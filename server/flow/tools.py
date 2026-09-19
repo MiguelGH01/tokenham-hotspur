@@ -10,12 +10,28 @@ from loguru import logger
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NO_RESPONSE
 from pipecat.flows.types import FlowsDirectFunctionWrapper
-from pipecat.frames.frames import LLMSetToolsFrame, TTSSpeakFrame
+from pipecat.frames.frames import LLMSetToolsFrame
 
 from booking import WEEKDAYS
-from clinic.clinic_catalog import location_ids, location_name, match_plan, plan_literals, specialty_ids
+from clinic.clinic_catalog import (
+    chart_policy,
+    location_ids,
+    location_name,
+    match_plan,
+    plan_literals,
+    specialty_ids,
+)
 from clinic.search import find_offer
-from clinic.speech import parse_register, register_complete, resolve_slot_query, user_speech, wants_register
+from clinic.speech import (
+    accepts_offer,
+    parse_register,
+    register_complete,
+    resolve_slot_query,
+    user_speech,
+    wants_register,
+    wants_soonest,
+)
+from flow.speak import speak_as_llm
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
@@ -35,6 +51,14 @@ def _spoken_name(provider_name: str) -> str:
     return f"{SPOKEN_TITLES[title]} {rest}" if title in SPOKEN_TITLES else provider_name
 
 
+_HARD_REFUSE = frozenset(
+    {
+        "referral_required",
+        "specialty_not_covered",
+        "location_not_covered",
+        "not_eligible_age",
+    }
+)
 _REFUSE_LINE = {
     "referral_required": "I cannot book that specialty without a referral on file.",
     "specialty_not_covered": "Your plan does not cover that specialty.",
@@ -45,12 +69,8 @@ _REFUSE_LINE = {
 
 
 async def _say(flow_manager: FlowManager, text: str, *, in_context: bool = False) -> None:
-    frame = TTSSpeakFrame(text=text, append_to_context=in_context)
     llm = getattr(flow_manager, "_llm", None)
-    if llm is not None:
-        await llm.push_frame(frame)
-    else:
-        await flow_manager.worker.queue_frames([frame])
+    await speak_as_llm(llm if llm is not None else flow_manager.worker, text, in_context=in_context)
 
 
 def _last_offer(state: dict) -> tuple[str, dict] | tuple[None, None]:
@@ -66,6 +86,10 @@ def _last_offer(state: dict) -> tuple[str, dict] | tuple[None, None]:
 
 async def flush_submission(action: dict, flow_manager: FlowManager) -> None:
     await flow_manager.state["submission"].flush()
+
+
+async def speak_close_line(action: dict, flow_manager: FlowManager) -> None:
+    await _say(flow_manager, action["text"], in_context=False)
 
 
 async def search_patient(args: FlowArgs, flow_manager: FlowManager):
@@ -121,6 +145,14 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     state["patient"] = patient
     visited = "a returning patient" if patient["has_visited_before"] else "a first-time patient"
     summary = f"Found {patient['given_name']} {patient['first_surname']}, {visited}."
+    # Same turn already named a specialty/doctor: search now so we do not burn another LLM round.
+    if resolve_slot_query({}, user_speech(flow_manager))["specialty"]:
+        result, nxt = await get_earliest_slot({}, flow_manager)
+        if result.get("status") != "need_specialty":
+            payload = {"status": "found", "patient_summary": summary, "search": result}
+            if nxt is not None and nxt is not NO_RESPONSE:
+                return payload, nxt
+            return payload, create_act_node(flow_manager)
     return {"status": "found", "patient_summary": summary}, create_act_node(flow_manager)
 
 
@@ -205,7 +237,10 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         state["submission"].clear_offer()
         state["submission"].set_no_action(result["reason"])
         await _say(flow_manager, _REFUSE_LINE.get(result["reason"], "I cannot book that request."))
-        if result["reason"] == "provider_not_found":
+        # Policy dead-ends are the answer. Leave booking tools up and the model
+        # books GP instead of gynae / derm (PR-06 record mismatch).
+        if result["reason"] in _HARD_REFUSE or result["reason"] == "provider_not_found":
+            state["hard_refuse"] = result["reason"]
             await state["submission"].flush()
             return result, create_close_node("refused")
         return result, NO_RESPONSE
@@ -226,6 +261,9 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     logger.info("Offer {}: {}", offer_id, offer)
     await refresh_act_tools(flow_manager)
     await _say(flow_manager, f"{summary}. Does that work?", in_context=True)
+    spoken = user_speech(flow_manager)
+    if wants_soonest(spoken) or accepts_offer(spoken):
+        return await confirm_offer({"offer_id": offer_id}, flow_manager)
     return {
         "status": "offer",
         "offer_id": offer_id,
@@ -356,14 +394,26 @@ def register_patient_schema() -> FlowsFunctionSchema:
     )
 
 
-def get_earliest_slot_schema() -> FlowsFunctionSchema:
+def get_earliest_slot_schema(flow_manager: FlowManager | None = None) -> FlowsFunctionSchema:
+    policy_note = (
+        "Pass a specialty id only if the caller named that specialty; omit site, doctor, "
+        "weekday, and part of day unless they said them. Do not guess a site or doctor "
+        "from the enum. Do not substitute another specialty when the chart refuses this one."
+    )
+    state = getattr(flow_manager, "state", None) or {}
+    patient = state.get("patient")
+    connected_at = state.get("connected_at")
+    if patient and connected_at is not None:
+        chart = chart_policy(patient, connected_at)
+        bits = [f"plan {chart['plan'] or 'unknown'}", f"general complaint books {chart['general_specialty']}"]
+        if chart["uncovered_specialties"]:
+            bits.append("uncovered: " + ", ".join(chart["uncovered_specialties"]))
+        if chart["missing_referrals"]:
+            bits.append("referral missing: " + ", ".join(chart["missing_referrals"]))
+        policy_note += " Chart: " + "; ".join(bits) + "."
     return FlowsFunctionSchema(
         name="get_earliest_slot",
-        description=(
-            "Find a real bookable slot. Pass a specialty id only if the caller named that "
-            "specialty; omit site, doctor, weekday, and part of day unless they said them. "
-            "Do not guess a site or doctor from the enum."
-        ),
+        description="Find a real bookable slot. " + policy_note,
         properties={
             "specialty": {
                 "type": "string",
@@ -421,12 +471,14 @@ def confirm_offer_schema(flow_manager: FlowManager | None = None) -> FlowsFuncti
 
 
 def act_functions(flow_manager: FlowManager):
-    return [
-        get_earliest_slot_schema(),
-        confirm_offer_schema(flow_manager),
-        revise_search,
-        decline_other_providers,
-    ]
+    state = getattr(flow_manager, "state", None) or {}
+    if state.get("hard_refuse"):
+        return []
+    tools = [get_earliest_slot_schema(flow_manager)]
+    if state.get("offers"):
+        tools.append(confirm_offer_schema(flow_manager))
+    tools.extend([revise_search, decline_other_providers])
+    return tools
 
 
 async def refresh_act_tools(flow_manager: FlowManager) -> None:
