@@ -12,6 +12,7 @@ from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
 from flows.common import gated_confirmation, record_already_settled
 from flows.requests import prepare_proposal, proposal_status, revise_request
+from observability.emit import trace_tool
 from submission import cancel_action
 
 
@@ -38,6 +39,7 @@ async def load_appointments(manager):
     }, create_appointments_node()
 
 
+@trace_tool()
 async def select_appointment(args, flow_manager):
     """Choose one of the returned appointments, and read it back.
 
@@ -58,6 +60,7 @@ async def select_appointment(args, flow_manager):
     return {"status": "needs_confirmation", "readback": appointment}, create_cancel_node()
 
 
+@trace_tool()
 async def confirm_cancellation(args, flow_manager):
     state = flow_manager.state
     appointment = state.get("appointment")
@@ -98,7 +101,7 @@ async def confirm_cancellation(args, flow_manager):
         )
         if blocked is not None:
             return blocked
-        submission.set_cancel(appointment["appointment_id"])
+        submission.set_cancel(appointment["appointment_id"], appointment=appointment)
     accepted = await submission.flush()
     from flows.common import create_completion_node
 

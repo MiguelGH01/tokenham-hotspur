@@ -37,7 +37,7 @@ from loguru import logger
 
 import audit
 from booking import pick_offer, search_window
-from clinic_catalog import load_catalog
+from clinic_catalog import closure_days, load_catalog
 from submission import book_action, cancel_action, register_action, reschedule_action
 
 #: The whole last-resort search, bounded. A booking nobody sends is worth less
@@ -77,7 +77,7 @@ def prepared_action(state) -> dict | None:
     intent = state.get("intent")
     appointment = state.get("appointment") or {}
     if intent == "cancel" and appointment:
-        return cancel_action(appointment["appointment_id"])
+        return cancel_action(appointment["appointment_id"], appointment=appointment)
     held = live_offer(state)
     if intent == "reschedule" and appointment and held:
         return reschedule_action(appointment["appointment_id"], held[1])
@@ -147,7 +147,7 @@ async def _first_slot(state, patient) -> dict | None:
         except Exception as exc:
             logger.debug("cold booking lookup failed: {}", type(exc).__name__)
             continue
-        offer = pick_offer(availability, patient, connected_at)
+        offer = pick_offer(availability, patient, connected_at, closed_days=closure_days())
         if offer is not None:
             return offer
     return None

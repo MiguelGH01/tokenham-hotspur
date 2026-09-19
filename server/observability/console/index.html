@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Clínica Arenal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-screen" id="viewLogin">
+  <div class="login-card">
+    <div class="brand login-brand">
+      <i class="mark"></i>
+      <b>Clínica Arenal</b>
+    </div>
+    <h1>Entrar</h1>
+    <p class="login-hint">Usa <code>admin</code> para la centralita, o el id del médico (<code>PR01</code>…<code>PR12</code>) para ver tu horario.</p>
+    <form id="loginForm" autocomplete="off">
+      <label class="login-label" for="loginKey">Clave</label>
+      <input class="login-input" id="loginKey" name="key" type="text" inputmode="text" autofocus required placeholder="admin o PR01">
+      <p class="login-error" id="loginError" hidden role="alert"></p>
+      <button class="btn primary login-submit" type="submit">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<!-- Admin: observability console -->
+<div class="shell" id="shellAdmin" hidden>
+  <div class="topbar">
+    <div class="brand">
+      <i class="mark"></i>
+      <b>Arenal Centralita</b>
+    </div>
+    <nav class="nav" aria-label="Views">
+      <button data-view="overview" aria-current="true">Overview</button>
+      <button data-view="calls" aria-current="false">Conversations <span class="badge" id="navBadge">0</span></button>
+    </nav>
+    <div class="wire" id="wire"><i class="dot"></i><span id="wireTxt">live · 0 on the line</span></div>
+    <span class="tclock" id="clock">—</span>
+    <div class="spacer"></div>
+    <div class="picker">
+      <button class="btn primary" id="btnPlace">Place test call</button>
+      <button class="btn" id="btnLogoutAdmin" type="button">Cerrar sesión</button>
+    </div>
+  </div>
+
+  <div class="view" id="viewOverview">
+   <div class="scroll">
+    <div class="dash">
+      <header class="dashhead">
+        <div>
+          <h1>Today's shift</h1>
+          <p>Clínica Arenal · 08:00–<span id="shiftNow">16:41</span> Europe/Madrid · <span id="shiftLive">—</span></p>
+        </div>
+      </header>
+
+      <section class="kpis" id="kpis" role="tablist" aria-label="Shift metrics"></section>
+
+      <section class="drillwrap" id="drill" role="tabpanel" tabindex="0"></section>
+    </div>
+   </div>
+  </div>
+
+  <div class="view" id="viewCalls" hidden>
+  <div class="tabs" role="tablist">
+    <button role="tab" data-pane="board" aria-selected="false">Switchboard</button>
+    <button role="tab" data-pane="conv" aria-selected="true">Conversation</button>
+    <button role="tab" data-pane="why" aria-selected="false">Why</button>
+  </div>
+
+  <div class="app" id="app" data-pane="conv">
+    <section class="col" id="colBoard">
+      <div class="colhead"><h2>Switchboard</h2><span class="count" id="boardCount"></span></div>
+      <div class="scroll"><div class="board" id="board"></div></div>
+      <div class="tally">
+        <h3>Submitted this session</h3>
+        <div class="rows" id="tally"></div>
+      </div>
+    </section>
+
+    <section class="col" id="colConv">
+      <div class="convhead">
+        <div style="min-width:0">
+          <div class="ttl" id="convTtl">No line selected</div>
+          <div class="sub" id="convSub">pick a line on the switchboard</div>
+        </div>
+        <div style="flex:1"></div>
+        <button class="toggle" id="btnTrace" aria-pressed="true">Trace</button>
+        <button class="toggle" id="btnFollow" aria-pressed="true">Follow new</button>
+      </div>
+      <div class="scroll" id="convScroll"><div class="stream" id="stream"></div></div>
+    </section>
+
+    <section class="col" id="colWhy">
+      <div class="colhead"><h2>Why this happened</h2><span class="count" id="whyCount"></span></div>
+      <div class="scroll"><div class="why-pane" id="why"></div></div>
+    </section>
+  </div>
+  </div>
+</div>
+
+<!-- Doctor: weekly schedule -->
+<div class="shell doctor-shell" id="shellDoctor" hidden>
+  <div class="topbar">
+    <div class="brand">
+      <i class="mark"></i>
+      <b>Clínica Arenal</b>
+      <span>Mi horario</span>
+    </div>
+    <span class="tclock" id="docClock">—</span>
+    <div class="spacer"></div>
+    <span class="doc-badge" id="docBadge">—</span>
+    <button class="btn" id="btnLogoutDoctor" type="button">Cerrar sesión</button>
+  </div>
+  <div class="scroll">
+    <div class="doc-page">
+      <header class="doc-head">
+        <h1 id="docName">—</h1>
+        <p id="docMeta">—</p>
+      </header>
+      <div class="leave-banner" id="docLeave" hidden></div>
+      <section class="doc-section">
+        <div class="doc-cal-head">
+          <h2>Agenda de la semana</h2>
+          <div class="doc-cal-nav">
+            <button class="btn" type="button" id="calPrev" aria-label="Semana anterior">←</button>
+            <span class="doc-cal-range" id="calRange">—</span>
+            <button class="btn" type="button" id="calNext" aria-label="Semana siguiente">→</button>
+          </div>
+        </div>
+        <p class="doc-cal-note" id="calNote"></p>
+        <div class="cal-legend">
+          <span><i class="lg booked"></i> Cita</span>
+          <span><i class="lg free"></i> Libre</span>
+        </div>
+        <div class="cal-wrap" id="docCalendar"><div class="cal-idle">Cargando agenda…</div></div>
+      </section>
+      <section class="doc-section">
+        <h2>Horario semanal</h2>
+        <div class="schedule-wrap" id="docSchedule"></div>
+      </section>
+      <section class="doc-section">
+        <h2>Detalle</h2>
+        <div class="chip-groups" id="docChips"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="app.js?v=9"></script>
+</body>
+</html>

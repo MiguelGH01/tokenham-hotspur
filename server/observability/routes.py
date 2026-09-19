@@ -1,0 +1,279 @@
+"""FastAPI routes for the local observability console (REST + live WebSocket)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from loguru import logger
+from pydantic import BaseModel, Field
+from starlette.responses import Response as StarletteResponse
+
+from observability.auth import (
+    COOKIE_NAME,
+    cookie_to_session,
+    is_admin,
+    resolve_key,
+    session_response,
+    session_to_cookie,
+)
+from observability.events import ObsEvent
+from observability.hub import get_hub
+from observability.store import shift_start_iso
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+CONSOLE_DIR = Path(__file__).resolve().parent / "console"
+
+_COOKIE_MAX_AGE = 60 * 60 * 12  # half a shift day
+
+
+class LoginBody(BaseModel):
+    key: str = Field(min_length=1)
+
+
+def _read_session(request: Request) -> dict[str, Any] | None:
+    return cookie_to_session(request.cookies.get(COOKIE_NAME))
+
+
+def require_admin(request: Request) -> dict[str, Any]:
+    session = _read_session(request)
+    if not is_admin(session):
+        raise HTTPException(status_code=401, detail="admin_required")
+    return session  # type: ignore[return-value]
+
+
+def require_provider(request: Request) -> dict[str, Any]:
+    session = _read_session(request)
+    if session is None or session.get("role") != "provider":
+        raise HTTPException(status_code=401, detail="provider_required")
+    return session
+
+
+def _set_session_cookie(response: Response, session: dict[str, Any]) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=session_to_cookie(session),
+        httponly=True,
+        samesite="lax",
+        max_age=_COOKIE_MAX_AGE,
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+
+
+def mount_observability_routes(app: FastAPI) -> None:
+    """Register /auth/* and /observability/* on the Pipecat runner FastAPI app."""
+
+    # Vite dev server is a different origin; keep this local-only.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:7860",
+            "http://127.0.0.1:7860",
+        ],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    hub = get_hub()
+
+    @app.on_event("startup")
+    async def _observability_startup():
+        await hub.ensure_ready()
+
+    @app.post("/auth/login")
+    async def auth_login(body: LoginBody, response: Response):
+        session = resolve_key(body.key)
+        if session is None:
+            raise HTTPException(status_code=401, detail="invalid_key")
+        _set_session_cookie(response, session)
+        return session_response(session)
+
+    @app.post("/auth/logout")
+    async def auth_logout(response: Response):
+        _clear_session_cookie(response)
+        return {"ok": True}
+
+    @app.get("/auth/me")
+    async def auth_me(request: Request):
+        session = _read_session(request)
+        if session is None:
+            raise HTTPException(status_code=401, detail="not_authenticated")
+        try:
+            return session_response(session)
+        except KeyError:
+            raise HTTPException(status_code=401, detail="not_authenticated") from None
+
+    @app.get("/auth/me/calendar")
+    async def auth_me_calendar(
+        request: Request,
+        week_start: str | None = Query(default=None),
+        days: int = Query(default=6, ge=1, le=14),
+    ):
+        """Week calendar for the logged-in provider (free vs booked)."""
+        from datetime import date as date_cls
+        from datetime import timedelta
+
+        from clinic_catalog import load_catalog
+        from observability.provider_calendar import (
+            assemble_calendar,
+            calendar_window,
+            fetch_provider_free_slots,
+        )
+        from rules import provider_by_id
+
+        session = require_provider(request)
+        provider = provider_by_id(load_catalog(), session["id"])
+        if provider is None:
+            raise HTTPException(status_code=401, detail="not_authenticated")
+
+        if week_start:
+            try:
+                anchor = date_cls.fromisoformat(week_start)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="bad_week_start") from exc
+            date_from = anchor - timedelta(days=anchor.weekday())
+            date_to = date_from + timedelta(days=days - 1)
+        else:
+            date_from, date_to = calendar_window(days=days)
+
+        free_slots, source = await fetch_provider_free_slots(
+            provider["id"], date_from, date_to
+        )
+        store = await hub.ensure_ready()
+        diary = await store.list_provider_bookings(
+            provider["id"],
+            date_from=date_from.isoformat(),
+            date_to=date_to.isoformat(),
+        )
+        return assemble_calendar(
+            provider,
+            date_from=date_from,
+            date_to=date_to,
+            free_slots=free_slots,
+            bot_bookings=diary["bookings"],
+            cancellations=diary["cancellations"],
+            source=source,
+        )
+
+    @app.get("/observability/health")
+    async def observability_health(_admin: dict = Depends(require_admin)):
+        store = await hub.ensure_ready()
+        shift = await store.shift_summary(since=shift_start_iso())
+        return {
+            "ok": True,
+            "live_calls": shift["live_calls"],
+            "shift_calls": shift["calls"],
+        }
+
+    @app.get("/observability/protocol")
+    async def observability_protocol(_admin: dict = Depends(require_admin)):
+        return {"nodes": hub.protocol_nodes}
+
+    @app.get("/observability/shift")
+    async def get_shift(
+        _admin: dict = Depends(require_admin),
+        since: str | None = Query(default=None),
+    ):
+        store = await hub.ensure_ready()
+        return await store.shift_summary(since=since or shift_start_iso())
+
+    @app.get("/observability/calls")
+    async def list_calls(
+        _admin: dict = Depends(require_admin),
+        since: str | None = Query(default=None),
+        include: str = Query(default="all", pattern="^(all|real|test)$"),
+    ):
+        store = await hub.ensure_ready()
+        calls = await store.list_calls(since=since or shift_start_iso(), include=include)
+        return {"calls": calls}
+
+    @app.get("/observability/calls/{call_id}")
+    async def get_call(call_id: str, _admin: dict = Depends(require_admin)):
+        store = await hub.ensure_ready()
+        detail = await store.get_call(call_id)
+        if not detail:
+            raise HTTPException(status_code=404, detail="call_not_found")
+        return detail
+
+    @app.post("/observability/fixtures/{name}/load")
+    async def load_fixture(
+        name: str,
+        _admin: dict = Depends(require_admin),
+        clear: bool = True,
+    ):
+        path = FIXTURES_DIR / f"{name}.jsonl"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="fixture_not_found")
+        events: list[ObsEvent] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            events.append(json.loads(line))
+        count = await hub.load_fixture_events(events, clear=clear)
+        logger.info("Loaded fixture {} ({} events)", name, count)
+        store = await hub.ensure_ready()
+        return {
+            "loaded": count,
+            "name": name,
+            "calls": await store.list_calls(since=None),
+            "shift": await store.shift_summary(since=shift_start_iso()),
+        }
+
+    @app.websocket("/observability/live")
+    async def observability_live(websocket: WebSocket):
+        session = cookie_to_session(websocket.cookies.get(COOKIE_NAME))
+        if not is_admin(session):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        store = await hub.ensure_ready()
+        queue = hub.subscribe()
+        try:
+            shift = await store.shift_summary(since=shift_start_iso())
+            await websocket.send_json(
+                {
+                    "kind": "snapshot",
+                    "calls": await store.list_calls(since=shift_start_iso()),
+                    "shift": shift,
+                    "protocol_nodes": hub.protocol_nodes,
+                }
+            )
+            while True:
+                event = await queue.get()
+                await websocket.send_json(event)
+        except WebSocketDisconnect:
+            pass
+        except Exception as exc:
+            logger.warning("Observability WS closed: {}", exc)
+        finally:
+            hub.unsubscribe(queue)
+
+    # Same origin as the API and the WebRTC offer endpoint: no CORS, no build.
+    # Auth routes above must be registered before this mount.
+    if CONSOLE_DIR.is_dir():
+        app.mount("/console", _NoCacheStatic(directory=CONSOLE_DIR, html=True), name="console")
+
+
+class _NoCacheStatic(StaticFiles):
+    """Serve the console without caching.
+
+    A reload has to pick up an edited app.js; a browser holding the previous
+    one silently runs stale code, which looks like the fix never landed.
+    """
+
+    def file_response(self, *args, **kwargs) -> StarletteResponse:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response

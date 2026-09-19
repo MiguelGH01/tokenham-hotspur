@@ -36,7 +36,59 @@ from copy import deepcopy
 from loguru import logger
 
 import audit
+from observability.events import safe_action_payload
 
+
+def _schedule(factory) -> None:
+    """Fire-and-forget an observability emit from a sync setter.
+
+    ``factory`` is a zero-arg callable that returns the awaitable, so we do not
+    construct a coroutine when there is no running loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    async def _safe():
+        try:
+            await factory()
+        except Exception:
+            logger.debug("observability emit skipped")
+
+    loop.create_task(_safe())
+
+
+async def _emit_queued(call_id: str, action: dict, *, seq: int) -> None:
+    from observability.emit import emit_action_queued
+
+    await emit_action_queued(
+        call_id,
+        action=str(action.get("action")),
+        reason=action.get("reason"),
+        seq=seq,
+        payload=safe_action_payload(action),
+    )
+
+
+async def _emit_posted(
+    call_id: str,
+    action: dict,
+    *,
+    http_status: int | None,
+    ok: bool,
+    error: str | None = None,
+) -> None:
+    from observability.emit import emit_submit_posted
+
+    await emit_submit_posted(
+        call_id,
+        action=str(action.get("action")),
+        http_status=http_status,
+        ok=ok,
+        reason=action.get("reason"),
+        error=error,
+    )
 #: What a call that never decided anything still has to submit. Silence is
 #: never cheaper than a stated answer, so the fallback is the broadest
 #: non-rule ending in the closed vocabulary.
@@ -59,8 +111,27 @@ def reschedule_action(appointment_id: str, offer: dict) -> dict:
     }
 
 
-def cancel_action(appointment_id: str) -> dict:
-    return {"action": "CANCEL", "appointment_id": appointment_id}
+def cancel_action(appointment_id: str, *, appointment: dict | None = None) -> dict:
+    """Cancel one diary row.
+
+    Optional ``appointment`` adds provider/slot for the doctor calendar only;
+    :meth:`ClinicClient.post_submission` strips those before the clinic POST.
+    """
+    action: dict = {"action": "CANCEL", "appointment_id": appointment_id}
+    if not appointment:
+        return action
+    if appointment.get("provider_id"):
+        action["provider_id"] = appointment["provider_id"]
+    if appointment.get("location_id"):
+        action["location_id"] = appointment["location_id"]
+    slot = appointment.get("start_time") or appointment.get("slot")
+    if slot:
+        action["slot"] = slot
+    if appointment.get("appointment_type_id"):
+        action["appointment_type_id"] = appointment["appointment_type_id"]
+    if appointment.get("duration_minutes") is not None:
+        action["duration_minutes"] = appointment["duration_minutes"]
+    return action
 
 
 def register_action(patient: dict) -> dict:
@@ -95,6 +166,10 @@ class CallSubmission:
         self._requests: list[CallSubmission] = []
         self._closed = False
         self._lock = asyncio.Lock()
+        #: Slot read back to the caller but not yet confirmed. A hang-up after
+        #: the offer (the `flow/` graph still uses this) submits it as BOOK
+        #: rather than inventing a refusal.
+        self._offered: dict | None = None
 
     # --- the plan ---------------------------------------------------------
 
@@ -136,7 +211,15 @@ class CallSubmission:
 
         The question a late confirmation asks: a retry of what is already
         decided is safe, a different action cannot become the record any more.
+        CANCEL compares on ``appointment_id`` only — calendar fields on the
+        stored row must not make a retry look like a different decision.
         """
+        if action.get("action") == "CANCEL":
+            target = action.get("appointment_id")
+            return any(
+                a.get("action") == "CANCEL" and a.get("appointment_id") == target
+                for a in self.actions
+            )
         return action in self.actions
 
     def new_request(self):
@@ -163,6 +246,7 @@ class CallSubmission:
             reason=action.get("reason"),
             provisional=provisional,
         )
+        _schedule(lambda: _emit_queued(self.call_id, action, seq=1))
 
     def decide(self) -> None:
         """The conversation can no longer change its mind, so the plan is final.
@@ -179,15 +263,36 @@ class CallSubmission:
         self._reject_write_after_decision()
         self._actions.append(deepcopy(action))
         self._provisional.append(False)
+        _schedule(lambda: _emit_queued(self.call_id, action, seq=len(self._actions)))
+
+    def set_offer(self, offer: dict) -> None:
+        """Remember a slot that was spoken but not yet confirmed.
+
+        A later confirmed book wins; a later explicit refusal cancels it. If
+        the call ends on the offer, :meth:`close` submits it as BOOK.
+        """
+        self._offered = deepcopy(offer)
+        if (
+            self._actions
+            and self._actions[0].get("action") == "NO_ACTION"
+            and self._provisional[:1] == [True]
+        ):
+            self._actions = self._actions[1:]
+            self._provisional = self._provisional[1:]
+
+    def clear_offer(self) -> None:
+        """The caller declined the live offer: never submit it as a hang-up book."""
+        self._offered = None
 
     def set_book(self, offer):
+        self._offered = None
         self._set_primary(book_action(offer))
 
     def set_register(self, patient):
         self._set_primary(register_action(patient))
 
-    def set_cancel(self, appointment_id):
-        self._set_primary(cancel_action(appointment_id))
+    def set_cancel(self, appointment_id, *, appointment: dict | None = None):
+        self._set_primary(cancel_action(appointment_id, appointment=appointment))
 
     def set_reschedule(self, appointment_id, offer):
         self._set_primary(reschedule_action(appointment_id, offer))
@@ -200,6 +305,7 @@ class CallSubmission:
         window they go on to widen. A terminal node promotes it with
         :meth:`decide` on its way out.
         """
+        self._offered = None
         self._set_primary({"action": "NO_ACTION", "reason": reason}, provisional=provisional)
 
     def set_escalate(self, reason):
@@ -276,6 +382,8 @@ class CallSubmission:
             accepted = await request._close_request() and accepted
         if self._plan_exists() or self._delivered_anything():
             return accepted
+        if self._offered:
+            return await self._deliver([book_action(self._offered)], final=True) and accepted
         # Silence is never cheaper than a stated answer, but "nothing decided"
         # is not the same as "nothing known": the call resolves the best ending
         # it can still stand behind before settling for the unscored refusal.
@@ -319,13 +427,21 @@ class CallSubmission:
         backoff = max(0.0, float(os.getenv("SUBMIT_DELIVERY_BACKOFF_SECS", "1.0")))
         async with self._lock:
             for action in pending:
-                payload = {"call_id": self.call_id, **deepcopy(action)}
+                # CANCEL may carry provider/slot for the doctor calendar; the
+                # clinic route only accepts appointment_id (+ call_id).
+                deliver = action
+                if action.get("action") == "CANCEL":
+                    deliver = {
+                        "action": "CANCEL",
+                        "appointment_id": action["appointment_id"],
+                    }
+                payload = {"call_id": self.call_id, **deepcopy(deliver)}
                 for attempt in range(1, attempts + 1):
                     audit.audit(
                         self.call_id,
                         "submission_attempt",
                         verb=action.get("action"),
-                        payload={k: v for k, v in action.items()},
+                        payload={k: v for k, v in deliver.items()},
                         final=final,
                         attempt=attempt,
                     )
@@ -353,6 +469,13 @@ class CallSubmission:
                             failure["status"] = status
                         audit.audit(self.call_id, "submission_result", **failure)
                         if attempt == attempts:
+                            await _emit_posted(
+                                self.call_id,
+                                action,
+                                http_status=status,
+                                ok=False,
+                                error=type(exc).__name__,
+                            )
                             return False
                         await asyncio.sleep(backoff * attempt)
                     else:
@@ -363,6 +486,12 @@ class CallSubmission:
                     self.call_id,
                     "submission_result",
                     verb=action.get("action"),
+                    ok=True,
+                )
+                await _emit_posted(
+                    self.call_id,
+                    action,
+                    http_status=200,
                     ok=True,
                 )
             return True

@@ -1,0 +1,31 @@
+# PR-03 case doctor_and_site-2fe62ca2872f — Joaquín Ramírez Delgado (Dra. Ortiz Vidal at Centro)
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
+# GAP: get_earliest_slot has no provider argument, so a named-doctor ask cannot be filtered
+# server-side yet. The live /availability endpoint already accepts provider_id (verified), so
+# the fix is adding a provider filter to the tool/schema, mapped from the spoken name via the
+# clinic catalog — not a new endpoint. Written as target behaviour.
+# Expected BOOK: P01842 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / privado
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: doctor_and_site_joaquin
+turns:
+  - user: "Hello, Joaquín Ramírez Delgado, DNI 20206861G. I'd like an appointment with Dra. Ortiz Vidal at Arenal Centro, whenever she's free soonest."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: centro }
+      - event: response
+        eval: "the response offers an appointment specifically with Dra. Ortiz Vidal at Arenal Centro, not another doctor"
+  - user: "Yes, that's great."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

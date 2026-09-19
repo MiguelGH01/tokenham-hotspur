@@ -108,10 +108,18 @@ class FirstChunkDeadline:
     async def _iterate(self):
         timeout = self._timeout_secs()
         for attempt in range(1, self._max_attempts() + 1):
-            stream = await self._open_stream()
-            iterator = stream.__aiter__()
+            # Opening the stream sits under the same deadline as its first chunk: a
+            # provider that never sends response headers hung here with no deadline at all.
+            stream = iterator = None
+
+            async def open_and_pull():
+                nonlocal stream, iterator
+                stream = await self._open_stream()
+                iterator = stream.__aiter__()
+                return await iterator.__anext__()
+
             try:
-                first = await asyncio.wait_for(iterator.__anext__(), timeout)
+                first = await asyncio.wait_for(open_and_pull(), timeout)
             except TimeoutError:
                 await _release(iterator, stream)
                 if self._on_stall is not None:

@@ -1,6 +1,6 @@
 Feature plan: problema 1, The Simple Booking
 
-Base del agente. Todo lo que se construya aquí (estado, tools, envío) lo reutilizan el resto de problemas; no se reescribe, se amplía. Los casos públicos (Josefa, Amelia, …) son **fixtures del leaderboard**, no ramas: `get_earliest_slot` lee `/availability` con los filtros que el llamante haya dicho. Un paciente, sede o hueco no visto tiene que salir del mismo código.
+Base del agente. Todo lo que se construya aquí (estado, tools, envío) lo reutilizan el resto de problemas; no se reescribe, se amplía.
 
 1. El caso
 
