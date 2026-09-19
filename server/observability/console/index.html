@@ -226,8 +226,20 @@
     </div>
     <span class="tclock" id="docClock">—</span>
     <div class="spacer"></div>
+    <button class="btn inbox-btn" id="btnInbox" type="button" aria-expanded="false" aria-controls="inboxPanel" title="Buzón">
+      <span class="inbox-label">Buzón</span>
+      <span class="inbox-badge" id="inboxBadge" hidden>0</span>
+    </button>
     <span class="doc-badge" id="docBadge">—</span>
     <button class="btn" id="btnLogoutDoctor" type="button">Cerrar sesión</button>
+  </div>
+  <div class="inbox-panel" id="inboxPanel" hidden>
+    <div class="inbox-head">
+      <h2>Buzón</h2>
+      <button class="btn" type="button" id="btnInboxReadAll">Marcar leídas</button>
+      <button class="btn" type="button" id="btnInboxClose" aria-label="Cerrar buzón">✕</button>
+    </div>
+    <div class="inbox-list" id="inboxList"><div class="inbox-idle">Sin avisos.</div></div>
   </div>
   <div class="scroll">
     <div class="doc-page">
@@ -249,6 +261,7 @@
         <div class="cal-legend">
           <span><i class="lg booked"></i> Cita</span>
           <span><i class="lg free"></i> Libre</span>
+          <span><i class="lg emergency"></i> Urgencia</span>
         </div>
         <div class="cal-wrap" id="docCalendar"><div class="cal-idle">Cargando agenda…</div></div>
       </section>
@@ -265,6 +278,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>

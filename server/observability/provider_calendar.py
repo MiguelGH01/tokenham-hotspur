@@ -118,8 +118,10 @@ def build_day_blocks(
     closure_days: frozenset[str],
     infer_busy: bool = True,
     absent_days: frozenset[str] = frozenset(),
+    overlay_by_start: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """One day's blocks for the calendar UI."""
+    overlays = overlay_by_start or {}
     ticks = standing_slot_starts(
         provider,
         day,
@@ -132,6 +134,24 @@ def build_day_blocks(
         end = (start + timedelta(minutes=slot_minutes)).strftime("%H:%M")
         start_hm = start.strftime("%H:%M")
         norm = _norm_start_key(start)
+        overlay = overlays.get(norm)
+        if overlay:
+            name = overlay.get("patient_name")
+            label = f"Urgencia · {name}" if name else "Urgencia"
+            blocks.append(
+                {
+                    "start": start_hm,
+                    "end": end,
+                    "kind": "emergency",
+                    "source": "overlay",
+                    "location_id": loc_id,
+                    "location_name": loc_name,
+                    "patient_name": name,
+                    "appointment_type_id": None,
+                    "label": label,
+                }
+            )
+            continue
         bot = bot_by_start.get(norm)
         if bot:
             blocks.append(
@@ -224,6 +244,19 @@ def bot_booking_index(
     return out
 
 
+def overlay_index(
+    overlays: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Map normalised start → emergency overlay (last write wins)."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in overlays:
+        slot = row.get("slot")
+        if not slot:
+            continue
+        out[_norm_start_key(slot)] = row
+    return out
+
+
 def calendar_window(*, anchor: date | None = None, days: int = 6) -> tuple[date, date]:
     """Monday-aligned window of ``days`` calendar days (default Mon–Sat)."""
     today = anchor or datetime.now(MADRID).date()
@@ -258,6 +291,7 @@ def assemble_calendar(
     free_slots: list[dict[str, Any]],
     bot_bookings: list[dict[str, Any]],
     cancellations: list[dict[str, Any]] | None = None,
+    overlays: list[dict[str, Any]] | None = None,
     source: str = "availability",
 ) -> dict[str, Any]:
     import reception_notices
@@ -269,6 +303,7 @@ def assemble_calendar(
     kept, freed = apply_cancellations(bot_bookings, cancellations or [])
     free = free_start_keys(free_slots) | freed
     bots = bot_booking_index(kept)
+    overlay_by_start = overlay_index(overlays or [])
     infer_busy = source == "availability"
     days_out: list[dict[str, Any]] = []
     day = date_from
@@ -318,6 +353,7 @@ def assemble_calendar(
                     closure_days=closure_days,
                     infer_busy=infer_busy,
                     absent_days=absent,
+                    overlay_by_start=overlay_by_start,
                 ),
             }
         )

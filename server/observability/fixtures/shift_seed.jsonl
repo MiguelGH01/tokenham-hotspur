@@ -443,7 +443,7 @@
 {"kind": "node.entered", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:35:12.865753+00:00", "payload": {"from": "cancel_confirm", "to": "goodbye"}}
 {"kind": "metrics.first_word", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:34:56.367753+00:00", "payload": {"ms": 502}}
 {"kind": "state.patched", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:35:15.865753+00:00", "payload": {"patient_name": "Paciente 16", "pending_action": "CANCEL"}}
-{"kind": "action.queued", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:36:04.865753+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 16 · CANCEL", "payload": {}}}
+{"kind": "action.queued", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:36:04.865753+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 16 · CANCEL", "payload": {"provider_id": "PR04", "location_id": "centro", "slot": "2026-09-21T11:00:00+02:00", "appointment_id": "A000016"}}}
 {"kind": "submit.posted", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:36:07.865753+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
 {"kind": "call.ended", "call_id": "CA-seed-0016", "ts": "2026-09-19T12:36:09.865753+00:00", "payload": {}}
 {"kind": "call.started", "call_id": "CA-seed-0017", "ts": "2026-09-19T11:00:47.316993+00:00", "payload": {"transport": "eval", "from_number": null}}
@@ -1716,7 +1716,7 @@
 {"kind": "node.entered", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:47:49.720569+00:00", "payload": {"from": "cancel_confirm", "to": "goodbye"}}
 {"kind": "metrics.first_word", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:47:33.136569+00:00", "payload": {"ms": 416}}
 {"kind": "state.patched", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:47:52.720569+00:00", "payload": {"patient_name": "Paciente 64", "pending_action": "CANCEL"}}
-{"kind": "action.queued", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:50:32.720569+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 64 · CANCEL", "payload": {}}}
+{"kind": "action.queued", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:50:32.720569+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 64 · CANCEL", "payload": {"provider_id": "PR03", "location_id": "sur", "slot": "2026-09-24T11:00:00+02:00", "appointment_id": "A000064"}}}
 {"kind": "submit.posted", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:50:35.720569+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
 {"kind": "call.ended", "call_id": "CA-seed-0064", "ts": "2026-09-19T11:50:37.720569+00:00", "payload": {}}
 {"kind": "call.started", "call_id": "CA-seed-0065", "ts": "2026-09-19T12:20:39.010973+00:00", "payload": {"transport": "twilio", "from_number": null}}
@@ -2007,7 +2007,7 @@
 {"kind": "node.entered", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:39:05.185875+00:00", "payload": {"from": "cancel_confirm", "to": "goodbye"}}
 {"kind": "metrics.first_word", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:38:49.244875+00:00", "payload": {"ms": 1059}}
 {"kind": "state.patched", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:39:08.185875+00:00", "payload": {"patient_name": "Paciente 75", "pending_action": "CANCEL"}}
-{"kind": "action.queued", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:40:09.185875+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 75 · CANCEL", "payload": {}}}
+{"kind": "action.queued", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:40:09.185875+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 75 · CANCEL", "payload": {"provider_id": "PR01", "location_id": "centro", "slot": "2026-09-21T14:45:00+02:00", "appointment_id": "A000075"}}}
 {"kind": "submit.posted", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:40:12.185875+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
 {"kind": "call.ended", "call_id": "CA-seed-0075", "ts": "2026-09-19T06:40:14.185875+00:00", "payload": {}}
 {"kind": "call.started", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:00:24.637815+00:00", "payload": {"transport": "twilio", "from_number": null}}
@@ -2168,7 +2168,7 @@
 {"kind": "node.entered", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:44:49.671872+00:00", "payload": {"from": "cancel_confirm", "to": "goodbye"}}
 {"kind": "metrics.first_word", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:44:34.233872+00:00", "payload": {"ms": 1562}}
 {"kind": "state.patched", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:44:52.671872+00:00", "payload": {"patient_name": "Paciente 81", "pending_action": "CANCEL"}}
-{"kind": "action.queued", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:47:58.671872+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 81 · CANCEL", "payload": {}}}
+{"kind": "action.queued", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:47:58.671872+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 81 · CANCEL", "payload": {"provider_id": "PR04", "location_id": "centro", "slot": "2026-09-21T12:15:00+02:00", "appointment_id": "A000081"}}}
 {"kind": "submit.posted", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:48:01.671872+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
 {"kind": "call.ended", "call_id": "CA-seed-0081", "ts": "2026-09-19T08:48:03.671872+00:00", "payload": {}}
 {"kind": "call.started", "call_id": "CA-seed-0082", "ts": "2026-09-19T09:38:41.340816+00:00", "payload": {"transport": "webrtc", "from_number": null}}

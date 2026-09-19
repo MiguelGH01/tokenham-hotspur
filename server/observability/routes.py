@@ -157,6 +157,11 @@ def mount_observability_routes(app: FastAPI) -> None:
             date_from=date_from.isoformat(),
             date_to=date_to.isoformat(),
         )
+        overlays = await store.list_provider_overlays(
+            provider["id"],
+            date_from=date_from.isoformat(),
+            date_to=date_to.isoformat(),
+        )
         return assemble_calendar(
             provider,
             date_from=date_from,
@@ -164,8 +169,36 @@ def mount_observability_routes(app: FastAPI) -> None:
             free_slots=free_slots,
             bot_bookings=diary["bookings"],
             cancellations=diary["cancellations"],
+            overlays=overlays,
             source=source,
         )
+
+    @app.get("/auth/me/inbox")
+    async def auth_me_inbox(request: Request):
+        """Doctor mailbox: cancellations and emergencies for this provider."""
+        session = require_provider(request)
+        store = await hub.ensure_ready()
+        notes = await store.list_notifications(session["id"])
+        unread = await store.count_unread_notifications(session["id"])
+        return {"unread": unread, "notifications": notes}
+
+    @app.post("/auth/me/inbox/{notification_id}/read")
+    async def auth_me_inbox_read(notification_id: int, request: Request):
+        session = require_provider(request)
+        store = await hub.ensure_ready()
+        ok = await store.mark_notification_read(session["id"], notification_id)
+        if not ok:
+            # Already read or wrong owner — still 200 with current unread.
+            pass
+        unread = await store.count_unread_notifications(session["id"])
+        return {"ok": True, "unread": unread}
+
+    @app.post("/auth/me/inbox/read-all")
+    async def auth_me_inbox_read_all(request: Request):
+        session = require_provider(request)
+        store = await hub.ensure_ready()
+        marked = await store.mark_all_notifications_read(session["id"])
+        return {"ok": True, "marked": marked, "unread": 0}
 
     @app.get("/observability/health")
     async def observability_health(_admin: dict = Depends(require_admin)):

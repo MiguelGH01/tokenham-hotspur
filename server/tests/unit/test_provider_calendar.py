@@ -124,6 +124,38 @@ def test_cancel_frees_bot_booking_and_slot():
     )
 
 
+def test_emergency_overlay_wins_over_free_and_inferred():
+    provider = provider_by_id(load_catalog(), "PR01")
+    free = [
+        {
+            "provider_id": "PR01",
+            "start_time": "2026-09-21T10:15:00+02:00",
+            "duration_minutes": 15,
+            "location_id": "centro",
+        },
+    ]
+    cal = assemble_calendar(
+        provider,
+        date_from=date(2026, 9, 21),
+        date_to=date(2026, 9, 21),
+        free_slots=free,
+        bot_bookings=[],
+        overlays=[
+            {
+                "slot": "2026-09-21T10:15:00+02:00",
+                "patient_name": "Luis Ortega",
+                "kind": "emergency",
+            }
+        ],
+        source="availability",
+    )
+    day = cal["days"][0]
+    block = next(b for b in day["blocks"] if b["start"] == "10:15")
+    assert block["kind"] == "emergency"
+    assert block["source"] == "overlay"
+    assert "Luis" in block["label"]
+
+
 def test_without_availability_shows_hours_as_free():
     provider = provider_by_id(load_catalog(), "PR01")
     cal = assemble_calendar(
