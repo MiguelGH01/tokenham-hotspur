@@ -1,0 +1,29 @@
+# PR-04 case the_new_patient-3a76e6fabfba — Elizabeth Jones Evans (NIE, not on file -> REGISTER,
+# never BOOK). Verified live: national_id=X0500252W returns 0 directory matches.
+# GAP: same missing registration flow as the_new_patient_joaquin.yaml — see that file's comment.
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: the_new_patient_elizabeth
+turns:
+  - user: "Hi, I'm a new patient, Elizabeth Jones Evans. My NIE is X0500252W."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the bot says it cannot find them and offers to register them as a new patient"
+  - user: "Yes please. Date of birth the 13th of September 2004, phone 756 960 522, email elizabethjones12@icloud.com, insured with AXA."
+    expect:
+      - event: function_call
+        calls:
+          - name: register_patient
+            args:
+              given_name: Elizabeth
+              first_surname: Jones
+              second_surname: Evans
+              national_id: X0500252W
+              insurer: axa
+      - event: response
+        eval: "the bot confirms the registration and does not offer or book any appointment"

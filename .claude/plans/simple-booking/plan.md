@@ -370,3 +370,61 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   100 rpm, 5 requests concurrentes por clave). Proveedor `helmcode` añadido a
   `build_llm()` vía `OpenAILLMService(base_url=...)` y puesto por defecto; `gemini` y
   `openai` siguen disponibles con `LLM_PROVIDER`.
+- 2026-09-19 — PRIMERA LLAMADA REAL (práctica, Ignacio): "Connection lost · Missing
+  record" a los 3 s, 2 de 2. Túnel OK (ngrok registró `GET /ws -> 101`). Causa raíz:
+  `create_transport()` construye `TwilioFrameSerializer` con `auto_hang_up=True` y
+  credenciales Twilio vacías → `ValueError` al arrancar la sesión. Fix: `bot()` monta
+  el transporte de telefonía él mismo (`_telephony_transport`) con
+  `auto_hang_up=False`; la plataforma cuelga sola y no tenemos cuenta Twilio.
+- 2026-09-19 — Calidad de llamada (tras la 1ª llamada real OK de Ignacio, BOOK registrado
+  con los 7 campos correctos): saludo en inglés (la voz es `aura-2-helena-en`; en español
+  salía ilegible), prompt "ya has saludado, no repitas" + nombre e identificador en una
+  sola pregunta, títulos hablables (`Dra.`/`Dr.`→"Doctor", `D.`→"Don") solo en el texto
+  hablado, y frase de relleno "One moment, please." dicha por código antes de cada
+  consulta a la API.
+- 2026-09-19 — Refactor ajeno a esta sesión (`094b0b8`): `handlers.py` → paquete
+  `server/flow/` (`nodes`, `tools`, `prompts`), cliente y catálogo → `server/clinic/`.
+  Los 4 arreglos de calidad sobrevivieron. Regresión introducida por el move y corregida
+  aquí: `CATALOG_PATH` usaba `parent.parent` y pasó a apuntar a `server/clinic.json`;
+  ahora `parents[2]` (raíz del repo). Síntoma: los 4 evals fallaban en `search_patient`
+  con FileNotFoundError.
+- 2026-09-19 — Evals tras el refactor + fix: josefa/amelia/ignacio/chloe 4/4, ofertas
+  idénticas al JSON aceptado, frase de relleno 2x por llamada. Se corren en el puerto
+  7861 (`--port 7861` / `--bot-url ws://localhost:7861`) para no chocar con el bot de
+  Twilio del 7860. Un corte de DNS local (~01:31) tumbó un run intermedio: no era código.
+- 2026-09-19 — 2ª LLAMADA REAL (Josefa): "Agent silence", NO_ACTION enviado (la red de
+  seguridad funcionó: nunca registro vacío). Causa raíz en el log del bot:
+  `_audio_task_handler unexpected exception (pyrnnoise.py:43): Graph.__init__() got an
+  unexpected keyword argument 'rate'` — el `RNNoiseFilter` añadido upstream revienta en
+  el primer frame (pyrnnoise 0.4.3 vs av 17.0.1), mata la tarea de audio de entrada y
+  deja el bot SORDO toda la llamada. Reproducido offline al 100%. Refutadas tres
+  hipótesis mías (prompt "no vuelvas a saludar", Deepgram con "Hi" corto, gateway).
+  Fix: `_noise_filter_available()` prueba el filtro con un frame de 8 kHz al arrancar;
+  si falla, el bot corre sin filtro y lo registra como ERROR. Pendiente para quien
+  añadió RNNoise: fijar versiones compatibles de pyrnnoise/av.
+- 2026-09-19 — Hallazgo de latencia: `deepseek-v4-flash` emite tokens de razonamiento
+  (440 tokens para una respuesta de 7 palabras, ~3 s). Sin resolver: comprobar si el
+  gateway permite desactivarlo.
+- 2026-09-19 — Decisión de Adolfo: la supresión de ruido NO toca todavía (el caso de uso
+  es PR-12, no PR-01). `RNNoiseFilter` y el guard de autocomprobación retirados de
+  `bot.py`; queda un comentario en `_audio_kwargs()` con cuándo reintroducirlo y el
+  aviso del crash pyrnnoise 0.4.3 + av 17. Verificado después: pytest 10/10 y evals
+  4/4 contra la API real, ofertas idénticas al JSON aceptado, 0 errores en el bot.
+- 2026-09-19 — RUN ALL #2 (28 llamadas: 4 BOOK, 24 perdidas). Dos modos de fallo, medidos
+  en `/tmp/bot-runall2.log`: (1) 15-16 cortes por "Agent silence": el bot pregunta, el VAD
+  no detecta voz en 37-56 s y la plataforma corta; el llamante simulado tarda mediana 11 s,
+  p90 24 s, máx 46 s. (2) 8-9 llamadas donde NUESTRO temporizador de 150 s envió el
+  NO_ACTION por defecto y, al ser el envío único, bloqueó el BOOK posterior (N=19 y N=25
+  llegaron a despedirse después).
+- 2026-09-19 — Tres arreglos (decisión de Adolfo): (#10) temporizador de 150 s ELIMINADO —
+  la ventana de envío dura 30 s tras cerrar el socket, flush al desconectar basta.
+  (#9) vigilante de silencio: `user_idle_timeout=16 s` (cuenta desde que el bot deja de
+  hablar ≈ 20 s desde que empieza) + `on_user_turn_idle` → repite la última PREGUNTA del
+  bot ("Sorry, are you still there? …"), dicho por código, sin LLM. (#11) si la llamada
+  acaba con una oferta hecha y no rechazada, se envía como BOOK en vez de NO_ACTION
+  (`CallSubmission.set_offer/clear_offer`; `revise_search` la borra). Riesgo asumido:
+  reserva no confirmada verbalmente. También: espacio que faltaba en "at{sede}".
+- 2026-09-19 — Verificación: pytest 20/20 (4 nuevos en tests/unit), evals 4/4 con ofertas
+  exactas. NO verificado: que el vigilante salte en vivo — el eval de texto no genera
+  "Bot stopped speaking" (no hay audio), que es lo que arma el reloj. Solo se puede ver
+  en una llamada con audio: buscar "of silence, re-prompting" en el log.

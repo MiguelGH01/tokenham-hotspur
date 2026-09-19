@@ -31,7 +31,10 @@ def pick_offer(
     connected_at: datetime,
     weekday: str | None = None,
     part_of_day: str | None = None,
+    closed_days: frozenset[str] = frozenset(),
 ) -> dict | None:
+    """`closed_days`: ISO dates the clinic is shut. The API still lists slots on them (LIVE-01),
+    payable ones when a patient_id is passed, so only the calendar can rule them out."""
     call_day = connected_at.astimezone(MADRID).date()
     load = Counter(slot["provider_id"] for slot in availability["slots"])
 
@@ -39,6 +42,8 @@ def pick_offer(
     for slot in availability["slots"]:
         start = datetime.fromisoformat(slot["start_time"]).astimezone(MADRID)
         if start.date() <= call_day or not _matches(start, weekday, part_of_day):
+            continue
+        if start.date().isoformat() in closed_days:
             continue
         candidates.append((start, load[slot["provider_id"]], slot))
     if not candidates:

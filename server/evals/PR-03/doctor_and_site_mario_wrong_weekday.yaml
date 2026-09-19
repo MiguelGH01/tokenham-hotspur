@@ -1,0 +1,32 @@
+# PR-03 case doctor_and_site-9904a6d96cdd — Mario Gómez Blanco (Dr. Sáez at Arenal Centro on a
+# Monday — Sáez only holds Centro hours on Fridays -> keep provider+site, take his earliest day
+# there instead of switching doctor or site). Never seen before -> first_visit.
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
+# GAP: same provider-filter gap, plus "ignore the named weekday, keep provider+site" is the
+# opposite of what booking.pick_offer does today (it filters TO the requested weekday and
+# would return no_slots for Sáez+Centro+Monday, since he isn't there that day).
+# Expected BOOK: P01847 / PR03 / centro / first_visit / 2026-09-25T09:30:00+02:00 / asisa
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: doctor_and_site_mario_wrong_weekday
+turns:
+  - user: "Hello, Mario Gómez Blanco, DNI X2245876H. I'd like to see Dr. Sáez at Arenal Centro, on a Monday if possible."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: centro }
+      - event: response
+        eval: "the response explains Dr. Sáez is not at Arenal Centro on Mondays and offers his earliest slot there on the day he does hold Centro hours (Friday), rather than switching to a different doctor or a different site"
+  - user: "Alright, Friday works, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

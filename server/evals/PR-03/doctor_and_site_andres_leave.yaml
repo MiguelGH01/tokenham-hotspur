@@ -1,0 +1,32 @@
+# PR-03 case doctor_and_site-d5b4f04886c5 — Andrés Rubio Vázquez (Dr. Requena at Arenal Norte
+# is on sick leave through 30 Sep -> fall back to the earliest same-specialty doctor at the
+# SAME site, not just anyone)
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
+# GAP: same provider-filter gap as the other doctor_and_site cases, plus the leave-fallback
+# rule itself (drop the named provider, keep specialty+site) is not implemented in
+# server/booking.py — pick_offer has no concept of "this provider is on leave, try another".
+# Expected BOOK: P01843 / PR07 / norte / review / 2026-09-22T09:00:00+02:00 / dkv
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: doctor_and_site_andres_leave
+turns:
+  - user: "Good morning, Andrés Rubio Vázquez, DNI 63663395Q. Could I get an appointment with Dr. Requena at Arenal Norte?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: norte }
+      - event: response
+        eval: "the response says Dr. Requena is unavailable (on leave) and offers instead the earliest general practice appointment with another doctor still at Arenal Norte, not at a different site"
+  - user: "That's fine, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

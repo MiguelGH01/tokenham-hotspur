@@ -218,8 +218,6 @@ __marimo__/
 # Pipecat eval artifacts
 *.eval.log
 *.debug.log
-
-# Cached Krisp VIVA .kef models (downloaded with KRISP_VIVA_API_KEY)
-server/.krisp-models/
+server/eval-runs/
 
 # Node.js (client/)

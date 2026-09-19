@@ -1,0 +1,28 @@
+# PR-06 case the_rules-d760519fdfcd — Teresa López García (asks for earliest Dermatology; ASISA
+# covers derm, but she has no derm referral on file -> NO_ACTION(referral_required), not a
+# booking). Verified live: P00004 DOB 1996-08-14, ASISA, referrals=[physiotherapy] only.
+# /availability for dermatology on her returns 0 slots and blocked=[referral_required for both
+# derm providers], even though the plan itself covers dermatology.
+# GAP: there is no NO_ACTION path today beyond the default patient_not_found
+# (server/submission.py's DEFAULT_PENDING) and the identify give-up node
+# (server/handlers.py:254). get_earliest_slot's no_slots branch just asks the caller to drop a
+# constraint (server/handlers.py:213-217); it never reads `blocked` to distinguish
+# referral_required from a genuinely empty calendar, and nothing calls
+# CallSubmission.set_no_action with that reason.
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: the_rules_teresa_referral_required
+turns:
+  - user: "Hello, Teresa López García, DNI 60153984Z. I've got a mole that looks different, could I see Dermatology as soon as possible?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: dermatology }
+      - event: response
+        eval: "the bot explains it cannot book dermatology without a referral on file, does not offer any other specialty as a substitute, and does not book any appointment"
