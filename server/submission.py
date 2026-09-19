@@ -147,6 +147,10 @@ class CallSubmission:
         self._requests: list[CallSubmission] = []
         self._closed = False
         self._lock = asyncio.Lock()
+        #: Slot read back to the caller but not yet confirmed. A hang-up after
+        #: the offer (the `flow/` graph still uses this) submits it as BOOK
+        #: rather than inventing a refusal.
+        self._offered: dict | None = None
 
     # --- the plan ---------------------------------------------------------
 
@@ -234,7 +238,27 @@ class CallSubmission:
         self._provisional.append(False)
         _schedule(lambda: _emit_queued(self.call_id, action, seq=len(self._actions)))
 
+    def set_offer(self, offer: dict) -> None:
+        """Remember a slot that was spoken but not yet confirmed.
+
+        A later confirmed book wins; a later explicit refusal cancels it. If
+        the call ends on the offer, :meth:`close` submits it as BOOK.
+        """
+        self._offered = deepcopy(offer)
+        if (
+            self._actions
+            and self._actions[0].get("action") == "NO_ACTION"
+            and self._provisional[:1] == [True]
+        ):
+            self._actions = self._actions[1:]
+            self._provisional = self._provisional[1:]
+
+    def clear_offer(self) -> None:
+        """The caller declined the live offer: never submit it as a hang-up book."""
+        self._offered = None
+
     def set_book(self, offer):
+        self._offered = None
         self._set_primary(book_action(offer))
 
     def set_register(self, patient):
@@ -254,6 +278,7 @@ class CallSubmission:
         window they go on to widen. A terminal node promotes it with
         :meth:`decide` on its way out.
         """
+        self._offered = None
         self._set_primary({"action": "NO_ACTION", "reason": reason}, provisional=provisional)
 
     def set_escalate(self, reason):
@@ -330,6 +355,8 @@ class CallSubmission:
             accepted = await request._close_request() and accepted
         if self._plan_exists() or self._delivered_anything():
             return accepted
+        if self._offered:
+            return await self._deliver([book_action(self._offered)], final=True) and accepted
         # Silence is never cheaper than a stated answer, but "nothing decided"
         # is not the same as "nothing known": the call resolves the best ending
         # it can still stand behind before settling for the unscored refusal.

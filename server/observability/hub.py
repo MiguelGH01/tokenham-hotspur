@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from loguru import logger
 from typing import Any
 
 from observability.events import (
@@ -32,7 +34,9 @@ class CallHub:
         return list(PROTOCOL_NODES)
 
     async def ensure_ready(self) -> ObservabilityStore:
-        if self._store is None:
+        # A store closed underneath us (tests swap the singleton) must not be
+        # handed back: every write on it would raise into the call path.
+        if self._store is None or not self._store.is_open:
             self._store = await get_store()
             await self._hydrate_live()
             self._ready.set()
@@ -40,6 +44,13 @@ class CallHub:
             await self._hydrate_live()
             self._ready.set()
         return self._store
+
+    async def _persist(self, write) -> None:
+        """Persist, but never let observation break the call it observes."""
+        try:
+            await write()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Observability write dropped: {}", exc)
 
     async def _hydrate_live(self) -> None:
         assert self._store is not None
@@ -88,14 +99,16 @@ class CallHub:
                     "events": [],
                 }
             self._append_locked(call_id, event)
-        await store.upsert_call_started(
-            call_id,
-            transport=transport,
-            from_number=from_number,
-            started_at=event["ts"],
-            is_test=is_test,
+        await self._persist(
+            lambda: store.upsert_call_started(
+                call_id,
+                transport=transport,
+                from_number=from_number,
+                started_at=event["ts"],
+                is_test=is_test,
+            )
         )
-        await store.append_event(event)
+        await self._persist(lambda: store.append_event(event))
         await self._broadcast(event)
         self._mark_shift_dirty()
         return event
@@ -116,10 +129,14 @@ class CallHub:
                 # Ended without a live snapshot (restart mid-call).
                 pass
         # Idempotent at DB: check status before writing a second end.
-        row = await store._get_call_row(call_id)
+        try:
+            row = await store._get_call_row(call_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Observability read dropped: {}", exc)
+            row = None
         if row and row["status"] == "ended":
             return None
-        await store.append_event(event)
+        await self._persist(lambda: store.append_event(event))
         await self._broadcast(event)
         self._mark_shift_dirty()
         return event
@@ -139,7 +156,7 @@ class CallHub:
                 }
             self._apply_side_effects(event)
             self._append_locked(call_id, event)
-        await store.append_event(event)
+        await self._persist(lambda: store.append_event(event))
         await self._broadcast(event)
         if event["kind"] in {
             "call.started",

@@ -2,8 +2,6 @@
 
 **Clínica Arenal** is a read-only EHR, generated once and identical for every team and every call for the whole event. Cache freely. This page captures **rules and traps** the schema cannot state.
 
-Named people and days below (Requena leave, Sáez hours, DKV×Iglesias, Fiesta 12 Oct, …) are **this world’s instances** of fields you must read (`leave`, site hours, `refused_insurers`, `closure_days`, age months). Implement those fields. Do not implement `if name == Requena`.
-
 Every clinic endpoint needs `X-Api-Key`. Field-level shapes are deferred to the API phase; endpoints and behaviours below are requirements.
 
 ## Catalogue and lookups

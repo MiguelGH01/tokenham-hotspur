@@ -1,0 +1,25 @@
+# PR-03 case doctor_and_site-570e40a3f718 — Vicente Álvarez Castro (asks for "Dr. Fuentes,
+# orthopaedic surgeon" — no such doctor in the catalogue, and the caller refuses anyone else)
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
+# GAP: there is no tool today that checks a named provider against the catalogue before
+# booking, so the bot has no way to recognise Fuentes doesn't exist versus just calling
+# get_earliest_slot for orthopaedics and offering whoever comes back. Needs a provider-lookup
+# step (or the same provider filter as the other doctor_and_site cases returning "not found").
+# Expected: NO_ACTION(provider_not_found) — book nothing.
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: doctor_and_site_vicente_not_found
+turns:
+  - user: "Hi, Vicente Álvarez Castro, DNI 31179247X. I need to see Dr. Fuentes, the orthopaedic surgeon."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the bot says there is no Dr. Fuentes on the clinic's staff and asks whether another orthopaedics doctor would do"
+  - user: "No, it has to be Dr. Fuentes or nobody."
+    expect:
+      - event: response
+        eval: "the bot apologises that it cannot book Dr. Fuentes, does not offer or book any other appointment, and ends the call"

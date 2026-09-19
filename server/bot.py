@@ -10,7 +10,9 @@ import asyncio
 import os
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
@@ -18,7 +20,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import LLMMessagesAppendFrame
+from pipecat.frames.frames import LLMMessagesAppendFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -27,19 +29,32 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
-from pipecat.runner.utils import create_transport
+from pipecat.runner.utils import create_transport, parse_telephony_websocket
+from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
+from pipecat.services.soniox.stt import SonioxSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.daily.transport import DailyParams
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
+
+try:
+    from pipecat.transports.daily.transport import DailyParams
+except ImportError:  # daily-python has no Windows wheels
+    DailyParams = None
 
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
@@ -58,6 +73,11 @@ from submission import CallSubmission
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
 ensure_filter_model()
+
+# The platform cuts a call after ~30-35s without audible agent audio (SC-silence-cut) and
+# the simulated caller takes a median of 11s (max measured 42.5s) to answer. Counted from when
+# the bot STOPS speaking; 16s here is ~20s from when it started asking.
+REPROMPT_AFTER_SILENCE_SECS = 16.0
 
 
 def _audio_in_filter() -> BaseAudioFilter | None:
@@ -123,9 +143,96 @@ def _from_number(runner_args: RunnerArguments) -> str | None:
     return None
 
 
-def _connected_at() -> datetime:
+def _connected_at(allow_override: bool) -> datetime:
+    """CALL_CLOCK_OVERRIDE pins the clock for evals only: left exported in a shell, it would
+    make every scored call search from a past date and book the wrong slot."""
     override = os.getenv("CALL_CLOCK_OVERRIDE")
-    return datetime.fromisoformat(override) if override else datetime.now(MADRID)
+    if override and allow_override:
+        return datetime.fromisoformat(override)
+    if override:
+        logger.warning("Ignoring CALL_CLOCK_OVERRIDE={}: not an eval session", override)
+    return datetime.now(MADRID)
+
+
+def _reprompt(context: LLMContext) -> str:
+    """Repeat the bot's last message so silence never outlasts the platform's window.
+
+    The whole message, not just its closing question: a caller who missed the offer cannot
+    answer a bare "Does that work for you?".
+    """
+    spoken = [
+        m["content"]
+        for m in context.get_messages()
+        if m.get("role") == "assistant"
+        and isinstance(m.get("content"), str)
+        and m["content"].strip()
+    ]
+    return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
+
+
+_CLOUDFLARE_DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+
+
+def _cloudflare_messages_base_url(account_id: str) -> str:
+    """Anthropic SDK posts to ``{base_url}/v1/messages``.
+
+    Cloudflare's unified Messages endpoint is
+    ``/accounts/{account_id}/ai/v1/messages``, so the base URL must stop at
+    ``/ai`` — not ``/ai/v1``.
+    """
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai"
+
+
+class _CloudflareMessages:
+    """Pipecat calls ``client.beta.messages.create``, which hits ``/v1/messages?beta=true``.
+
+    Cloudflare's unified endpoint rejects that query string (``unrecognized_keys: query``).
+    Route those calls to the stable Messages API instead.
+    """
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def create(self, **kwargs):
+        kwargs.pop("betas", None)
+        return await self._messages.create(**kwargs)
+
+
+def _cloudflare_llm() -> AnthropicLLMService:
+    """Claude (default Sonnet 4.6) via Cloudflare's Anthropic-compatible API.
+
+    Billed with AI Gateway Unified Billing credits — Workers Paid unlocks
+    Workers AI hosted models, not third-party Claude tokens. Token needs
+    Account > Workers AI > Read.
+    """
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id or not token:
+        raise RuntimeError(
+            "LLM_PROVIDER=cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN "
+            "(Account > Workers AI > Read). Claude is billed with AI Gateway Unified "
+            "Billing credits, not Workers Paid neurons."
+        )
+    model = os.getenv("CLOUDFLARE_LLM_MODEL", _CLOUDFLARE_DEFAULT_MODEL)
+    headers: dict[str, str] = {}
+    gateway_id = os.getenv("CLOUDFLARE_AI_GATEWAY_ID")
+    if gateway_id:
+        headers["cf-aig-gateway-id"] = gateway_id
+    inner = AsyncAnthropic(
+        auth_token=token,
+        base_url=_cloudflare_messages_base_url(account_id),
+        default_headers=headers or None,
+    )
+    client = SimpleNamespace(beta=SimpleNamespace(messages=_CloudflareMessages(inner.messages)))
+    return AnthropicLLMService(
+        api_key=token,
+        client=client,
+        settings=AnthropicLLMService.Settings(
+            model=model,
+            # Voice: don't wait on extended thinking before the first spoken token.
+            thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
+        ),
+    )
 
 
 #: How long an inference may produce nothing before it is abandoned and
@@ -154,7 +261,9 @@ def build_llm(call_id: str | None = None):
     stops at the response headers and re-issues without any deadline at all
     (``llm_deadline.py`` has the post-mortem).
     """
-    provider = os.getenv("LLM_PROVIDER", "helmcode")
+    provider = os.getenv("LLM_PROVIDER", "cloudflare")
+    if provider in {"cloudflare", "claude"}:
+        return _cloudflare_llm()
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return FirstTokenDeadlineLLM(
             api_key=os.environ["HELMCODE_API_KEY"],
@@ -244,7 +353,9 @@ def _user_turn_strategies() -> UserTurnStrategies:
     """
     min_words = int(os.getenv("BARGE_IN_MIN_WORDS", "0"))
     if min_words <= 1:
-        return UserTurnStrategies()
+        return UserTurnStrategies(
+            stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
+        )
     return UserTurnStrategies(
         start=[MinWordsUserTurnStartStrategy(min_words=min_words)],
         stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())],
@@ -317,13 +428,83 @@ def _stt_settings() -> DeepgramSTTService.Settings:
     return DeepgramSTTService.Settings(**options)
 
 
+def build_stt():
+    provider = os.getenv("STT_PROVIDER", "soniox")
+    if provider == "deepgram":
+        return DeepgramSTTService(
+            api_key=os.getenv("DEEPGRAM_API_KEY"),
+            settings=_stt_settings(),
+        )
+    return SonioxSTTService(
+        api_key=os.environ["SONIOX_API_KEY"],
+        settings=SonioxSTTService.Settings(
+            model=os.getenv("SONIOX_MODEL", "stt-rt-v5"),
+            language_hints=[Language.ES, Language.CA, Language.EN, Language.EU, Language.GL],
+            enable_language_identification=True,
+        ),
+    )
+
+
+_ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
+
+
+def build_tts(*, telephony: bool = False):
+    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
+    if provider == "deepgram":
+        return DeepgramTTSService(
+            api_key=os.getenv("DEEPGRAM_API_KEY"),
+            # Telephony is 8 kHz end to end, so asking the synthesiser for 8 kHz
+            # avoids a resample per call — one less thing competing for the CPU when
+            # a Run All holds ten calls open at once.
+            sample_rate=int(os.getenv("DEEPGRAM_TTS_SAMPLE_RATE", "8000" if telephony else "0"))
+            or None,
+            settings=DeepgramTTSService.Settings(
+                voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
+                speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
+            ),
+        )
+    model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    voice = os.environ["ELEVENLABS_VOICE_ID"]
+    language = os.getenv("ELEVENLABS_LANGUAGE", "es")
+    # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are not
+    # a real model: the classic TTS WebSocket accepts the socket then returns no audio.
+    use_dialogue = model in _ELEVENLABS_V3_MODELS or ("v3" in model and "ttv" not in model)
+    if use_dialogue:
+        if model not in _ELEVENLABS_V3_MODELS:
+            logger.warning(
+                "ELEVENLABS_MODEL={} is not a TTS WebSocket model; using "
+                "ElevenLabsDialogueTTSService with eleven_v3_conversational. "
+                "Set eleven_v3 or eleven_v3_conversational explicitly.",
+                model,
+            )
+            model = "eleven_v3_conversational"
+        logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
+        return ElevenLabsDialogueTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            settings=ElevenLabsDialogueTTSService.Settings(
+                voice=voice,
+                model=model,
+                language=language,
+            ),
+        )
+    logger.info("TTS: ElevenLabs WebSocket ({})", model)
+    return ElevenLabsTTSService(
+        api_key=os.environ["ELEVENLABS_API_KEY"],
+        settings=ElevenLabsTTSService.Settings(
+            voice=voice,
+            model=model,
+            language=language,
+        ),
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
     telephony = _is_twilio_session(runner_args)
     hub = get_hub()
     await hub.ensure_ready()
-    connected_at = _connected_at()
+    connected_at = _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments))
     transport_name = _transport_name(runner_args)
     # A browser WebRTC call is somebody testing from the console; real callers
     # arrive over Twilio. Keeping them apart stops a tuning session from
@@ -336,24 +517,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
     await emit_node_entered(call_id, to="reception")
 
-    stt = DeepgramSTTService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=_stt_settings(),
-    )
-    tts = DeepgramTTSService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        # Telephony is 8 kHz end to end, so asking the synthesiser for 8 kHz
-        # avoids a resample per call — one less thing competing for the CPU when
-        # a Run All holds ten calls open at once.
-        sample_rate=int(os.getenv("DEEPGRAM_TTS_SAMPLE_RATE", "8000" if telephony else "0"))
-        or None,
-        settings=DeepgramTTSService.Settings(
-            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
-            # Manner is not scored, but the three-minute cap is: speaking a
-            # little faster is a little more room before the wall clock bites.
-            speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
-        ),
-    )
+    stt = build_stt()
+    tts = build_tts(telephony=telephony)
     llm = build_llm(call_id)
 
     context = LLMContext()
@@ -361,6 +526,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
+            user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
+            # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
+            # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
             user_turn_strategies=_user_turn_strategies(),
         ),
     )
@@ -435,15 +603,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         transport=transport,
     )
     affirmation_watch.bind(flow_manager)
+    client = (
+        DryRunSubmit(ClinicClient())
+        if isinstance(runner_args, EvalRunnerArguments)
+        else ClinicClient()
+    )
     submission = CallSubmission(
         call_id,
         # The eval lane is dialled by the harness, not by the platform, so the
         # platform refuses its minted call_id with a 404 and every booking in the
         # lane "fails" for a reason that has nothing to do with the bot. Its writes
         # are answered locally instead; reads still go to the real clinic API.
-        DryRunSubmit(ClinicClient())
-        if isinstance(runner_args, EvalRunnerArguments)
-        else ClinicClient(),
+        client,
         # Only asked when the call ends having decided nothing: the best ending
         # it can still stand behind beats the ``out_of_scope`` that matches no
         # published case. See ``resolution.py``.
@@ -453,13 +624,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         {
             "call_id": call_id,
             "connected_at": connected_at,
-            "client": submission._client,
+            "client": client,
             "submission": submission,
             "patient": None,
             "offers": {},
             "identify_attempts": 0,
         }
     )
+
+    @user_aggregator.event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        text = _reprompt(context)
+        logger.info(
+            "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
+        )
+        await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
 
     flow_started = False
     _start_task: asyncio.Task | None = None
@@ -508,7 +687,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_connected(transport, client):
         nonlocal _start_task
         logger.info("Client connected")
-        if _is_twilio_session(runner_args):
+        # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
+        # nothing else would ever start the flow and the bot would stay silent until cut off.
+        if isinstance(runner_args, WebSocketRunnerArguments):
             await start_flow()
             return
         if not flow_started:
@@ -544,6 +725,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         _deliver_task.cancel()
         await submission.close()
         await hub.end_call(call_id)
+        inner = getattr(client, "_client", client)
+        if hasattr(inner, "aclose"):
+            await inner.aclose()
+
 
 def _audio_kwargs() -> dict:
     return {
@@ -553,26 +738,21 @@ def _audio_kwargs() -> dict:
     }
 
 
-async def _twilio_transport(runner_args: WebSocketRunnerArguments):
-    """Twilio Media Streams transport without REST credentials.
+async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) -> BaseTransport:
+    """Twilio-shaped WebSocket transport without Twilio credentials.
 
-    The pipecat runner builds TwilioFrameSerializer with ``auto_hang_up=True``,
-    which requires TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN to terminate the call
-    through Twilio's REST API. The scoring dashboard dials through its own
-    Twilio account (CR-twilio-shape: no credentials on our side), and with
-    Media Streams the call ends when the WebSocket closes — so auto_hang_up is
-    disabled instead. Mirrors pipecat.runner.utils._create_telephony_transport
-    otherwise.
+    create_transport() builds the serializer with auto_hang_up=True, which raises when
+    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are empty. The harness speaks Twilio Media
+    Streams but is not Twilio: it hangs up on its own, so no REST hang-up is needed.
     """
-    from pipecat.runner.utils import parse_telephony_websocket
-    from pipecat.serializers.twilio import TwilioFrameSerializer
-    from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
-
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    if transport_type != "twilio":
+        # Sample rates and the call id both hang off this detection; fail loudly, not silently.
+        logger.error(
+            "Telephony handshake detected as {!r}, expected 'twilio': {}", transport_type, call_data
+        )
     runner_args.transport_type = transport_type
     runner_args.call_data = call_data
-
-    params = FastAPIWebsocketParams(**_audio_kwargs())
     params.add_wav_header = False
     params.serializer = TwilioFrameSerializer(
         stream_sid=call_data["stream_id"],
@@ -585,13 +765,14 @@ async def _twilio_transport(runner_args: WebSocketRunnerArguments):
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
     transport_params = {
-        "daily": lambda: DailyParams(**_audio_kwargs()),
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
         "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
     }
-    if isinstance(runner_args, WebSocketRunnerArguments) and runner_args.transport_type != "websocket":
-        transport = await _twilio_transport(runner_args)
+    if DailyParams is not None:
+        transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
+    if isinstance(runner_args, WebSocketRunnerArguments):
+        transport = await _telephony_transport(runner_args, transport_params["twilio"]())
     else:
         transport = await create_transport(runner_args, transport_params)
     await run_bot(transport, runner_args)

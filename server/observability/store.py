@@ -136,6 +136,10 @@ class ObservabilityStore:
             self._db = None
 
     @property
+    def is_open(self) -> bool:
+        return self._db is not None
+
+    @property
     def db(self) -> aiosqlite.Connection:
         if self._db is None:
             raise RuntimeError("ObservabilityStore is not open")
@@ -844,6 +848,8 @@ async def get_store(path: Path | str | None = None) -> ObservabilityStore:
     global _store
     if _store is None:
         _store = ObservabilityStore(path)
+        await _store.open()
+    elif not _store.is_open:
         await _store.open()
     return _store
 

@@ -1,0 +1,29 @@
+# PR-05 case when_exactly-7d2467212026 — Josefa Domínguez Navarro (GP "tomorrow")
+# Runs against the default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00 (Friday).
+# "Tomorrow" here coincides with plain earliest (Saturday, the day after the call), so
+# this should call get_earliest_slot exactly like simple_booking_josefa — no extra args.
+# Expected BOOK: P00001 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / mapfre
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: when_exactly_josefa_tomorrow
+turns:
+  - user: "Hi, this is Josefa Domínguez Navarro, DNI 48064716Y. I've got hay fever, can I see the GP tomorrow?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice }
+      - event: response
+        eval: "the response offers an appointment on Saturday 19 September"
+  - user: "Yes, that's fine."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response
