@@ -243,23 +243,55 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await submission.flush()
 
 
+def _audio_kwargs() -> dict:
+    return {
+        "audio_in_enabled": True,
+        "audio_out_enabled": True,
+        "audio_in_filter": _audio_in_filter(),
+    }
+
+
+async def _twilio_transport(runner_args: WebSocketRunnerArguments):
+    """Twilio Media Streams transport without REST credentials.
+
+    The pipecat runner builds TwilioFrameSerializer with ``auto_hang_up=True``,
+    which requires TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN to terminate the call
+    through Twilio's REST API. The scoring dashboard dials through its own
+    Twilio account (CR-twilio-shape: no credentials on our side), and with
+    Media Streams the call ends when the WebSocket closes — so auto_hang_up is
+    disabled instead. Mirrors pipecat.runner.utils._create_telephony_transport
+    otherwise.
+    """
+    from pipecat.runner.utils import parse_telephony_websocket
+    from pipecat.serializers.twilio import TwilioFrameSerializer
+    from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport
+
+    transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    runner_args.transport_type = transport_type
+    runner_args.call_data = call_data
+
+    params = FastAPIWebsocketParams(**_audio_kwargs())
+    params.add_wav_header = False
+    params.serializer = TwilioFrameSerializer(
+        stream_sid=call_data["stream_id"],
+        call_sid=call_data["call_id"],
+        params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
+    )
+    return FastAPIWebsocketTransport(websocket=runner_args.websocket, params=params)
+
+
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
-
-    def _audio_kwargs() -> dict:
-        return {
-            "audio_in_enabled": True,
-            "audio_out_enabled": True,
-            "audio_in_filter": _audio_in_filter(),
-        }
-
     transport_params = {
         "daily": lambda: DailyParams(**_audio_kwargs()),
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
         "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
     }
-    transport = await create_transport(runner_args, transport_params)
+    if isinstance(runner_args, WebSocketRunnerArguments) and runner_args.transport_type != "websocket":
+        transport = await _twilio_transport(runner_args)
+    else:
+        transport = await create_transport(runner_args, transport_params)
     await run_bot(transport, runner_args)
 
 
