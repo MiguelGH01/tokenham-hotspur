@@ -179,8 +179,13 @@ def test_a_call_that_decided_never_asks_the_resolver():
     assert asked == []
 
 
-def test_the_resolver_is_asked_once_and_its_ending_retried():
-    """A second close() retries the same ending rather than searching again."""
+def test_the_resolver_is_asked_once_and_its_ending_retried(monkeypatch):
+    """The resolver is asked once, and the ending it returns is retried to success.
+
+    The retry now lives inside the first ``close()``: a transient failure of the
+    resolved ending no longer waits for a second close that may never come.
+    """
+    monkeypatch.setenv("SUBMIT_DELIVERY_BACKOFF_SECS", "0")
     posted = []
     asked = []
 
@@ -195,10 +200,12 @@ def test_the_resolver_is_asked_once_and_its_ending_retried():
         return {"action": "BOOK", **OFFER}
 
     submission = CallSubmission("call-1", Recording(), fallback=fallback)
-    assert asyncio.run(submission.close()) is False
     assert asyncio.run(submission.close()) is True
     assert asked == [True]
     assert [p["action"] for p in posted] == ["BOOK", "BOOK"]
+    # A repeated close() is idempotent: the accepted ending is not resubmitted.
+    assert asyncio.run(submission.close()) is True
+    assert len(posted) == 2
 
 
 def test_a_resolver_that_fails_still_states_a_refusal():

@@ -15,9 +15,16 @@ SUBMIT_ROUTES = {
     "ESCALATE": "/v1/submit/escalate",
 }
 
-ATTEMPTS = 2
-RETRY_DELAY_SECS = 1.0
+ATTEMPTS = max(1, int(os.getenv("CLINIC_API_ATTEMPTS", "2")))
+RETRY_DELAY_SECS = max(0.0, float(os.getenv("CLINIC_API_RETRY_DELAY_SECS", "1.0")))
 MAX_LOGGED_BODY = 500
+
+#: Client errors worth another attempt. A Run All dials twenty calls at once,
+#: so the submit endpoint can answer 429 (rate limited) or 408 (timed out)
+#: while still being perfectly willing to take the record a moment later.
+#: Every other 4xx is a real refusal of the payload and repeats only waste the
+#: seconds a closing call has left.
+RETRYABLE_STATUSES = frozenset({408, 429})
 
 
 class ClinicApiError(RuntimeError):
@@ -63,7 +70,7 @@ class ClinicClient:
                     )
                 return response.json()
             except ClinicApiError as exc:
-                retryable = exc.status >= 500
+                retryable = exc.status >= 500 or exc.status in RETRYABLE_STATUSES
                 if attempt == ATTEMPTS or not retryable:
                     logger.error("{} (attempt {}/{})", exc, attempt, ATTEMPTS)
                     raise

@@ -72,22 +72,40 @@ def test_multi_action_is_delivered_in_order():
     assert [a["action"] for a in client.posted] == ["CANCEL", "BOOK"]
 
 
-def test_partially_delivered_plan_resumes_where_it_stopped():
+def test_partially_delivered_plan_resumes_where_it_stopped(monkeypatch):
+    """A flush spends its bounded attempts; a later flush resumes, not replays.
+
+    The backoff is zeroed so the bounded retries of one flush cost no wall time:
+    resumption across flushes is the property under test, not the retry loop.
+    """
+    monkeypatch.setenv("SUBMIT_DELIVERY_BACKOFF_SECS", "0")
+
     class FlakyClient(FakeClient):
+        """Fails the first three BOOK postings, then accepts every action."""
+
+        def __init__(self):
+            super().__init__()
+            self.book_failures = 0
+
         async def post_submission(self, action):
-            await super().post_submission(action)
-            if action["action"] == "BOOK":
+            if action["action"] == "BOOK" and self.book_failures < 3:
+                self.book_failures += 1
+                self.posted.append(action)
                 raise OSError("offline")
+            await super().post_submission(action)
 
     client = FlakyClient()
     sub = CallSubmission("call-5", client)
     sub.set_cancel("A000123")
     sub.add_action({"action": "BOOK", **OFFER})
+    # First flush: CANCEL accepted; BOOK burns all three attempts and fails.
     assert asyncio.run(sub.flush()) is False
-    assert [a["action"] for a in client.posted] == ["CANCEL", "BOOK"]
-    assert asyncio.run(sub.flush()) is False
-    # CANCEL was accepted, so it is not replayed; only BOOK is retried.
-    assert [a["action"] for a in client.posted] == ["CANCEL", "BOOK", "BOOK"]
+    assert [a["action"] for a in client.posted] == ["CANCEL", "BOOK", "BOOK", "BOOK"]
+    # A later flush resumes where it stopped: only BOOK is retried, CANCEL is
+    # never replayed, and this time the platform takes it.
+    assert asyncio.run(sub.flush()) is True
+    assert [a["action"] for a in client.posted][-1] == "BOOK"
+    assert sub._delivered == 2
 
 
 def test_a_provisional_refusal_is_not_delivered_by_flush():

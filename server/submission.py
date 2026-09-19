@@ -299,37 +299,64 @@ class CallSubmission:
         and a partially delivered plan resumes where it stopped rather than
         replaying an action the platform already recorded.
 
+        Each action is retried on the same payload until a bounded number of
+        attempts is spent. Retrying the exact payload is the one safe retry:
+        once an attempt was POSTed the plan is frozen to it (see
+        ``delivery_attempted``), and the platform's 409 answers a duplicate as
+        already accepted. The seconds a closing call has left are worth more
+        than the certainty of an undelivered record — the one way a decided,
+        correct case still scores nothing.
+
+        A permanently failed action still blocks the actions behind it: the
+        list is ordered (a cancel before a book), so skipping ahead could
+        submit an ending the platform would record in the wrong order.
+
         ``call_id`` is a required field on every submit request, and the platform
         insists it is the id it dialled with rather than a fresh one, so it is
         stamped on here — the one place that owns both the plan and the id.
         """
+        attempts = max(1, int(os.getenv("SUBMIT_DELIVERY_ATTEMPTS", "3")))
+        backoff = max(0.0, float(os.getenv("SUBMIT_DELIVERY_BACKOFF_SECS", "1.0")))
         async with self._lock:
             for action in pending:
                 payload = {"call_id": self.call_id, **deepcopy(action)}
-                audit.audit(
-                    self.call_id,
-                    "submission_attempt",
-                    verb=action.get("action"),
-                    payload={k: v for k, v in action.items()},
-                    final=final,
-                )
-                self._attempted = True
-                try:
-                    await self._client.post_submission(payload)
-                except Exception as exc:
-                    logger.error(
-                        "Submission failed for {}: {}",
-                        action.get("action"),
-                        exc,
-                    )
+                for attempt in range(1, attempts + 1):
                     audit.audit(
                         self.call_id,
-                        "submission_result",
+                        "submission_attempt",
                         verb=action.get("action"),
-                        ok=False,
-                        error=type(exc).__name__,
+                        payload={k: v for k, v in action.items()},
+                        final=final,
+                        attempt=attempt,
                     )
-                    return False
+                    self._attempted = True
+                    try:
+                        await self._client.post_submission(payload)
+                    except Exception as exc:
+                        logger.error(
+                            "Submission failed for {} (attempt {}/{}): {}",
+                            action.get("action"),
+                            attempt,
+                            attempts,
+                            exc,
+                        )
+                        # A ClinicApiError carries the HTTP status; recording it
+                        # is the difference between "retry was hopeless" and
+                        # "retry never had time" when a scored run is dissected.
+                        status = getattr(exc, "status", None)
+                        failure = {
+                            "verb": action.get("action"),
+                            "ok": False,
+                            "error": type(exc).__name__,
+                        }
+                        if status is not None:
+                            failure["status"] = status
+                        audit.audit(self.call_id, "submission_result", **failure)
+                        if attempt == attempts:
+                            return False
+                        await asyncio.sleep(backoff * attempt)
+                    else:
+                        break
                 self._delivered += 1
                 logger.info("Submission accepted: {}", action.get("action"))
                 audit.audit(
