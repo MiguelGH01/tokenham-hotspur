@@ -11,7 +11,7 @@ from typing import Any
 import aiosqlite
 
 from booking import MADRID
-from observability.events import CallSnapshot, ObsEvent, PROTOCOL_NODES, utc_now_iso
+from observability.events import PROTOCOL_NODES, CallSnapshot, ObsEvent, utc_now_iso
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS calls (
@@ -63,6 +63,44 @@ CREATE TABLE IF NOT EXISTS actions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_actions_call ON actions(call_id);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    call_id TEXT,
+    patient_name TEXT,
+    patient_id TEXT,
+    slot TEXT,
+    read_at TEXT,
+    created_at TEXT NOT NULL,
+    source_verb TEXT,
+    source_seq INTEGER,
+    UNIQUE(call_id, source_verb, source_seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_provider
+    ON notifications(provider_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS provider_overlays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    end TEXT,
+    patient_name TEXT,
+    patient_id TEXT,
+    call_id TEXT,
+    created_at TEXT NOT NULL,
+    source_verb TEXT,
+    source_seq INTEGER,
+    UNIQUE(call_id, source_verb, source_seq)
+);
+
+CREATE INDEX IF NOT EXISTS idx_overlays_provider_slot
+    ON provider_overlays(provider_id, slot);
 """
 
 
@@ -101,6 +139,21 @@ def _percentile(sorted_vals: list[int], p: float) -> int | None:
     hi = min(lo + 1, len(sorted_vals) - 1)
     frac = idx - lo
     return int(sorted_vals[lo] * (1 - frac) + sorted_vals[hi] * frac)
+
+
+def _fmt_slot_es(slot: str | None) -> str:
+    """Human time for inbox copy, Europe/Madrid."""
+    if not slot:
+        return "—"
+    try:
+        text = str(slot).replace("Z", "+00:00")
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=MADRID)
+        local = dt.astimezone(MADRID)
+        return local.strftime("%H:%M del %d/%m")
+    except ValueError:
+        return str(slot)[:16]
 
 
 class ObservabilityStore:
@@ -148,6 +201,8 @@ class ObservabilityStore:
     async def clear(self) -> None:
         await self.db.execute("DELETE FROM events")
         await self.db.execute("DELETE FROM actions")
+        await self.db.execute("DELETE FROM notifications")
+        await self.db.execute("DELETE FROM provider_overlays")
         await self.db.execute("DELETE FROM calls")
         await self.db.commit()
 
@@ -329,30 +384,51 @@ class ObservabilityStore:
                         (status, http_status, payload.get("reason"), existing["id"]),
                     )
                 else:
+                    # A retry after acceptance must not mint a second seq — that
+                    # would duplicate doctor-inbox fan-out under a new key.
                     cur = await self.db.execute(
-                        "SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM actions WHERE call_id = ?",
-                        (call_id,),
-                    )
-                    row = await cur.fetchone()
-                    seq = int(row["n"]) if row else 1
-                    await self.db.execute(
                         """
-                        INSERT INTO actions
-                        (call_id, seq, verb, status, http_status, reason, summary, payload_json, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        SELECT id FROM actions
+                        WHERE call_id = ? AND verb = ? AND status = 'posted'
+                        ORDER BY seq ASC LIMIT 1
                         """,
-                        (
-                            call_id,
-                            seq,
-                            verb,
-                            status,
-                            http_status,
-                            payload.get("reason"),
-                            payload.get("summary"),
-                            json.dumps(payload, ensure_ascii=False),
-                            ts,
-                        ),
+                        (call_id, verb),
                     )
+                    already_posted = await cur.fetchone()
+                    if already_posted:
+                        await self.db.execute(
+                            """
+                            UPDATE actions SET http_status = COALESCE(?, http_status),
+                                reason = COALESCE(?, reason)
+                            WHERE id = ?
+                            """,
+                            (http_status, payload.get("reason"), already_posted["id"]),
+                        )
+                    else:
+                        cur = await self.db.execute(
+                            "SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM actions WHERE call_id = ?",
+                            (call_id,),
+                        )
+                        row = await cur.fetchone()
+                        seq = int(row["n"]) if row else 1
+                        await self.db.execute(
+                            """
+                            INSERT INTO actions
+                            (call_id, seq, verb, status, http_status, reason, summary, payload_json, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                call_id,
+                                seq,
+                                verb,
+                                status,
+                                http_status,
+                                payload.get("reason"),
+                                payload.get("summary"),
+                                json.dumps(payload, ensure_ascii=False),
+                                ts,
+                            ),
+                        )
             if ok:
                 await self.db.execute(
                     "UPDATE calls SET submitted = 1 WHERE call_id = ?",
@@ -364,6 +440,8 @@ class ObservabilityStore:
                         "UPDATE calls SET primary_action = ?, primary_reason = ? WHERE call_id = ?",
                         (verb, payload.get("reason"), call_id),
                     )
+                if verb in ("CANCEL", "ESCALATE"):
+                    await self._fan_out_doctor_alert(call_id, verb, ts)
             else:
                 await self.db.execute(
                     "UPDATE calls SET failed_posts = failed_posts + 1 WHERE call_id = ?",
@@ -545,6 +623,313 @@ class ObservabilityStore:
                 bookings.append(row)
         return {"bookings": bookings, "cancellations": cancellations}
 
+    @staticmethod
+    def _action_body(payload_json: str | None) -> dict[str, Any]:
+        payload = json.loads(payload_json or "{}")
+        body = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+        return body if isinstance(body, dict) else {}
+
+    async def _fan_out_doctor_alert(self, call_id: str, verb: str, ts: str) -> None:
+        """Notify the right doctor after a posted CANCEL or ESCALATE (idempotent)."""
+        cur = await self.db.execute(
+            """
+            SELECT seq, payload_json, reason, summary
+            FROM actions
+            WHERE call_id = ? AND verb = ? AND status = 'posted'
+            ORDER BY seq ASC
+            """,
+            (call_id, verb),
+        )
+        actions = await cur.fetchall()
+        if not actions:
+            return
+
+        call = await self._get_call_row(call_id)
+        patient_name = (call["patient_name"] if call else None) or None
+        patient_id = (call["patient_id"] if call else None) or None
+
+        for action in actions:
+            seq = int(action["seq"])
+            cur = await self.db.execute(
+                """
+                SELECT 1 FROM notifications
+                WHERE call_id = ? AND source_verb = ? AND source_seq = ?
+                """,
+                (call_id, verb, seq),
+            )
+            if await cur.fetchone():
+                continue
+
+            body = self._action_body(action["payload_json"])
+            name = patient_name or body.get("patient_name")
+            pid = patient_id or body.get("patient_id")
+
+            if verb == "CANCEL":
+                provider_id = body.get("provider_id")
+                slot = body.get("slot")
+                if not provider_id:
+                    continue
+                when = _fmt_slot_es(slot) if slot else "su horario"
+                who = name or "un paciente"
+                await self.insert_notification(
+                    provider_id=provider_id,
+                    kind="cancel",
+                    title="Cita cancelada",
+                    body=f"Se ha cancelado la cita de {who} a las {when}.",
+                    call_id=call_id,
+                    patient_name=name,
+                    patient_id=pid,
+                    slot=slot if isinstance(slot, str) else None,
+                    created_at=ts,
+                    source_verb=verb,
+                    source_seq=seq,
+                )
+                continue
+
+            if verb == "ESCALATE":
+                from observability.emergency import plan_emergency
+
+                plan = await plan_emergency(
+                    patient_id=pid,
+                    patient_name=name,
+                )
+                if plan is None:
+                    continue
+                provider_id = plan["provider_id"]
+                slot = plan["slot"]
+                when = _fmt_slot_es(slot)
+                who = name or "un paciente"
+                reason = action["reason"] or body.get("reason") or "medical_emergency"
+                await self.insert_notification(
+                    provider_id=provider_id,
+                    kind="emergency",
+                    title="Urgencia entrante",
+                    body=(
+                        f"{who} llega por urgencia ({reason}). "
+                        f"Hueco reservado a las {when}."
+                    ),
+                    call_id=call_id,
+                    patient_name=name,
+                    patient_id=pid,
+                    slot=slot,
+                    created_at=ts,
+                    source_verb=verb,
+                    source_seq=seq,
+                )
+                await self.insert_overlay(
+                    provider_id=provider_id,
+                    kind="emergency",
+                    slot=slot,
+                    end=plan.get("end"),
+                    patient_name=name,
+                    patient_id=pid,
+                    call_id=call_id,
+                    created_at=ts,
+                    source_verb=verb,
+                    source_seq=seq,
+                )
+
+    async def insert_notification(
+        self,
+        *,
+        provider_id: str,
+        kind: str,
+        title: str,
+        body: str,
+        call_id: str | None,
+        patient_name: str | None,
+        patient_id: str | None,
+        slot: str | None,
+        created_at: str,
+        source_verb: str | None,
+        source_seq: int | None,
+    ) -> int | None:
+        try:
+            cur = await self.db.execute(
+                """
+                INSERT INTO notifications (
+                    provider_id, kind, title, body, call_id, patient_name,
+                    patient_id, slot, created_at, source_verb, source_seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider_id,
+                    kind,
+                    title,
+                    body,
+                    call_id,
+                    patient_name,
+                    patient_id,
+                    slot,
+                    created_at,
+                    source_verb,
+                    source_seq,
+                ),
+            )
+        except aiosqlite.IntegrityError:
+            return None
+        return int(cur.lastrowid) if cur.lastrowid else None
+
+    async def insert_overlay(
+        self,
+        *,
+        provider_id: str,
+        kind: str,
+        slot: str,
+        end: str | None,
+        patient_name: str | None,
+        patient_id: str | None,
+        call_id: str | None,
+        created_at: str,
+        source_verb: str | None,
+        source_seq: int | None,
+    ) -> int | None:
+        try:
+            cur = await self.db.execute(
+                """
+                INSERT INTO provider_overlays (
+                    provider_id, kind, slot, end, patient_name, patient_id,
+                    call_id, created_at, source_verb, source_seq
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    provider_id,
+                    kind,
+                    slot,
+                    end,
+                    patient_name,
+                    patient_id,
+                    call_id,
+                    created_at,
+                    source_verb,
+                    source_seq,
+                ),
+            )
+        except aiosqlite.IntegrityError:
+            return None
+        return int(cur.lastrowid) if cur.lastrowid else None
+
+    async def list_notifications(
+        self,
+        provider_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        cur = await self.db.execute(
+            """
+            SELECT id, provider_id, kind, title, body, call_id, patient_name,
+                   patient_id, slot, read_at, created_at
+            FROM notifications
+            WHERE provider_id = ?
+            ORDER BY
+                CASE kind WHEN 'emergency' THEN 0 ELSE 1 END,
+                CASE WHEN read_at IS NULL THEN 0 ELSE 1 END,
+                created_at DESC
+            LIMIT ?
+            """,
+            (provider_id, limit),
+        )
+        rows = await cur.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "provider_id": r["provider_id"],
+                "kind": r["kind"],
+                "title": r["title"],
+                "body": r["body"],
+                "call_id": r["call_id"],
+                "patient_name": r["patient_name"],
+                "patient_id": r["patient_id"],
+                "slot": r["slot"],
+                "read_at": r["read_at"],
+                "created_at": r["created_at"],
+                "unread": r["read_at"] is None,
+            }
+            for r in rows
+        ]
+
+    async def count_unread_notifications(self, provider_id: str) -> int:
+        cur = await self.db.execute(
+            """
+            SELECT COUNT(*) AS n FROM notifications
+            WHERE provider_id = ? AND read_at IS NULL
+            """,
+            (provider_id,),
+        )
+        row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def mark_notification_read(
+        self, provider_id: str, notification_id: int, *, read_at: str | None = None
+    ) -> bool:
+        when = read_at or utc_now_iso()
+        cur = await self.db.execute(
+            """
+            UPDATE notifications
+            SET read_at = ?
+            WHERE id = ? AND provider_id = ? AND read_at IS NULL
+            """,
+            (when, notification_id, provider_id),
+        )
+        await self.db.commit()
+        return cur.rowcount > 0
+
+    async def mark_all_notifications_read(
+        self, provider_id: str, *, read_at: str | None = None
+    ) -> int:
+        when = read_at or utc_now_iso()
+        cur = await self.db.execute(
+            """
+            UPDATE notifications
+            SET read_at = ?
+            WHERE provider_id = ? AND read_at IS NULL
+            """,
+            (when, provider_id),
+        )
+        await self.db.commit()
+        return cur.rowcount
+
+    async def list_provider_overlays(
+        self,
+        provider_id: str,
+        *,
+        date_from: str,
+        date_to: str,
+    ) -> list[dict[str, Any]]:
+        cur = await self.db.execute(
+            """
+            SELECT id, provider_id, kind, slot, end, patient_name, patient_id,
+                   call_id, created_at
+            FROM provider_overlays
+            WHERE provider_id = ?
+            ORDER BY slot ASC
+            """,
+            (provider_id,),
+        )
+        rows = await cur.fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            slot = r["slot"]
+            if not isinstance(slot, str) or len(slot) < 10:
+                continue
+            slot_day = slot[:10]
+            if slot_day < date_from or slot_day > date_to:
+                continue
+            out.append(
+                {
+                    "id": r["id"],
+                    "provider_id": r["provider_id"],
+                    "kind": r["kind"],
+                    "slot": slot,
+                    "end": r["end"],
+                    "patient_name": r["patient_name"],
+                    "patient_id": r["patient_id"],
+                    "call_id": r["call_id"],
+                    "created_at": r["created_at"],
+                }
+            )
+        return out
+
     async def load_live_snapshots(self) -> list[CallSnapshot]:
         """Hydrate in-memory hub with currently-live calls and their events."""
         cur = await self.db.execute(
@@ -568,7 +953,7 @@ class ObservabilityStore:
                     "primary_action": row["primary_action"],
                     "primary_reason": row["primary_reason"],
                     "last_justification": row["last_justification"],
-                    "status": "live",
+                    "status": row["status"],  # type: ignore[typeddict-item]
                     "duration_ms": row["duration_ms"],
                     "first_word_ms": row["first_word_ms"],
                     "submitted": bool(row["submitted"]),
