@@ -4,6 +4,8 @@ from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from clinic_catalog import load_catalog
+
 MADRID = ZoneInfo("Europe/Madrid")
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 AFTERNOON_STARTS_AT = 14
@@ -38,6 +40,10 @@ def pick_offer(
     candidates = []
     for slot in availability["slots"]:
         start = datetime.fromisoformat(slot["start_time"]).astimezone(MADRID)
+        if start.date().isoformat() in load_catalog()["calendar"]["closure_days"]:
+            continue
+        if "payable_with" in slot and patient["insurer"] not in slot["payable_with"]:
+            continue
         if start.date() <= call_day or not _matches(start, weekday, part_of_day):
             continue
         candidates.append((start, load[slot["provider_id"]], slot))

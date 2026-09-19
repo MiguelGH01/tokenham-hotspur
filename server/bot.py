@@ -6,7 +6,6 @@ Run the bot using::
     uv run bot.py -t eval    # headless eval server for `pipecat eval run`
 """
 
-import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -18,7 +17,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import LLMMessagesAppendFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -37,12 +36,16 @@ from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
+
+
 from booking import MADRID
-from clinic_client import ClinicClient
-from handlers import GREETING, create_identify_node
+from clients.clinic_client import ClinicClient
+from flows.common import GREETING
+from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
 from submission import CallSubmission
 
@@ -73,9 +76,6 @@ def _audio_in_filter() -> BaseAudioFilter | None:
     return KrispVivaFilter(**kwargs)
 
 
-FORCED_SUBMIT_AFTER_SECS = 150  # the harness caps calls at 3 minutes
-
-
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
     return (
         isinstance(runner_args, WebSocketRunnerArguments)
@@ -87,7 +87,9 @@ def _call_id(runner_args: RunnerArguments) -> str:
     call_data = getattr(runner_args, "call_data", None)
     if call_data and call_data.call_id:
         return call_data.call_id
-    return f"local-{uuid.uuid4().hex[:12]}"
+    # The platform validates call_id as a UUID before anything else, so the
+    # local (eval/no-call) fallback must be a well-formed UUID too.
+    return str(uuid.uuid4())
 
 
 def _connected_at() -> datetime:
@@ -101,7 +103,9 @@ def build_llm():
         return OpenAILLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            settings=OpenAILLMService.Settings(
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")
+            ),
         )
     if provider == "gemini":
         return GoogleLLMService(
@@ -129,6 +133,41 @@ def build_eval_judge_llm(config: dict | None = None):
     return llm
 
 
+def build_turn_completion_config():
+    """Turn-completion marker rules tuned for this LLM.
+
+    The default protocol occasionally makes the model emit a bare marker (or
+    an empty reply), which stalls the turn: no llm_response ever arrives and
+    the caller waits on silence. These rules keep the ●/◐/○ machinery but
+    make a marker-only reply impossible and nail down the two cases seen in
+    evals: a fully stated identifier/phone number is a complete turn, and "
+    "there is always a sentence to say after ●.
+    """
+    from pipecat.turns.user_turn_completion_mixin import UserTurnCompletionConfig
+
+    return UserTurnCompletionConfig(
+        instructions="""
+TURN COMPLETION PROTOCOL (mandatory):
+Decide whether the caller's turn is complete, then start your response with exactly one marker as its very first character:
+
+●  complete: answer them now. ● must always be followed by your full spoken reply — a tool call or a question. Never write ● on its own and never write it again inside the reply.
+◐  the caller was cut off mid-phrase and continues in seconds. Write ◐ and nothing else.
+○  the caller asked for time to think ("hold on", "let me see"). Write ○ and nothing else.
+
+Deciding:
+- A caller who has just given the exact thing you asked for — a full name, a complete ID number with its letter, a complete phone number, an email, a specialty, a yes or a no — has finished their turn. Answer it with ●, even if they said more than you asked for.
+- A number or name is complete once the sentence around it ends. Do not wait for more digits or guess that more words are coming.
+- Only write ◐ when words actually stopped mid-phrase (a conjunction, a preposition, a trailing list). Only write ○ for an explicit request to wait.
+- If a tool call is the right response, the turn is complete: make the call.
+- If you would otherwise have nothing to say, still reply with one short complete sentence after ●.
+
+Format rules:
+- The marker is the first character. Exactly one marker per response.
+- After ◐ or ○ output nothing else. After ● always output your reply.
+""",
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
@@ -136,7 +175,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
     tts = DeepgramTTSService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=DeepgramTTSService.Settings(voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")),
+        settings=DeepgramTTSService.Settings(
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
+        ),
     )
     llm = build_llm()
 
@@ -145,22 +186,55 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
+
+            # Evita meter turns incompletos al contexto.
             filter_incomplete_user_turns=True,
+
+            # Marker rules tuned for deepseek: a bare marker (or an empty
+            # reply after ●) stalls the turn — no llm_response ever arrives.
+            user_turn_completion_config=build_turn_completion_config(),
+
             user_turn_strategies=UserTurnStrategies(
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
+                # IMPORTANTE:
+                # No interrumpir simplemente porque VAD detecte sonido.
+                start=[
+                    MinWordsUserTurnStartStrategy(
+                        min_words=3,
+                    )
+                ],
+
+                # SmartTurn decide cuándo realmente ha acabado
+                # de hablar el usuario.
+                stop=[
+                    TurnAnalyzerUserTurnStopStrategy(
+                        turn_analyzer=LocalSmartTurnAnalyzerV3()
+                    )
+                ],
             ),
         ),
     )
+
+    user_aggregator = context_aggregator.user()
+    assistant_aggregator = context_aggregator.assistant()
+
+
+    @user_aggregator.event_handler("on_user_turn_started")
+    async def on_user_turn_started(aggregator, strategy):
+        logger.warning(
+            "USER TURN STARTED | strategy={} | bot_speaking={}",
+            type(strategy).__name__ if strategy else "unknown",
+            getattr(transport.output(), "_bot_speaking", "unknown"),
+        )
 
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
-            context_aggregator.user(),
+            user_aggregator,
             llm,
             tts,
             transport.output(),
-            context_aggregator.assistant(),
+            assistant_aggregator,
         ]
     )
 
@@ -197,29 +271,37 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
-    async def forced_submit():
-        await asyncio.sleep(FORCED_SUBMIT_AFTER_SECS)
-        logger.warning("Call {} hit {}s: forcing submission", call_id, FORCED_SUBMIT_AFTER_SECS)
-        await submission.flush()
-
-    timer: asyncio.Task | None = None
-
     flow_started = False
 
     async def start_flow():
-        nonlocal flow_started, timer
+        nonlocal flow_started
         if flow_started:
             return
         flow_started = True
-        timer = asyncio.create_task(forced_submit())  # 150s from call start, not process start
-        await flow_manager.initialize(create_identify_node())
-        await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
+        await flow_manager.initialize(create_reception_node())
+        # Greeting is LLM-composed (developer message + run) so it flows through
+        # the normal response path: TTS on voice calls, llm_response on eval.
+        await worker.queue_frames(
+            [
+                LLMMessagesAppendFrame(
+                    messages=[
+                        {
+                            "role": "developer",
+                            "content": f"Open the call with this greeting, then wait for the caller: {GREETING}",
+                        }
+                    ],
+                    run_llm=True,
+                )
+            ]
+        )
 
     # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
     # interrupts and drops anything queued earlier; telephony has no RTVI client.
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         await start_flow()
+
+        
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -230,16 +312,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        if timer:
-            timer.cancel()
         await submission.flush()
         await runner.cancel()
 
     try:
         await runner.run()
     finally:
-        if timer:
-            timer.cancel()
         await submission.flush()
 
 

@@ -2,7 +2,12 @@
 # Expected BOOK: P00001 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / mapfre
 # The exact offer is logged by the bot as "Offer offer-1: {...}" — grep the bot log after the run.
 name: simple_booking_josefa
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
 turns:
+  - expect:
+      - event: response
   - user: "Hi, I'd like to book an appointment. My name is Josefa Domínguez Navarro and my DNI is 48064716Y."
     expect:
       - event: function_call
@@ -17,7 +22,10 @@ turns:
           - name: get_earliest_slot
             args: { specialty: general_practice }
       - event: response
-        text_contains: Ortiz
+        # The earliest slot (and so the named doctor) moves with the dial day —
+        # public-case answers re-anchor to 09:00 Europe/Madrid on the day the
+        # case is dialled. Assert the shape, not a fixture date.
+        eval: "the reply offers one specific GP (general practice) appointment — a named doctor, a site, a day and a time — and does not refuse, ask another question, or offer a Sunday"
   - user: "Yes, that works for me."
     expect:
       - event: function_call
