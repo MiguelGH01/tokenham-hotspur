@@ -1,0 +1,909 @@
+<title>Clinic Bot Run Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f5f6f8; --surface:#ffffff; --surface-2:#eef0f4; --surface-3:#e3e6ec;
+    --border:#dbdfe6; --text:#1a1d24; --text-dim:#5b6270; --text-faint:#8790a0;
+    --accent:#3357d6; --accent-weak:#e7ebfc;
+    --pass:#128a5e; --pass-weak:#e3f6ee;
+    --fail:#c8342f; --fail-weak:#fceceb;
+    --warn:#a06400; --warn-weak:#fbf0dc;
+    --neutral:#5b6270; --neutral-weak:#e9eaed;
+    --lane-turn:#3357d6; --lane-llm:#7a4fd6; --lane-fn:#0f8f7a; --lane-speech:#c8342f; --lane-speech-fill:#f6d9d7;
+    --radius:10px;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: 'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0e1015; --surface:#161922; --surface-2:#1c202a; --surface-3:#242936;
+      --border:#2b303c; --text:#e8eaef; --text-dim:#a3aabb; --text-faint:#6b7284;
+      --accent:#7f9bff; --accent-weak:#1c2444;
+      --pass:#3ddc97; --pass-weak:#12271f;
+      --fail:#ff6f6b; --fail-weak:#301616;
+      --warn:#ffc266; --warn-weak:#2e2311;
+      --neutral:#a3aabb; --neutral-weak:#242936;
+      --lane-turn:#7f9bff; --lane-llm:#b79bff; --lane-fn:#3ddc97; --lane-speech:#ff6f6b; --lane-speech-fill:#3a2020;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1015; --surface:#161922; --surface-2:#1c202a; --surface-3:#242936;
+    --border:#2b303c; --text:#e8eaef; --text-dim:#a3aabb; --text-faint:#6b7284;
+    --accent:#7f9bff; --accent-weak:#1c2444;
+    --pass:#3ddc97; --pass-weak:#12271f;
+    --fail:#ff6f6b; --fail-weak:#301616;
+    --warn:#ffc266; --warn-weak:#2e2311;
+    --neutral:#a3aabb; --neutral-weak:#242936;
+    --lane-turn:#7f9bff; --lane-llm:#b79bff; --lane-fn:#3ddc97; --lane-speech:#ff6f6b; --lane-speech-fill:#3a2020;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text); font-family:var(--sans);
+    font-size:14px; line-height:1.45;
+  }
+  .app{ padding: 20px clamp(16px, 3vw, 32px) 40px; max-width:1400px; margin:0 auto; }
+
+  .tabnav{ display:flex; gap:4px; margin-bottom:18px; border-bottom:1px solid var(--border); }
+  .tab-btn{
+    font-family:var(--sans); font-size:13.5px; font-weight:600; color:var(--text-dim);
+    background:none; border:none; padding:10px 4px; margin-right:22px; cursor:pointer;
+    border-bottom:2px solid transparent; letter-spacing:.01em;
+  }
+  .tab-btn.active{ color:var(--text); border-bottom-color:var(--accent); }
+  .tab-btn .tcount{ font-family:var(--mono); font-size:11px; color:var(--text-faint); margin-left:5px; }
+  .tabpanel{ display:none; }
+  .tabpanel.active{ display:block; }
+
+  header.top{ display:flex; flex-wrap:wrap; gap:20px; align-items:flex-end; justify-content:space-between; margin-bottom:18px; }
+  .title-block h1{ font-size:20px; margin:0 0 4px; letter-spacing:-0.01em; }
+  .title-block .sub{ color:var(--text-dim); font-size:12.5px; font-family:var(--mono); }
+  .stats{ display:flex; gap:10px; flex-wrap:wrap; }
+  .stat{
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:10px 16px; min-width:88px; text-align:left;
+  }
+  .stat .num{ font-family:var(--mono); font-size:22px; font-weight:600; line-height:1; }
+  .stat .lbl{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-top:4px; }
+  .stat.fail-tile{ border-color:var(--fail); background:var(--fail-weak); }
+  .stat.fail-tile .num{ color:var(--fail); }
+  .stat.pass-tile .num{ color:var(--pass); }
+
+  .layout{ display:grid; grid-template-columns: 300px 1fr; gap:18px; align-items:start; }
+  @media (max-width: 860px){ .layout{ grid-template-columns: 1fr; } }
+
+  .panel{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); }
+
+  .sidebar{ padding:12px; position:sticky; top:16px; }
+  .filters{ display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .chip{
+    font-family:var(--mono); font-size:11.5px; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text-dim); padding:4px 9px; border-radius:999px; cursor:pointer; user-select:none;
+  }
+  .chip.active{ background:var(--accent); border-color:var(--accent); color:#fff; }
+  .scenario-list{ display:flex; flex-direction:column; gap:4px; max-height:70vh; overflow-y:auto; }
+  .scenario-row{
+    display:flex; align-items:center; gap:8px; padding:8px 9px; border-radius:8px; cursor:pointer;
+    border:1px solid transparent;
+  }
+  .scenario-row:hover{ background:var(--surface-2); }
+  .scenario-row.selected{ background:var(--accent-weak); border-color:var(--accent); }
+  .scenario-row .idx{ font-family:var(--mono); font-size:11px; color:var(--text-faint); width:16px; text-align:right; flex:none; }
+  .scenario-row .name{ flex:1; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .pill{ font-family:var(--mono); font-size:10.5px; font-weight:600; letter-spacing:.04em; padding:2px 7px; border-radius:999px; flex:none; white-space:nowrap; }
+  .pill.PASS, .pill.BOOK{ background:var(--pass-weak); color:var(--pass); }
+  .pill.FAIL, .pill.SUBMIT_FAILED{ background:var(--fail-weak); color:var(--fail); }
+  .pill.NO_ACTION{ background:var(--neutral-weak); color:var(--neutral); }
+  .pill.IN_PROGRESS{ background:var(--warn-weak); color:var(--warn); }
+  .pill.mode{ background:var(--surface-3); color:var(--text-dim); }
+  .scenario-row .dur{ font-family:var(--mono); font-size:11px; color:var(--text-faint); flex:none; width:44px; text-align:right; }
+
+  .main{ display:flex; flex-direction:column; gap:16px; min-width:0; }
+  .scenario-header{ padding:16px 18px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; }
+  .scenario-header h2{ margin:0; font-size:16px; font-family:var(--mono); font-weight:600; word-break:break-all; }
+  .scenario-header .meta{ display:flex; gap:14px; color:var(--text-dim); font-size:12px; font-family:var(--mono); flex-wrap:wrap; }
+  .scenario-header .meta b{ color:var(--text); font-weight:600; }
+
+  .timeline-wrap{ padding:16px 18px 10px; }
+  .timeline-wrap h3, .transcript h3, .eventlog h3, .backend h3{
+    margin:0 0 10px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-dim);
+  }
+  .lanes{ position:relative; }
+  .lane{ position:relative; height:30px; border-top:1px solid var(--border); }
+  .lane:first-child{ border-top:none; }
+  .lane-label{
+    position:absolute; left:-2px; top:50%; transform:translateY(-50%);
+    font-size:10px; font-family:var(--mono); color:var(--text-faint); background:var(--surface);
+    padding-right:6px; z-index:2; pointer-events:none;
+  }
+  .lane-body{ position:relative; height:100%; margin-left:74px; }
+  .marker{
+    position:absolute; top:50%; transform:translate(-50%,-50%); width:10px; height:10px; border-radius:3px;
+    cursor:pointer; box-shadow:0 0 0 2px var(--surface);
+  }
+  .marker.diamond{ border-radius:2px; transform:translate(-50%,-50%) rotate(45deg); }
+  .marker.dot{ border-radius:50%; }
+  .marker.selected{ outline:2px solid var(--text); outline-offset:2px; }
+  .span-bar{
+    position:absolute; top:50%; transform:translateY(-50%); height:12px; border-radius:5px;
+    background:var(--lane-speech-fill); border:1px solid var(--lane-speech); cursor:pointer; min-width:3px;
+  }
+  .tick{ position:absolute; top:0; bottom:0; width:1px; background:var(--border); }
+  .tick-lbl{ position:absolute; bottom:-16px; transform:translateX(-50%); font-size:9.5px; font-family:var(--mono); color:var(--text-faint); }
+  .axis-row{ height:16px; margin-left:74px; position:relative; margin-top:2px; }
+
+  .tooltip{
+    position:fixed; z-index:50; background:var(--text); color:var(--bg); font-family:var(--mono);
+    font-size:11.5px; padding:6px 9px; border-radius:6px; max-width:340px; pointer-events:none;
+    box-shadow:0 4px 16px rgba(0,0,0,.25); line-height:1.35; display:none;
+  }
+
+  .split{ display:grid; grid-template-columns: 1fr 1.15fr; gap:16px; }
+  @media (max-width: 1100px){ .split{ grid-template-columns:1fr; } }
+
+  .eventlog, .transcript{ padding:14px 16px; }
+  .eventlog-list{ max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:1px; font-family:var(--mono); font-size:11.5px; }
+  .eventlog-row{ display:flex; gap:8px; padding:4px 6px; border-radius:6px; cursor:pointer; }
+  .eventlog-row:hover{ background:var(--surface-2); }
+  .eventlog-row.hl{ background:var(--accent-weak); outline:1px solid var(--accent); }
+  .eventlog-row .t{ color:var(--text-faint); flex:none; width:52px; text-align:right; }
+  .eventlog-row .k{ flex:none; width:80px; color:var(--text-dim); }
+  .eventlog-row.k-fail{ color:var(--fail); }
+  .eventlog-row.k-done{ font-weight:600; }
+  .eventlog-row .d{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .transcript-list{ max-height:480px; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+  .msg{ border-radius:8px; padding:8px 10px; border:1px solid var(--border); background:var(--surface-2); }
+  .msg.role-user{ background:var(--accent-weak); border-color:var(--accent); }
+  .msg.role-assistant{ background:var(--surface-2); }
+  .msg.role-developer{ background:var(--warn-weak); border-color:var(--warn); }
+  .msg.role-tool{ background:var(--surface-3); }
+  .msg .role{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-dim); margin-bottom:4px; }
+  .msg .content{ white-space:pre-wrap; font-size:12.5px; }
+  .msg .tool-call{ font-family:var(--mono); font-size:11.5px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:6px 8px; margin-top:4px; }
+  .msg .tool-call .fn{ color:var(--lane-fn); font-weight:600; }
+  .msg.highlighted{ outline:2px solid var(--text); }
+
+  .backend{ padding:12px 16px; }
+  .backend-list{ display:flex; flex-direction:column; gap:6px; font-family:var(--mono); font-size:11.5px; max-height:220px; overflow-y:auto; }
+  .backend-row{ border-left:3px solid var(--fail); background:var(--fail-weak); padding:6px 8px; border-radius:0 6px 6px 0; }
+  .backend-row.warn{ border-left-color:var(--warn); background:var(--warn-weak); }
+  .backend-row .src{ color:var(--text-dim); }
+  .empty{ color:var(--text-faint); font-size:12px; padding:8px 2px; }
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); margin-top:10px; }
+  .legend span{ display:inline-flex; align-items:center; gap:5px; }
+  .legend i{ width:9px; height:9px; border-radius:2px; display:inline-block; }
+
+  .empty-state{ padding:40px 24px; text-align:center; color:var(--text-dim); }
+  .empty-state h3{ margin:0 0 8px; color:var(--text); font-size:15px; }
+  .empty-state code{ font-family:var(--mono); background:var(--surface-2); border:1px solid var(--border); padding:2px 6px; border-radius:5px; font-size:12.5px; color:var(--text); }
+  .empty-state .cmds{ display:inline-flex; flex-direction:column; gap:8px; margin-top:14px; text-align:left; }
+  .rec-badge{ font-family:var(--mono); font-size:11px; padding:3px 8px; border-radius:999px; background:var(--surface-3); color:var(--text-dim); }
+
+  .run-picker{ display:flex; align-items:center; gap:8px; }
+  .run-picker select{
+    font-family:var(--mono); font-size:12.5px; background:var(--surface); color:var(--text);
+    border:1px solid var(--border); border-radius:7px; padding:6px 8px;
+  }
+  .refresh-btn{
+    font-family:var(--sans); font-size:12.5px; font-weight:600; color:var(--text);
+    background:var(--surface); border:1px solid var(--border); border-radius:7px;
+    padding:6px 12px; cursor:pointer;
+  }
+  .refresh-btn:hover{ background:var(--surface-2); }
+  .live-dot{ display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--pass); margin-right:6px; }
+</style>
+
+<div class="app">
+  <nav class="tabnav" id="tabnav">
+    <button class="tab-btn active" data-tab="evals">Evals <span class="tcount" id="tcount-evals"></span></button>
+    <button class="tab-btn" data-tab="real">Real calls <span class="tcount" id="tcount-real"></span></button>
+  </nav>
+
+  <!-- ================= EVALS TAB ================= -->
+  <section class="tabpanel active" id="tab-evals">
+    <header class="top">
+      <div class="title-block">
+        <h1 id="run-title">Eval Run Explorer</h1>
+        <div class="sub" id="run-sub"><span class="live-dot"></span>loading…</div>
+      </div>
+      <div class="run-picker">
+        <select id="run-select"></select>
+        <button class="refresh-btn" id="evals-refresh">Refresh</button>
+      </div>
+      <div class="stats" id="stats"></div>
+    </header>
+    <div class="panel empty-state" id="evals-empty" hidden>
+      <h3>No eval runs found</h3>
+      <p>This tab reads <code>server/eval-runs/&lt;timestamp&gt;/</code>, produced by the eval harness.</p>
+      <div class="cmds">
+        <div><code>make evals</code> — run every scenario under <code>server/evals/PR-*</code></div>
+        <div><code>make evals-parallel</code> — same thing, split across concurrent workers</div>
+      </div>
+      <p style="margin-top:14px">Then hit Refresh above.</p>
+    </div>
+
+    <div class="layout" id="evals-layout">
+      <aside class="panel sidebar">
+        <div class="filters" id="filters"></div>
+        <div class="scenario-list" id="scenario-list"></div>
+      </aside>
+
+      <main class="main" id="main">
+        <div class="panel scenario-header">
+          <h2 id="sc-name">—</h2>
+          <div class="meta" id="sc-meta"></div>
+        </div>
+
+        <div class="panel timeline-wrap">
+          <h3>Timeline</h3>
+          <div class="lanes" id="lanes"></div>
+          <div class="axis-row" id="axis-row"></div>
+          <div class="legend">
+            <span><i style="background:var(--lane-turn)"></i>caller turn</span>
+            <span><i style="background:var(--lane-llm)"></i>llm event</span>
+            <span><i style="background:var(--lane-fn)"></i>function call</span>
+            <span><i style="background:var(--lane-speech);border-radius:50%"></i>speaking span</span>
+            <span><i style="background:var(--fail)"></i>failed assertion</span>
+          </div>
+        </div>
+
+        <div class="split">
+          <div class="panel eventlog">
+            <h3>Raw event log</h3>
+            <div class="eventlog-list" id="eventlog-list"></div>
+          </div>
+          <div class="panel transcript">
+            <h3>Reconstructed conversation (final LLM context)</h3>
+            <div class="transcript-list" id="transcript-list"></div>
+          </div>
+        </div>
+
+        <div class="panel backend">
+          <h3 id="backend-title">Backend log</h3>
+          <div class="backend-list" id="backend-list"></div>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <!-- ================= REAL CALLS TAB ================= -->
+  <section class="tabpanel" id="tab-real">
+    <header class="top">
+      <div class="title-block">
+        <h1>Real Call Explorer</h1>
+        <div class="sub" id="real-sub"><span class="live-dot"></span>loading…</div>
+      </div>
+      <div class="run-picker">
+        <button class="refresh-btn" id="real-refresh">Refresh</button>
+      </div>
+      <div class="stats" id="real-stats"></div>
+    </header>
+
+    <div id="real-body"></div>
+  </section>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function(){
+  var state = { evalData:null, realData:null, tab:'evals', filter:'all', selectedIdx:null, selectedEventIdx:null,
+                realFilter:'all', realSelectedIdx:null, realSelectedEventIdx:null };
+  var laneY = { turn:0, llm:1, fn:1, speech:2, result:3 };
+  var laneLabels = ['turn','llm/fn','speech','result'];
+  var eventKindLane = {
+    llm_started:'llm', llm_response:'llm', bot_interrupted:'llm', bot_ended:'llm',
+    function_call:'fn', function_call_stopped:'fn'
+  };
+  var eventKindColorVar = {
+    llm_started:'--lane-llm', llm_response:'--lane-llm', bot_interrupted:'--warn', bot_ended:'--text-faint',
+    function_call:'--lane-fn', function_call_stopped:'--lane-fn'
+  };
+  var realLaneY = { lifecycle:0, business:1, issues:2 };
+  var realLaneLabels = ['lifecycle','business','issues'];
+  var realKindLane = {
+    call_start:'lifecycle', connected:'lifecycle', disconnected:'lifecycle',
+    offer:'business', submitted:'business', submit_failed:'business', reprompt:'business',
+    error:'issues', warning:'issues'
+  };
+  var realKindColorVar = {
+    call_start:'--lane-turn', connected:'--lane-turn', disconnected:'--text-faint',
+    offer:'--lane-fn', submitted:'--pass', submit_failed:'--fail', reprompt:'--warn',
+    error:'--fail', warning:'--warn'
+  };
+
+  function fmtSec(t){ return (Math.round(t*10)/10).toFixed(1) + 's'; }
+  function fmtTs(ts){
+    // ts like 20260919-140000 -> 2026-09-19 14:00:00
+    var m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(ts);
+    if (!m) return ts;
+    return m[1]+'-'+m[2]+'-'+m[3]+' '+m[4]+':'+m[5]+':'+m[6];
+  }
+
+  function niceTicks(max){
+    if (max <= 0) return [0];
+    var step = max <= 12 ? 2 : max <= 30 ? 5 : max <= 80 ? 10 : max <= 200 ? 30 : 60;
+    var ticks = [];
+    for (var v=0; v<=max; v+=step) ticks.push(v);
+    if (ticks[ticks.length-1] < max) ticks.push(max);
+    return ticks;
+  }
+
+  function el(tag, cls, html){
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+
+  function showTip(e, text){
+    var tip = document.getElementById('tooltip');
+    tip.textContent = text;
+    tip.style.display = 'block';
+    var x = e.clientX + 14, y = e.clientY + 14;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    tip.style.left = Math.min(x, vw - 350) + 'px';
+    tip.style.top = Math.min(y, vh - 80) + 'px';
+  }
+  function hideTip(){ document.getElementById('tooltip').style.display = 'none'; }
+
+  function escapeHtml(str){
+    return String(str).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+
+  function statTile(num, lbl, extraCls){
+    var t = el('div', 'stat ' + (extraCls||''));
+    t.appendChild(el('div','num', String(num)));
+    t.appendChild(el('div','lbl', lbl));
+    return t;
+  }
+
+  // ============================================================ TABS
+  function initTabs(){
+    document.querySelectorAll('.tab-btn').forEach(function(btn){
+      btn.onclick = function(){
+        state.tab = btn.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b===btn); });
+        document.getElementById('tab-evals').classList.toggle('active', state.tab==='evals');
+        document.getElementById('tab-real').classList.toggle('active', state.tab==='real');
+      };
+    });
+  }
+
+  // ============================================================ EVALS TAB
+  function renderEvals(){
+    var d = state.evalData;
+    var layout = document.getElementById('evals-layout');
+    var emptyState = document.getElementById('evals-empty');
+
+    if (!d || !d.scenarios || !d.scenarios.length){
+      layout.style.display = 'none';
+      emptyState.hidden = false;
+      document.getElementById('run-title').textContent = 'Eval Run Explorer';
+      document.getElementById('run-sub').innerHTML = '<span class="live-dot"></span>no runs yet';
+      document.getElementById('tcount-evals').textContent = '';
+      document.getElementById('stats').innerHTML = '';
+      return;
+    }
+    layout.style.display = '';
+    emptyState.hidden = true;
+
+    document.getElementById('run-title').textContent = 'Eval Run — ' + d.run_id;
+    var total = d.scenarios.length;
+    var passed = d.scenarios.filter(function(s){return s.status==='PASS';}).length;
+    var failed = total - passed;
+    document.getElementById('run-sub').innerHTML = '<span class="live-dot"></span>' + total + ' scenarios · server/eval-runs/' + d.run_id;
+    document.getElementById('tcount-evals').textContent = '(' + failed + ' fail)';
+
+    var stats = document.getElementById('stats');
+    stats.innerHTML = '';
+    stats.appendChild(statTile(total, 'scenarios', ''));
+    stats.appendChild(statTile(passed, 'passed', 'pass-tile'));
+    stats.appendChild(statTile(failed, 'failed', failed ? 'fail-tile' : ''));
+    stats.appendChild(statTile(total ? Math.round(passed/total*100) + '%' : '—', 'pass rate', ''));
+
+    renderEvalFilters();
+    renderEvalSidebar();
+    if (state.selectedIdx == null){
+      var firstFail = d.scenarios.findIndex(function(s){return s.status==='FAIL';});
+      state.selectedIdx = firstFail >= 0 ? firstFail : 0;
+    }
+    renderEvalScenario();
+  }
+
+  function renderEvalFilters(){
+    var d = state.evalData;
+    var counts = { all: d.scenarios.length,
+      PASS: d.scenarios.filter(function(s){return s.status==='PASS';}).length,
+      FAIL: d.scenarios.filter(function(s){return s.status==='FAIL';}).length };
+    var wrap = document.getElementById('filters');
+    wrap.innerHTML = '';
+    [['all','All'],['FAIL','Fail'],['PASS','Pass']].forEach(function(pair){
+      var c = el('div', 'chip' + (state.filter===pair[0]?' active':''), pair[1] + ' (' + counts[pair[0]] + ')');
+      c.onclick = function(){ state.filter = pair[0]; renderEvalFilters(); renderEvalSidebar(); };
+      wrap.appendChild(c);
+    });
+  }
+
+  function renderEvalSidebar(){
+    var d = state.evalData;
+    var list = document.getElementById('scenario-list');
+    list.innerHTML = '';
+    d.scenarios.forEach(function(s, i){
+      if (state.filter !== 'all' && s.status !== state.filter) return;
+      var row = el('div', 'scenario-row' + (i===state.selectedIdx?' selected':''));
+      row.appendChild(el('div','idx', String(s.order)));
+      row.appendChild(el('div','name', s.name));
+      row.appendChild(el('div','pill ' + s.status, s.status));
+      row.appendChild(el('div','dur', fmtSec(s.duration)));
+      row.onclick = function(){ state.selectedIdx = i; state.selectedEventIdx = null; renderEvalSidebar(); renderEvalScenario(); };
+      list.appendChild(row);
+    });
+    if (list.children.length === 0 && d.scenarios.length){
+      list.appendChild(el('div','empty','No scenarios match this filter.'));
+    }
+  }
+
+  function pairSpeakingSpans(events){
+    var spans = [];
+    for (var i=0;i<events.length;i++){
+      if (events[i].kind==='event' && events[i].detail==='bot_started_speaking'){
+        var start = events[i].t, end = null, endIdx = i;
+        for (var j=i+1;j<events.length;j++){
+          if (events[j].kind==='event' && events[j].detail==='bot_stopped_speaking'){ end = events[j].t; endIdx=j; break; }
+        }
+        spans.push({ start:start, end: end==null ? start+0.15 : end, startIdx:i, endIdx:endIdx });
+      }
+    }
+    return spans;
+  }
+
+  function renderEvalScenario(){
+    var s = state.evalData.scenarios[state.selectedIdx];
+    document.getElementById('sc-name').textContent = s.name;
+    var meta = document.getElementById('sc-meta');
+    meta.innerHTML = '';
+    meta.appendChild(el('span', null, '<b>' + s.status + '</b>'));
+    meta.appendChild(el('span', null, 'duration <b>' + fmtSec(s.duration) + '</b>'));
+    meta.appendChild(el('span', null, 'assertions failed <b>' + s.fail_count + '</b>'));
+    meta.appendChild(el('span', null, 'events <b>' + s.events.length + '</b>'));
+
+    renderEvalTimeline(s);
+    renderEvalEventLog(s);
+    renderEvalTranscript(s);
+    renderEvalBackend(s);
+  }
+
+  function renderEvalTimeline(s){
+    var lanesEl = document.getElementById('lanes');
+    lanesEl.innerHTML = '';
+    var max = Math.max(s.duration, 1);
+    var spans = pairSpeakingSpans(s.events);
+
+    laneLabels.forEach(function(lbl){
+      var lane = el('div','lane');
+      lane.appendChild(el('div','lane-label', lbl));
+      lane.appendChild(el('div','lane-body'));
+      lanesEl.appendChild(lane);
+    });
+    var laneBodies = lanesEl.querySelectorAll('.lane-body');
+
+    spans.forEach(function(sp){
+      var left = sp.start/max*100, width = Math.max((sp.end-sp.start)/max*100, 0.6);
+      var bar = el('div','span-bar');
+      bar.style.left = left + '%';
+      bar.style.width = width + '%';
+      bar.onmouseenter = function(e){ showTip(e, 'speaking ' + fmtSec(sp.start) + ' → ' + fmtSec(sp.end) + ' (' + fmtSec(sp.end-sp.start) + ')'); };
+      bar.onmousemove = function(e){ showTip(e, 'speaking ' + fmtSec(sp.start) + ' → ' + fmtSec(sp.end)); };
+      bar.onmouseleave = hideTip;
+      bar.onclick = function(){ selectEvalEvent(sp.startIdx); };
+      laneBodies[2].appendChild(bar);
+    });
+
+    s.events.forEach(function(ev, idx){
+      var laneIdx = null, colorVar = null, shape = 'dot', tip = ev.raw;
+      if (ev.kind === 'turn'){
+        laneIdx = 0; colorVar = '--lane-turn'; shape = 'diamond';
+        tip = (ev.raw.split(': ').slice(1).join(': ')) || 'turn start';
+      } else if (ev.kind === 'event' && eventKindLane[ev.detail]){
+        laneIdx = laneY[eventKindLane[ev.detail]]; colorVar = eventKindColorVar[ev.detail];
+        tip = ev.detail + (ev.payload ? ': ' + ev.payload : '');
+      } else if (ev.kind === 'fail' || ev.kind === 'done'){
+        laneIdx = 3; colorVar = ev.kind === 'fail' ? '--fail' : (s.status==='PASS' ? '--pass' : '--fail');
+        tip = ev.detail;
+      }
+      if (laneIdx == null) return;
+      var m = el('div','marker ' + shape);
+      m.style.left = (ev.t/max*100) + '%';
+      m.style.background = 'var(' + colorVar + ')';
+      m.dataset.idx = idx;
+      m.onmouseenter = function(e){ showTip(e, fmtSec(ev.t) + '  ' + tip); };
+      m.onmousemove = function(e){ showTip(e, fmtSec(ev.t) + '  ' + tip); };
+      m.onmouseleave = hideTip;
+      m.onclick = function(){ selectEvalEvent(idx); };
+      laneBodies[laneIdx].appendChild(m);
+    });
+
+    var axis = document.getElementById('axis-row');
+    axis.innerHTML = '';
+    niceTicks(max).forEach(function(v){
+      var t = el('div','tick'); t.style.left = (v/max*100)+'%'; axis.appendChild(t);
+      var l = el('div','tick-lbl', v+'s'); l.style.left = (v/max*100)+'%'; axis.appendChild(l);
+    });
+
+    highlightSelectedEvalMarker();
+  }
+
+  function highlightSelectedEvalMarker(){
+    document.querySelectorAll('#lanes .marker').forEach(function(m){
+      m.classList.toggle('selected', Number(m.dataset.idx) === state.selectedEventIdx);
+    });
+    document.querySelectorAll('#eventlog-list .eventlog-row').forEach(function(r){
+      r.classList.toggle('hl', Number(r.dataset.idx) === state.selectedEventIdx);
+    });
+  }
+
+  function selectEvalEvent(idx){
+    state.selectedEventIdx = idx;
+    highlightSelectedEvalMarker();
+    var row = document.querySelector('#eventlog-list .eventlog-row[data-idx="'+idx+'"]');
+    if (row) row.scrollIntoView({block:'nearest'});
+    var s = state.evalData.scenarios[state.selectedIdx];
+    var ev = s.events[idx];
+    if (ev.kind === 'turn' && ev.raw.indexOf(': ') > -1){
+      var text = ev.raw.split(': ').slice(1).join(': ').replace(/^'(.*)'$/, '$1').replace(/^"(.*)"$/, '$1');
+      highlightTranscriptByContent(text);
+    }
+  }
+
+  function renderEvalEventLog(s){
+    var list = document.getElementById('eventlog-list');
+    list.innerHTML = '';
+    s.events.forEach(function(ev, idx){
+      var row = el('div','eventlog-row' + (ev.kind==='fail'?' k-fail':'') + (ev.kind==='done'?' k-done':''));
+      row.dataset.idx = idx;
+      row.appendChild(el('div','t', fmtSec(ev.t)));
+      row.appendChild(el('div','k', '['+ev.turn+'] '+ev.kind));
+      row.appendChild(el('div','d', ev.raw));
+      row.onclick = function(){ selectEvalEvent(idx); };
+      list.appendChild(row);
+    });
+  }
+
+  function renderEvalTranscript(s){
+    var list = document.getElementById('transcript-list');
+    list.innerHTML = '';
+    if (!s.transcript.length){ list.appendChild(el('div','empty','No conversation context captured.')); return; }
+    s.transcript.forEach(function(msg){
+      var box = el('div','msg role-'+msg.role);
+      box.appendChild(el('div','role', msg.role));
+      if (msg.content) box.appendChild(el('div','content', escapeHtml(msg.content)));
+      if (msg.tool_calls){
+        msg.tool_calls.forEach(function(tc){
+          box.appendChild(el('div','tool-call', '<span class="fn">'+escapeHtml(tc.name)+'</span>(' + escapeHtml(tc.arguments||'') + ')'));
+        });
+      }
+      box.dataset.content = msg.content || '';
+      list.appendChild(box);
+    });
+  }
+
+  function highlightTranscriptByContent(text){
+    document.querySelectorAll('#transcript-list .msg').forEach(function(m){ m.classList.remove('highlighted'); });
+    if (!text) return;
+    var msgs = document.querySelectorAll('#transcript-list .msg.role-user');
+    for (var i=0;i<msgs.length;i++){
+      if (msgs[i].dataset.content && msgs[i].dataset.content.indexOf(text.slice(0,20)) === 0){
+        msgs[i].classList.add('highlighted');
+        msgs[i].scrollIntoView({block:'center'});
+        break;
+      }
+    }
+  }
+
+  function renderEvalBackend(s){
+    var title = document.getElementById('backend-title');
+    title.textContent = 'Backend log — ' + s.errors.length + ' error(s), ' + s.warnings.length + ' warning(s)';
+    var list = document.getElementById('backend-list');
+    list.innerHTML = '';
+    if (!s.errors.length && !s.warnings.length){
+      list.appendChild(el('div','empty','No errors or warnings in bot.log for this run.'));
+      return;
+    }
+    s.errors.forEach(function(er){
+      var row = el('div','backend-row');
+      row.innerHTML = '<span class="src">'+escapeHtml(er.src)+'</span> — '+escapeHtml(er.msg);
+      list.appendChild(row);
+    });
+    s.warnings.forEach(function(w){
+      var row = el('div','backend-row warn');
+      row.innerHTML = '<span class="src">'+escapeHtml(w.src)+'</span> — '+escapeHtml(w.msg);
+      list.appendChild(row);
+    });
+  }
+
+  // ============================================================ REAL CALLS TAB
+  function renderReal(){
+    var d = state.realData;
+    var calls = d.calls || [];
+    document.getElementById('tcount-real').textContent = calls.length ? '(' + calls.length + ')' : '';
+    document.getElementById('real-sub').innerHTML = '<span class="live-dot"></span>' + (calls.length
+      ? calls.length + ' recorded call(s) · server/run-logs/'
+      : 'server/run-logs/ (webrtc + twilio)');
+
+    var stats = document.getElementById('real-stats');
+    stats.innerHTML = '';
+    var booked = calls.filter(function(c){return c.outcome==='BOOK';}).length;
+    var failed = calls.filter(function(c){return c.outcome==='SUBMIT_FAILED';}).length;
+    stats.appendChild(statTile(calls.length, 'calls', ''));
+    stats.appendChild(statTile(booked, 'booked', booked ? 'pass-tile' : ''));
+    stats.appendChild(statTile(failed, 'submit failed', failed ? 'fail-tile' : ''));
+
+    var body = document.getElementById('real-body');
+    body.innerHTML = '';
+
+    if (!calls.length){
+      var panel = el('div','panel empty-state');
+      panel.innerHTML =
+        '<h3>No real calls recorded yet</h3>' +
+        '<p>This tab reads <code>server/run-logs/&lt;webrtc|twilio&gt;-&lt;timestamp&gt;/bot.log</code> — ' +
+        'produced by an actual voice session, not the eval harness.</p>' +
+        '<div class="cmds">' +
+        '<div><code>make run-webrtc</code> — talk to the bot in the browser at localhost:7860</div>' +
+        '<div><code>make run-twilio</code> — run it as a Twilio Media Streams server</div>' +
+        '<div><code>RECORD_CALLS=1 make run-webrtc</code> — also save the call audio</div>' +
+        '</div>' +
+        '<p style="margin-top:14px">Then re-run the dashboard data generator to pick up the new run.</p>';
+      body.appendChild(panel);
+      return;
+    }
+
+    var layout = el('div','layout');
+    var sidebar = el('aside','panel sidebar');
+    sidebar.innerHTML = '<div class="filters" id="real-filters"></div><div class="scenario-list" id="real-list"></div>';
+    var main = el('main','main');
+    main.innerHTML =
+      '<div class="panel scenario-header"><h2 id="real-name">—</h2><div class="meta" id="real-meta"></div></div>' +
+      '<div class="panel timeline-wrap"><h3>Timeline</h3><div class="lanes" id="real-lanes"></div>' +
+      '<div class="axis-row" id="real-axis"></div>' +
+      '<div class="legend">' +
+      '<span><i style="background:var(--lane-turn)"></i>lifecycle</span>' +
+      '<span><i style="background:var(--lane-fn)"></i>offer made</span>' +
+      '<span><i style="background:var(--pass)"></i>submitted</span>' +
+      '<span><i style="background:var(--warn)"></i>reprompt / warning</span>' +
+      '<span><i style="background:var(--fail)"></i>error / submit failed</span>' +
+      '</div></div>' +
+      '<div class="split">' +
+      '<div class="panel eventlog"><h3>Raw event log</h3><div class="eventlog-list" id="real-eventlog-list"></div></div>' +
+      '<div class="panel transcript"><h3>Conversation transcript</h3><div class="transcript-list" id="real-transcript-list"></div></div>' +
+      '</div>' +
+      '<div class="panel backend"><h3 id="real-backend-title">Backend log</h3><div class="backend-list" id="real-backend-list"></div></div>';
+
+    layout.appendChild(sidebar);
+    layout.appendChild(main);
+    body.appendChild(layout);
+
+    renderRealFilters();
+    renderRealSidebar();
+    if (state.realSelectedIdx == null || state.realSelectedIdx >= calls.length) state.realSelectedIdx = 0;
+    renderRealCall();
+  }
+
+  function renderRealFilters(){
+    var calls = state.realData.calls;
+    var counts = { all: calls.length, webrtc: 0, twilio: 0 };
+    calls.forEach(function(c){ counts[c.mode] = (counts[c.mode]||0) + 1; });
+    var wrap = document.getElementById('real-filters');
+    wrap.innerHTML = '';
+    [['all','All'],['webrtc','WebRTC'],['twilio','Twilio']].forEach(function(pair){
+      if (pair[0] !== 'all' && !counts[pair[0]]) return;
+      var c = el('div', 'chip' + (state.realFilter===pair[0]?' active':''), pair[1] + ' (' + (counts[pair[0]]||0) + ')');
+      c.onclick = function(){ state.realFilter = pair[0]; renderRealFilters(); renderRealSidebar(); };
+      wrap.appendChild(c);
+    });
+  }
+
+  function renderRealSidebar(){
+    var calls = state.realData.calls;
+    var list = document.getElementById('real-list');
+    list.innerHTML = '';
+    calls.forEach(function(c, i){
+      if (state.realFilter !== 'all' && c.mode !== state.realFilter) return;
+      var row = el('div', 'scenario-row' + (i===state.realSelectedIdx?' selected':''));
+      row.appendChild(el('div','pill mode', c.mode));
+      row.appendChild(el('div','name', (c.call_id||'unknown') ));
+      row.appendChild(el('div','pill ' + c.outcome, c.outcome));
+      row.onclick = function(){ state.realSelectedIdx = i; state.realSelectedEventIdx = null; renderRealSidebar(); renderRealCall(); };
+      list.appendChild(row);
+    });
+  }
+
+  function renderRealCall(){
+    var c = state.realData.calls[state.realSelectedIdx];
+    document.getElementById('real-name').textContent = c.call_id || '(no call id)';
+    var meta = document.getElementById('real-meta');
+    meta.innerHTML = '';
+    meta.appendChild(el('span', null, '<b>' + c.outcome + '</b>'));
+    meta.appendChild(el('span', null, c.mode + ' · ' + fmtTs(c.started_at)));
+    meta.appendChild(el('span', null, 'duration <b>' + fmtSec(c.duration) + '</b>'));
+    meta.appendChild(el('span', null, 'events <b>' + c.events.length + '</b>'));
+    if (c.recording){
+      meta.appendChild(el('span','rec-badge', 'recording: ' + c.recording));
+    }
+
+    renderRealTimeline(c);
+    renderRealEventLog(c);
+    renderRealTranscript(c);
+    renderRealBackend(c);
+  }
+
+  function renderRealTimeline(c){
+    var lanesEl = document.getElementById('real-lanes');
+    lanesEl.innerHTML = '';
+    var max = Math.max(c.duration, 1);
+
+    realLaneLabels.forEach(function(lbl){
+      var lane = el('div','lane');
+      lane.appendChild(el('div','lane-label', lbl));
+      lane.appendChild(el('div','lane-body'));
+      lanesEl.appendChild(lane);
+    });
+    var laneBodies = lanesEl.querySelectorAll('.lane-body');
+
+    c.events.forEach(function(ev, idx){
+      var laneName = realKindLane[ev.kind];
+      if (!laneName) return;
+      var laneIdx = realLaneY[laneName];
+      var colorVar = realKindColorVar[ev.kind];
+      var shape = laneName === 'lifecycle' ? 'diamond' : 'dot';
+      var m = el('div','marker ' + shape);
+      m.style.left = (ev.t/max*100) + '%';
+      m.style.background = 'var(' + colorVar + ')';
+      m.dataset.idx = idx;
+      m.onmouseenter = function(e){ showTip(e, fmtSec(ev.t) + '  ' + ev.detail); };
+      m.onmousemove = function(e){ showTip(e, fmtSec(ev.t) + '  ' + ev.detail); };
+      m.onmouseleave = hideTip;
+      m.onclick = function(){ selectRealEvent(idx); };
+      laneBodies[laneIdx].appendChild(m);
+    });
+
+    var axis = document.getElementById('real-axis');
+    axis.innerHTML = '';
+    niceTicks(max).forEach(function(v){
+      var t = el('div','tick'); t.style.left = (v/max*100)+'%'; axis.appendChild(t);
+      var l = el('div','tick-lbl', v+'s'); l.style.left = (v/max*100)+'%'; axis.appendChild(l);
+    });
+
+    highlightSelectedRealMarker();
+  }
+
+  function highlightSelectedRealMarker(){
+    document.querySelectorAll('#real-lanes .marker').forEach(function(m){
+      m.classList.toggle('selected', Number(m.dataset.idx) === state.realSelectedEventIdx);
+    });
+    document.querySelectorAll('#real-eventlog-list .eventlog-row').forEach(function(r){
+      r.classList.toggle('hl', Number(r.dataset.idx) === state.realSelectedEventIdx);
+    });
+  }
+
+  function selectRealEvent(idx){
+    state.realSelectedEventIdx = idx;
+    highlightSelectedRealMarker();
+    var row = document.querySelector('#real-eventlog-list .eventlog-row[data-idx="'+idx+'"]');
+    if (row) row.scrollIntoView({block:'nearest'});
+  }
+
+  function renderRealEventLog(c){
+    var list = document.getElementById('real-eventlog-list');
+    list.innerHTML = '';
+    if (!c.events.length){ list.appendChild(el('div','empty','No structured events parsed from this run.')); return; }
+    c.events.forEach(function(ev, idx){
+      var row = el('div','eventlog-row' + (ev.kind==='error'||ev.kind==='submit_failed'?' k-fail':''));
+      row.dataset.idx = idx;
+      row.appendChild(el('div','t', fmtSec(ev.t)));
+      row.appendChild(el('div','k', ev.kind));
+      row.appendChild(el('div','d', ev.detail));
+      row.onclick = function(){ selectRealEvent(idx); };
+      list.appendChild(row);
+    });
+  }
+
+  function renderRealTranscript(c){
+    var list = document.getElementById('real-transcript-list');
+    list.innerHTML = '';
+    if (!c.transcript.length){
+      list.appendChild(el('div','empty','No transcript captured — real-call runs default to LOG_LEVEL=INFO (no conversation content on disk). Set LOG_LEVEL=DEBUG to capture it.'));
+      return;
+    }
+    c.transcript.forEach(function(msg){
+      var box = el('div','msg role-'+msg.role);
+      box.appendChild(el('div','role', msg.role));
+      if (msg.content) box.appendChild(el('div','content', escapeHtml(msg.content)));
+      if (msg.tool_calls){
+        msg.tool_calls.forEach(function(tc){
+          box.appendChild(el('div','tool-call', '<span class="fn">'+escapeHtml(tc.name)+'</span>(' + escapeHtml(tc.arguments||'') + ')'));
+        });
+      }
+      list.appendChild(box);
+    });
+  }
+
+  function renderRealBackend(c){
+    var title = document.getElementById('real-backend-title');
+    title.textContent = 'Backend log — ' + c.errors.length + ' error(s), ' + c.warnings.length + ' warning(s)';
+    var list = document.getElementById('real-backend-list');
+    list.innerHTML = '';
+    if (!c.errors.length && !c.warnings.length){
+      list.appendChild(el('div','empty','No errors or warnings in bot.log for this call.'));
+      return;
+    }
+    c.errors.forEach(function(er){
+      var row = el('div','backend-row');
+      row.innerHTML = '<span class="src">'+escapeHtml(er.src)+'</span> — '+escapeHtml(er.msg);
+      list.appendChild(row);
+    });
+    c.warnings.forEach(function(w){
+      var row = el('div','backend-row warn');
+      row.innerHTML = '<span class="src">'+escapeHtml(w.src)+'</span> — '+escapeHtml(w.msg);
+      list.appendChild(row);
+    });
+  }
+
+  // ============================================================ LIVE DATA (local server API)
+  function loadEvalRun(runId){
+    if (!runId){ state.evalData = {run_id:null, scenarios:[]}; renderEvals(); return; }
+    fetch('/api/eval-runs/' + encodeURIComponent(runId)).then(function(r){ return r.json(); }).then(function(d){
+      state.evalData = d;
+      state.selectedIdx = null;
+      state.selectedEventIdx = null;
+      renderEvals();
+    }).catch(function(err){
+      document.getElementById('run-sub').textContent = 'Failed to load run: ' + err;
+    });
+  }
+
+  function loadEvalRuns(){
+    fetch('/api/eval-runs').then(function(r){ return r.json(); }).then(function(runs){
+      var select = document.getElementById('run-select');
+      var prev = select.value;
+      select.innerHTML = '';
+      runs.forEach(function(r){
+        var opt = el('option', null, r.run_id + '  (' + r.passed + '/' + r.total + ' passed)');
+        opt.value = r.run_id;
+        select.appendChild(opt);
+      });
+      if (!runs.length){
+        loadEvalRun(null);
+        return;
+      }
+      var target = runs.some(function(r){return r.run_id===prev;}) ? prev : runs[0].run_id;
+      select.value = target;
+      loadEvalRun(target);
+    }).catch(function(err){
+      document.getElementById('run-sub').textContent = 'Failed to reach dashboard server: ' + err;
+    });
+  }
+
+  function loadRealCalls(){
+    fetch('/api/real-calls').then(function(r){ return r.json(); }).then(function(d){
+      state.realData = d;
+      renderReal();
+    }).catch(function(err){
+      document.getElementById('real-sub').textContent = 'Failed to reach dashboard server: ' + err;
+    });
+  }
+
+  // ============================================================ BOOT
+  initTabs();
+  document.getElementById('run-select').onchange = function(e){ loadEvalRun(e.target.value); };
+  document.getElementById('evals-refresh').onclick = loadEvalRuns;
+  document.getElementById('real-refresh').onclick = loadRealCalls;
+  loadEvalRuns();
+  loadRealCalls();
+})();
+</script>
