@@ -113,6 +113,35 @@ const API = {
     if (!r.ok) throw new Error("auth/me " + r.status);
     return r.json();
   },
+  async notices() {
+    const r = await fetch("/notices");
+    if (!r.ok) throw new Error("notices " + r.status);
+    return r.json();
+  },
+  async catalogue() {
+    const r = await fetch("/notices/catalogue");
+    if (!r.ok) throw new Error("catalogue " + r.status);
+    return r.json();
+  },
+  async saveNotices(document_) {
+    const r = await fetch("/notices", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(document_),
+    });
+    if (r.ok) return r.json();
+    // The server names the entry that failed; surfacing its words is more use
+    // than a status code, and it is the only place the clinic's rules live.
+    let detail = "";
+    try {
+      const body = await r.json();
+      detail = Array.isArray(body.detail)
+        ? body.detail.map((e) => (e.id ? e.id + ": " : "") + e.error).join(" · ")
+        : String(body.detail || "");
+    } catch { /* a body that is not JSON tells us nothing extra */ }
+    if (r.status === 401) detail = "Hace falta sesión de administrador.";
+    throw new Error(detail || "error " + r.status);
+  },
   async login(key) {
     const r = await fetch("/auth/login", {
       method: "POST",
@@ -835,9 +864,195 @@ function setView(v){
   view = v;
   $("#viewOverview").hidden = v!=="overview";
   $("#viewCalls").hidden    = v!=="calls";
+  $("#viewNotices").hidden  = v!=="notices";
   document.querySelectorAll(".nav button").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.view===v)));
   if(v==="overview") renderOverview();
+  if(v==="notices") loadNotices();
+}
+
+/* ---------------------------------------------- reception notices (admin)
+
+   What the front desk has told the agent, and the only place it is told. The
+   whole document is read and written at once, which is what the endpoint
+   offers: reception is one person at one desk, so a last-write-wins file is
+   honest about the concurrency that actually exists.
+
+   Nothing is validated here beyond what stops a pointless round trip — the
+   server re-checks everything and names the entry that failed, because a page
+   is not where a rule about the clinic should live. */
+
+const NOTICE_KINDS = {
+  provider_absent: {
+    label: "no viene", changes: true,
+    explain: "Esos días no se dan citas con él y su agenda aparece marcada. Si alguien lo pide, el agente le ofrece otro médico de la misma especialidad y centro.",
+  },
+  clinic_closed: {
+    label: "clínica cerrada", changes: true,
+    explain: "Ningún médico da cita ese día. El agente pasa al siguiente día abierto.",
+  },
+  insurer_dropped: {
+    label: "deja un seguro", changes: true,
+    explain: "A los pacientes de ese seguro se les busca otro médico de la misma especialidad.",
+  },
+  spoken: {
+    label: "se le dice", changes: false,
+    explain: "El agente lo dice al ofrecer una cita en ese centro y en esas fechas. No cambia ninguna cita.",
+  },
+};
+
+let notices = { tone: null, notices: [] };
+let catalogue = { providers: [], plans: [], locations: [] };
+
+const isoDay = (d) => new Date(d.getTime() - d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+
+function noticeStatus(text, tone){
+  const n = $("#ntcStatus");
+  n.textContent = text || "";
+  n.className = "ntc-status" + (tone ? " is-" + tone : "");
+}
+
+async function loadNotices(){
+  try{
+    if(!catalogue.providers.length){
+      catalogue = await API.catalogue();
+      fillNoticeOptions();
+    }
+    notices = await API.notices();
+    renderNotices();
+  }catch(err){
+    noticeStatus("No se han podido cargar los avisos: " + err.message, "bad");
+  }
+}
+
+function noticeSentence(n){
+  const who = (id) => (catalogue.providers.find(p => p.id === id) || {}).name || id;
+  if(n.kind === "provider_absent")  return who(n.provider_id) + " no viene";
+  if(n.kind === "clinic_closed")    return "La clínica está cerrada";
+  if(n.kind === "insurer_dropped"){
+    const plan = (catalogue.plans.find(p => p.id === n.insurer_id) || {}).name || n.insurer_id;
+    return who(n.provider_id) + " ya no atiende " + plan;
+  }
+  const site = n.location_id
+    ? (catalogue.locations.find(l => l.id === n.location_id) || {}).name || n.location_id
+    : "todos los centros";
+  return "“" + n.text + "” · " + site;
+}
+
+function renderNotices(){
+  const host = $("#ntcList"); host.innerHTML = "";
+  const list = notices.notices || [];
+  $("#ntcCount").textContent = list.length ? list.length + (list.length===1?" aviso":" avisos") : "";
+  const badge = $("#noticeBadge");
+  badge.hidden = !list.length;
+  badge.textContent = String(list.length);
+
+  if(!list.length){
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"Sin avisos"));
+    e.appendChild(el("span",null,"El agente se comporta como de costumbre. Un aviso cambia lo que ofrece o lo que dice, y caduca solo."));
+    host.appendChild(e);
+  }
+  list.forEach((n) => {
+    const row = el("div","ntc-row");
+    const kind = NOTICE_KINDS[n.kind] || { label: n.kind, changes: false };
+    // Warn styling for the ones that change the record, neutral for the ones
+    // that only change what is said: that difference is what matters here.
+    row.appendChild(el("span","pill " + (kind.changes ? "warn" : "neutral"), kind.label));
+    const body = el("div","body");
+    body.appendChild(el("div","what", noticeSentence(n)));
+    body.appendChild(el("div","when", n.from === n.until ? n.from : n.from + " → " + n.until));
+    row.appendChild(body);
+    const remove = el("button","btn","Quitar");
+    remove.type = "button";
+    remove.addEventListener("click", () => saveNotices({
+      ...notices, notices: list.filter(x => x.id !== n.id),
+    }, "Aviso quitado."));
+    row.appendChild(remove);
+    host.appendChild(row);
+  });
+
+  $("#ntcToneText").value  = notices.tone ? notices.tone.text : "";
+  $("#ntcToneUntil").value = (notices.tone && notices.tone.until) ? notices.tone.until : "";
+}
+
+async function saveNotices(document_, okText){
+  try{
+    await API.saveNotices(document_);
+    notices = await API.notices();
+    renderNotices();
+    noticeStatus(okText, "ok");
+    return true;
+  }catch(err){
+    noticeStatus("No se ha guardado. " + err.message, "bad");
+    return false;
+  }
+}
+
+function openNoticeDialog(){
+  const today = isoDay(new Date());
+  $("#ntcKind").value = "provider_absent";
+  $("#ntcText").value = "";
+  $("#ntcSite").value = "";
+  $("#ntcFrom").value = today;
+  $("#ntcUntil").value = today;
+  $("#ntcError").hidden = true;
+  syncNoticeFields();
+  $("#ntcDialog").showModal();
+}
+
+function syncNoticeFields(){
+  const kind = $("#ntcKind").value;
+  $("#ntcExplain").textContent = (NOTICE_KINDS[kind] || {}).explain || "";
+  $("#ntcProviderField").hidden = !(kind === "provider_absent" || kind === "insurer_dropped");
+  $("#ntcInsurerField").hidden  = kind !== "insurer_dropped";
+  $("#ntcTextField").hidden     = kind !== "spoken";
+  $("#ntcSiteField").hidden     = kind !== "spoken";
+}
+
+async function submitNotice(){
+  const kind = $("#ntcKind").value;
+  const from = $("#ntcFrom").value, until = $("#ntcUntil").value;
+  const fail = (m) => { const e = $("#ntcError"); e.textContent = m; e.hidden = false; };
+  if(!from || !until) return fail("Pon las dos fechas.");
+  if(until < from) return fail("La fecha de fin es anterior a la de inicio.");
+
+  // The id is generated, never typed: it is a handle for the trail, and the
+  // server refuses anything that is not one.
+  const entry = { id: "n" + Date.now().toString(36), kind, from, until };
+  if(kind === "provider_absent" || kind === "insurer_dropped") entry.provider_id = $("#ntcProvider").value;
+  if(kind === "insurer_dropped") entry.insurer_id = $("#ntcInsurer").value;
+  if(kind === "spoken"){
+    entry.text = $("#ntcText").value.trim();
+    if(!entry.text) return fail("Escribe qué se le dice al paciente.");
+    entry.location_id = $("#ntcSite").value || null;
+  }
+  $("#ntcError").hidden = true;
+  const ok = await saveNotices({ ...notices, notices: [...(notices.notices||[]), entry] }, "Aviso guardado.");
+  if(ok) $("#ntcDialog").close();
+  else fail("El servidor no lo ha aceptado.");
+}
+
+async function saveTone(){
+  const text = $("#ntcToneText").value.trim();
+  const until = $("#ntcToneUntil").value;
+  const tone = text ? (until ? { text, until } : { text }) : null;
+  await saveNotices({ ...notices, tone }, text ? "Tono guardado." : "Tono quitado.");
+}
+
+function fillNoticeOptions(){
+  const fill = (sel, items, keepFirst) => {
+    const node = $(sel);
+    if(!keepFirst) node.innerHTML = "";
+    items.forEach((i) => {
+      const o = el("option", null, i.name);
+      o.value = i.id;
+      node.appendChild(o);
+    });
+  };
+  fill("#ntcProvider", catalogue.providers);
+  fill("#ntcInsurer", catalogue.plans);
+  fill("#ntcSite", catalogue.locations, true);
 }
 
 function renderWhy(c){
@@ -1623,7 +1838,9 @@ function isCitaBlock(b) {
 }
 
 function calSignature(data) {
-  return JSON.stringify((data.days || []).map((d) => [d.date, d.blocks || []]));
+  // The reason a day is empty is part of what is drawn, so a day that becomes
+  // closed — or stops being — has to count as a change worth redrawing.
+  return JSON.stringify((data.days || []).map((d) => [d.date, d.note || "", d.blocks || []]));
 }
 
 function stopCalPoll() {
@@ -1696,6 +1913,11 @@ function buildCalColumns(days, calStart, calEnd, px, animateCitas) {
     const h = el("div", "cal-dayhead");
     h.appendChild(el("b", null, WEEKDAY_LABEL[d.weekday] || d.weekday));
     h.appendChild(el("span", null, fmtDayLabel(d.date)));
+    // A plain day off needs no flag in the header — it is the normal case, and
+    // the column says so. Only what reception or the clinic changed does.
+    if (d.note && d.note_kind !== "off") {
+      h.appendChild(el("span", "cal-note", d.note));
+    }
     root.appendChild(h);
   });
 
@@ -1718,6 +1940,16 @@ function buildCalColumns(days, calStart, calEnd, px, animateCitas) {
     const col = el("div", "cal-cell");
     col.dataset.date = d.date;
     col.style.height = height + "px";
+    // The reason goes in the gap itself. A greyed-out column still leaves the
+    // doctor guessing whether the day is theirs off, the clinic's, or
+    // reception's doing; the words are the whole point of showing it at all.
+    if (d.note) {
+      col.classList.add("is-off");
+      const why = el("div", "cal-off " + (d.note_kind || "off"));
+      why.appendChild(el("span", "l", d.note));
+      if (d.note_detail) why.appendChild(el("span", "d", d.note_detail));
+      col.appendChild(why);
+    }
     (d.blocks || []).forEach((b) => {
       const node = makeCalBlock(b, calStart, calEnd, px, animateCitas);
       if (!node) return;
@@ -1923,6 +2155,20 @@ async function bootAdmin() {
 /* ===================================================================== boot */
 document.querySelectorAll(".nav button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
+
+$("#ntcAdd").addEventListener("click", openNoticeDialog);
+$("#ntcKind").addEventListener("change", syncNoticeFields);
+$("#ntcSave").addEventListener("click", submitNotice);
+$("#ntcCancel").addEventListener("click", () => $("#ntcDialog").close());
+$("#ntcToneClear").addEventListener("click", () => {
+  $("#ntcToneText").value = "";
+  $("#ntcToneUntil").value = "";
+  saveTone();
+});
+// The tone saves on blur rather than behind its own button: it is one field,
+// and a tone left typed but unsaved is a tone that silently does nothing.
+$("#ntcToneText").addEventListener("change", saveTone);
+$("#ntcToneUntil").addEventListener("change", saveTone);
 document.querySelectorAll(".tabs button").forEach((b) =>
   b.addEventListener("click", () => setPane(b.dataset.pane)));
 $("#btnPlace").addEventListener("click", tcOpen);

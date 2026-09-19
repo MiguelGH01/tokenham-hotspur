@@ -209,7 +209,11 @@ def validate_notices(raw: dict) -> tuple[Notices, list[dict]]:
         try:
             if not isinstance(tone, dict):
                 raise ValueError("tone must be an object")
-            tone_text, tone_until = _text(tone.get("text")), _day(tone, "until")
+            # The tone is a standing preference, not a dated exception: how the
+            # clinic wants to sound does not expire on a Tuesday. An end date is
+            # still allowed, for a tone that genuinely is temporary.
+            tone_text = _text(tone.get("text"))
+            tone_until = _day(tone, "until") if tone.get("until") else None
         except ValueError as exc:
             tone_text = tone_until = None
             errors.append({"id": "tone", "error": str(exc)})
@@ -307,9 +311,28 @@ def spoken_for(notices: Notices, location_id: str, day: date) -> list[str]:
 
 
 def tone_for(notices: Notices, today: date) -> str | None:
-    if notices.tone_text and notices.tone_until and today <= notices.tone_until:
-        return notices.tone_text
-    return None
+    """The voice in force today. No end date means it stands until changed."""
+    if not notices.tone_text:
+        return None
+    if notices.tone_until and today > notices.tone_until:
+        return None
+    return notices.tone_text
+
+
+def absent_days(notices: Notices, provider_id: str) -> dict[str, str]:
+    """Day → the notice id that says this doctor is away, for that doctor.
+
+    The doctor's own calendar reads this so it cannot disagree with the agent:
+    a day reception marked away must look away to them too, or the console says
+    one thing while the phone says another.
+    """
+    out: dict[str, str] = {}
+    for n in notices.of_kind("provider_absent"):
+        if n.provider_id != provider_id:
+            continue
+        for offset in range((n.until - n.start).days + 1):
+            out[(n.start + timedelta(days=offset)).isoformat()] = n.id
+    return out
 
 
 def closed_days(notices: Notices) -> list[str]:
@@ -343,8 +366,10 @@ def as_document(notices: Notices) -> dict:
         "text": lambda n: n.text,
     }
     document: dict = {"tone": None, "notices": []}
-    if notices.tone_text and notices.tone_until:
-        document["tone"] = {"text": notices.tone_text, "until": notices.tone_until.isoformat()}
+    if notices.tone_text:
+        document["tone"] = {"text": notices.tone_text}
+        if notices.tone_until:
+            document["tone"]["until"] = notices.tone_until.isoformat()
     for notice in notices.entries:
         entry = {
             "id": notice.id,
@@ -413,6 +438,22 @@ def mount_notices_routes(app: FastAPI, write_guard: Callable | None = None) -> N
         if stored is None:
             return EMPTY
         return as_document(validate_notices(stored)[0])
+
+    @app.get("/notices/catalogue")
+    async def get_notices_catalogue():
+        """The names and ids a notice may refer to, for the form's dropdowns.
+
+        Served from the published catalogue rather than typed into the page, so
+        a doctor who joins the clinic appears in the form without a deploy, and
+        the page can never offer an id the validator would then refuse.
+        """
+        catalogue = load_base_catalog()
+        pick = lambda items: [{"id": i["id"], "name": i["name"]} for i in items]
+        return {
+            "providers": pick(catalogue["providers"]),
+            "plans": pick(catalogue["plans"]),
+            "locations": pick(catalogue["locations"]),
+        }
 
     @app.get("/notices/errors")
     async def get_notice_errors():

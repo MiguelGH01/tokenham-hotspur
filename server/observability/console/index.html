@@ -36,6 +36,7 @@
     <nav class="nav" aria-label="Views">
       <button data-view="overview" aria-current="true">Overview</button>
       <button data-view="calls" aria-current="false">Conversations <span class="badge" id="navBadge">0</span></button>
+      <button data-view="notices" aria-current="false">Avisos <span class="badge" id="noticeBadge" hidden>0</span></button>
     </nav>
     <div class="wire" id="wire"><i class="dot"></i><span id="wireTxt">live · 0 on the line</span></div>
     <span class="tclock" id="clock">—</span>
@@ -99,7 +100,121 @@
     </section>
   </div>
   </div>
+
+  <!-- Admin: what reception has told the agent today -->
+  <div class="view" id="viewNotices" hidden>
+   <div class="scroll">
+    <div class="dash">
+      <header class="dashhead">
+        <div>
+          <h1>Avisos de recepción</h1>
+          <p>Lo que hoy no sale en la ficha de la clínica y el agente tiene que saber.
+             Vale desde la siguiente llamada.</p>
+        </div>
+      </header>
+
+      <section class="ntc-block">
+        <div class="ntc-head">
+          <h2>Avisos puestos</h2>
+          <span class="count" id="ntcCount"></span>
+          <div style="flex:1"></div>
+          <button class="btn primary" id="ntcAdd" type="button">Poner un aviso</button>
+        </div>
+        <div id="ntcList"></div>
+        <p class="ntc-status" id="ntcStatus" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="ntc-block">
+        <div class="ntc-head"><h2>Qué puedes avisar</h2></div>
+        <dl class="ntc-cases">
+          <div>
+            <dt><span class="pill warn">cambia las citas</span> Un médico no viene</dt>
+            <dd>Esos días no se dan citas con él y su agenda aparece marcada. Si alguien
+                lo pide, se le ofrece otro médico. El resto de sus días siguen igual.</dd>
+          </div>
+          <div>
+            <dt><span class="pill warn">cambia las citas</span> La clínica cierra</dt>
+            <dd>Ningún médico da cita ese día. El agente pasa al siguiente día abierto.</dd>
+          </div>
+          <div>
+            <dt><span class="pill warn">cambia las citas</span> Un médico deja un seguro</dt>
+            <dd>A los pacientes de ese seguro se les busca otro médico de la misma
+                especialidad.</dd>
+          </div>
+          <div>
+            <dt><span class="pill neutral">solo se dice</span> Avisar al paciente de algo</dt>
+            <dd>El agente lo dice al ofrecer la cita, si coinciden el centro y la fecha.
+                No cambia ninguna cita.</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="ntc-block">
+        <div class="ntc-head"><h2>Cómo habla el agente</h2></div>
+        <div class="ntc-tone">
+          <label class="ntc-field">
+            <span>Una frase sobre su manera de hablar</span>
+            <input type="text" id="ntcToneText" maxlength="200"
+                   placeholder="p. ej. Habla de usted, con calma y sin prisa.">
+          </label>
+          <label class="ntc-field ntc-field-date">
+            <span>Hasta (opcional)</span>
+            <input type="date" id="ntcToneUntil">
+          </label>
+          <button class="btn" id="ntcToneClear" type="button">Quitar</button>
+        </div>
+        <p class="ntc-hint">Cambia su manera de hablar, nunca lo que decide ni sus reglas.
+           Sin fecha, vale hasta que la cambies. Máximo 200 caracteres.</p>
+      </section>
+    </div>
+   </div>
+  </div>
 </div>
+
+<!-- Admin: one notice, in a dialog rather than an inline row, so a half-typed
+     absence is never live. -->
+<dialog class="ntc-dialog" id="ntcDialog">
+  <form method="dialog" id="ntcForm">
+    <h2>Poner un aviso</h2>
+    <label class="ntc-field">
+      <span>Qué pasa</span>
+      <select id="ntcKind">
+        <option value="provider_absent">Un médico no viene</option>
+        <option value="clinic_closed">La clínica cierra</option>
+        <option value="insurer_dropped">Un médico deja un seguro</option>
+        <option value="spoken">Avisar al paciente de algo</option>
+      </select>
+    </label>
+    <!-- Says what the agent will do with this, in the moment the choice is made,
+         rather than leaving it to be discovered on a live call. -->
+    <p class="ntc-explain" id="ntcExplain"></p>
+    <label class="ntc-field" id="ntcProviderField">
+      <span>Médico</span>
+      <select id="ntcProvider"></select>
+    </label>
+    <label class="ntc-field" id="ntcInsurerField" hidden>
+      <span>Seguro</span>
+      <select id="ntcInsurer"></select>
+    </label>
+    <label class="ntc-field" id="ntcTextField" hidden>
+      <span>Qué se le dice</span>
+      <input type="text" id="ntcText" maxlength="200" placeholder="p. ej. El ascensor está averiado.">
+    </label>
+    <label class="ntc-field" id="ntcSiteField" hidden>
+      <span>Centro</span>
+      <select id="ntcSite"><option value="">Todos</option></select>
+    </label>
+    <div class="ntc-dates">
+      <label class="ntc-field ntc-field-date"><span>Desde</span><input type="date" id="ntcFrom"></label>
+      <label class="ntc-field ntc-field-date"><span>Hasta</span><input type="date" id="ntcUntil"></label>
+    </div>
+    <p class="ntc-error" id="ntcError" hidden></p>
+    <div class="ntc-actions">
+      <button class="btn" type="button" id="ntcCancel">Cancelar</button>
+      <button class="btn primary" type="button" id="ntcSave">Guardar</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Doctor: weekly schedule -->
 <div class="shell doctor-shell" id="shellDoctor" hidden>
