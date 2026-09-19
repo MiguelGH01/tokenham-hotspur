@@ -28,7 +28,7 @@ for f in "${files[@]}"; do
   sleep 1
   clock=$(sed -n 's/^# clock: //p' "$f")
   CALL_CLOCK_OVERRIDE=$clock nohup uv run bot.py -t eval --port "$PORT" >/tmp/pipecat-eval-server.log 2>&1 &
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 60); do  # boot includes fetching the live catalogue, up to ~20s
     lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && break
     sleep 1
   done

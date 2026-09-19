@@ -50,6 +50,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
 from booking import MADRID
+from clinic.clinic_catalog import refresh_from_api
 from clinic.clinic_client import ClinicClient
 from flow import GREETING, create_identify_node
 from gateway_llm import StallGuardedLLMService
@@ -104,7 +105,12 @@ def _reprompt(context: LLMContext) -> str:
 
 def build_stt():
     if os.getenv("STT_PROVIDER", "deepgram") == "soniox":
-        return SonioxSTTService(api_key=os.environ["SONIOX_API_KEY"])
+        return SonioxSTTService(
+            api_key=os.environ["SONIOX_API_KEY"],
+            # Callers speak English with Spanish names. Unhinted, Soniox guessed another language
+            # and wrote "Josefa" as "Žosfa". A preference, not a lock: other languages still work.
+            settings=SonioxSTTService.Settings(language_hints=[Language.EN, Language.ES]),
+        )
     return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
 
@@ -372,4 +378,5 @@ async def bot(runner_args: RunnerArguments):
 if __name__ == "__main__":
     from pipecat.runner.run import main
 
+    refresh_from_api()  # once per process, before any call: a call never waits on it
     main()

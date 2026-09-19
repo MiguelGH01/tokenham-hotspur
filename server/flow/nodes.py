@@ -63,8 +63,12 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     "get_earliest_slot. If the caller named a doctor, pass provider. If it returns "
                     "provider_not_found, say there is no such doctor on the clinic's staff and ask "
                     "whether another doctor of that specialty would do: if yes, call "
-                    "get_earliest_slot again without provider. If it returns no_slots, say nothing "
-                    "is available for that request and ask whether they would drop a constraint. "
+                    "get_earliest_slot again without provider. If it returns no_slots with a "
+                    "reason, a clinic rule stops this booking: tell them why in one sentence using "
+                    "the explanation, do not offer another specialty in its place, and call "
+                    "end_without_booking unless they ask for something else. If it returns "
+                    "no_slots without a reason, say nothing is available for that request and ask "
+                    "whether they would drop a constraint. "
                     "If lookup_failed, apologise and ask them to call back shortly. If the caller "
                     "wants nothing you can offer, call end_without_booking."
                 ),
@@ -79,6 +83,10 @@ OFFER_NOTES = {
     "the same specialty at the same site. ",
     "other_day": "First say the doctor they asked for is not at that site on the day they asked, "
     "so this is that doctor's earliest day there. ",
+    "not_in_network": "First say the doctor they asked for does not take their insurance plan, "
+    "so this is another doctor of the same specialty who does. ",
+    "age_redirect": "First say that at the patient's age this kind of visit is seen in the "
+    "specialty of the doctor below, not the one they asked for, so you looked there instead. ",
 }
 
 

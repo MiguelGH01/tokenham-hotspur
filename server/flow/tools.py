@@ -14,10 +14,12 @@ from pipecat.frames.frames import TTSSpeakFrame
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic.clinic_catalog import (
     closure_days,
+    general_care_specialties,
     location_ids,
     location_name,
     provider_on_leave,
     providers,
+    restriction_explanation,
     specialty_ids,
 )
 from flow.prompts import FILLER
@@ -114,13 +116,11 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     connected_at: datetime = state["connected_at"]
     date_from, date_to = search_window(connected_at)
     await _say_filler(flow_manager)
-    try:
-        availability = await state["client"].availability(
-            date_from, date_to, specialty, state["patient"]["patient_id"], location_id=site
+
+    def fetch(specialty_id):
+        return state["client"].availability(
+            date_from, date_to, specialty_id, state["patient"]["patient_id"], location_id=site
         )
-    except Exception as exc:
-        logger.error("availability lookup failed: {}", exc)
-        return {"status": "lookup_failed"}, None
 
     def pick(weekday, provider_id):
         return pick_offer(
@@ -128,20 +128,43 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             closed_days=closure_days(), provider_id=provider_id,
         )  # fmt: skip
 
-    # A named doctor: which constraint gives way is the clinic's rule, not the model's call.
-    note = None
-    if provider and provider_on_leave(provider, connected_at.astimezone(MADRID).date()):
-        provider, note = None, "on_leave"  # keep specialty + site, drop the doctor
-    offer = pick(weekday, provider)
-    if offer is None and provider and weekday:
-        offer, note = pick(None, provider), "other_day"  # keep doctor + site, drop the day
+    try:
+        availability = await fetch(specialty)
+        # `blocked` names the standing rule that stopped each provider (API-avail-blocked); its
+        # values mirror OutcomeReason one to one.
+        blocked = {b["provider_id"]: b["restriction"] for b in availability.get("blocked", [])}
+
+        # Which constraint gives way is the clinic's rule, not the model's call.
+        note = None
+        if provider and provider_on_leave(provider, connected_at.astimezone(MADRID).date()):
+            provider, note = None, "on_leave"  # keep specialty + site, drop the doctor
+        elif blocked.get(provider) == "provider_not_in_network":
+            provider, note = None, "not_in_network"  # a colleague may take the plan: redirect
+        offer = pick(weekday, provider)
+        if offer is None and provider and weekday:
+            offer, note = pick(None, provider), "other_day"  # keep doctor + site, drop the day
+        general_care = general_care_specialties()
+        if offer is None and specialty in general_care and set(blocked.values()) == {"not_eligible_age"}:
+            # A general complaint at the wrong age: the boundary wins over the spoken specialty,
+            # and the API says which of the other general-care specialties takes this patient.
+            for other in (s for s in general_care if s != specialty):
+                availability = await fetch(other)
+                offer = pick(weekday, None)
+                if offer:
+                    note = "age_redirect"
+                    break
+    except Exception as exc:
+        logger.error("availability lookup failed: {}", exc)
+        return {"status": "lookup_failed"}, None
+
     if offer is None:
         # If the call ends here this is the truthful reason; a later offer clears it.
-        # `blocked` names the standing restriction that stopped a provider (API-avail-blocked);
-        # its values mirror OutcomeReason one to one.
-        restriction = next((b["restriction"] for b in availability.get("blocked", [])), None)
+        restriction = next(iter(blocked.values()), None)
         state["submission"].set_no_action(restriction or "no_availability")
-        return {"status": "no_slots"}, None
+        if restriction is None:
+            return {"status": "no_slots"}, None
+        explanation = restriction_explanation(restriction)
+        return {"status": "no_slots", "reason": restriction, "explanation": explanation}, None
 
     slot = next(
         s
