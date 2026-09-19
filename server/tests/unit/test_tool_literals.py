@@ -2,7 +2,14 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from clinic.clinic_catalog import location_ids, plan_literals, specialty_ids
-from flow.tools import act_functions, confirm_offer_schema, get_earliest_slot_schema, register_patient_schema
+from flow.nodes import create_identify_node
+from flow.tools import (
+    RAILS,
+    act_functions,
+    confirm_offer_schema,
+    get_earliest_slot_schema,
+    register_patient_schema,
+)
 
 
 def test_register_insurer_is_catalogue_only():
@@ -64,3 +71,11 @@ def test_act_tools_hide_confirm_until_an_offer_and_drop_booking_after_refuse():
 
     refused = SimpleNamespace(state={"hard_refuse": "specialty_not_covered", "offers": {"offer-1": {}}})
     assert act_functions(refused) == []
+
+
+def test_rails_always_advertise_search_and_register():
+    names = [_tool_name(t) for t in RAILS]
+    assert names[:2] == ["search_patient", "register_patient"]
+    assert "flag_emergency" in names
+    assert "decline_out_of_scope" in names
+    assert create_identify_node()["functions"] == []

@@ -1,9 +1,10 @@
 """The silence re-prompt must make sense to a caller who did not hear the last message."""
 
-from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext, LLMSpecificMessage
 
-from bot import _reprompt
+from bot import _is_eval_session, _reprompt
 from flow import GREETING
+from pipecat.runner.types import EvalRunnerArguments, RunnerArguments
 
 OFFER = "Doctor Martín Sáez at Arenal Sur, Monday 21 September at 09:00. Does that work for you?"
 
@@ -36,3 +37,20 @@ def test_reprompt_skips_tool_call_messages_without_text():
     context.add_message({"role": "assistant", "content": None, "tool_calls": []})
 
     assert "Martín Sáez" in _reprompt(context)
+
+
+def test_reprompt_reads_llm_specific_messages():
+    context = LLMContext(
+        messages=[
+            LLMSpecificMessage(
+                llm="google",
+                message={"role": "assistant", "content": "Could you give me your DNI or NIE?"},
+            )
+        ]
+    )
+    assert "DNI or NIE" in _reprompt(context)
+
+
+def test_eval_runner_args_are_detected():
+    assert _is_eval_session(EvalRunnerArguments())
+    assert not _is_eval_session(RunnerArguments())

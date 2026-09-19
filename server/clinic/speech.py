@@ -13,7 +13,6 @@ from clinic.clinic_catalog import (
     location_ids,
     match_plan,
     match_providers,
-    specialty_by_id,
     specialty_ids,
 )
 from dates import _MONTHS, _ORDINALS
@@ -40,11 +39,20 @@ _WANTS_SOONEST = re.compile(
 
 _SPECIALTY_HINTS = (
     ("gynaecology", ("gynaecology", "gynecology", "gynaecolog", "ginecolog")),
-    ("dermatology", ("dermatolog", "eczema", "mole")),
-    ("orthopaedics", ("orthopaedic", "orthopedic", "hip")),
+    ("dermatology", ("dermatolog",)),
+    ("orthopaedics", ("orthopaedic", "orthopedic")),
     ("paediatrics", ("paediatric", "pediatric")),
     ("physiotherapy", ("physio",)),
-    ("general_practice", ("general practice", "general practitioner", "family doctor", " gp", "g.p")),
+    (
+        "general_practice",
+        (
+            "general practice",
+            "general practitioner",
+            "family doctor",
+            " gp",
+            "g.p",
+        ),
+    ),
 )
 
 
@@ -104,21 +112,9 @@ def infer_specialty(text: str | None) -> str | None:
     return unique[0] if len(unique) == 1 else None
 
 
-def _mentions_specialty(spoken: str, specialty_id: str) -> bool:
-    if specialty_id not in specialty_ids():
-        return False
-    raw = f" {fold(spoken)} "
-    spec = specialty_by_id(specialty_id)
-    if f" {fold(spec['name'])} " in raw or f" {specialty_id.replace('_', ' ')} " in raw:
-        return True
-    return any(sid == specialty_id and k in raw for sid, keys in _SPECIALTY_HINTS for k in keys)
-
-
 def resolve_slot_query(args: dict, spoken: str) -> dict:
-    """Map tool args onto catalogue ids only when the caller actually said them.
-
-    Enum fields on the tool are a closed list from clinic.json. Models still fill
-    optional enums; an invented site or specialty would POST a different BOOK.
+    """Named site/doctor/specialty from speech win. If they never named a specialty,
+    keep a catalogue id the model passed from the prompt triage examples.
     """
     spoken = spoken or ""
     stripped = greeting_stripped(spoken)
@@ -133,7 +129,7 @@ def resolve_slot_query(args: dict, spoken: str) -> dict:
             specialty = named[0]["specialty_id"]
 
     arg_spec = args.get("specialty")
-    if not specialty and arg_spec in specialty_ids() and _mentions_specialty(spoken, arg_spec):
+    if not specialty and arg_spec in specialty_ids():
         specialty = arg_spec
 
     arg_site = args.get("site")
@@ -247,6 +243,48 @@ def wants_soonest(text: str | None) -> bool:
     return bool(text and _WANTS_SOONEST.search(text))
 
 
+def chat_fields(message) -> dict:
+    """Normalize LLMContext entries (dicts or LLMSpecificMessage) to role/content."""
+    if isinstance(message, dict):
+        return message
+    inner = getattr(message, "message", message)
+    if isinstance(inner, dict):
+        return inner
+    return {
+        "role": getattr(inner, "role", None),
+        "content": getattr(inner, "content", None),
+    }
+
+
+def chat_text(message) -> str | None:
+    fields = chat_fields(message)
+    content = fields.get("content")
+    if isinstance(content, str):
+        text = content.strip()
+        return text or None
+    if isinstance(content, list):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict) and isinstance(part.get("text"), str):
+                parts.append(part["text"])
+            else:
+                text = getattr(part, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        joined = "".join(parts).strip()
+        return joined or None
+    return None
+
+
+def chat_role(message) -> str | None:
+    role = chat_fields(message).get("role")
+    if role == "model":
+        return "assistant"
+    return role
+
+
 def user_speech(flow_manager) -> str:
     chunks: list[str] = []
     if summary := (getattr(flow_manager, "state", {}) or {}).get("final_intent"):
@@ -255,8 +293,9 @@ def user_speech(flow_manager) -> str:
     if agg is not None:
         try:
             for message in agg.user()._context.get_messages():
-                if message.get("role") == "user" and isinstance(message.get("content"), str):
-                    chunks.append(message["content"])
+                if chat_role(message) == "user":
+                    if text := chat_text(message):
+                        chunks.append(text)
         except Exception:
             pass
     return " ".join(chunks)

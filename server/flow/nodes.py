@@ -10,8 +10,6 @@ from flow.prompts import ROLE_MESSAGE
 from flow.tools import (
     act_functions,
     flush_submission,
-    register_patient_schema,
-    search_patient_schema,
     speak_close_line,
 )
 
@@ -46,7 +44,9 @@ def create_identify_node() -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Establish who the appointment is for. Get the patient's full name and ONE "
+                    "Establish who the appointment is for. Example: 'my son's had a "
+                    "temperature' → the patient is the child, not the caller. Get the patient's "
+                    "full name and ONE "
                     "exact identifier: DNI or NIE including the letter, or their phone. If this "
                     "turn already has both, call search_patient immediately — do not ask again. "
                     "If they are new and already dictated both surnames, date of birth, phone, "
@@ -59,7 +59,7 @@ def create_identify_node() -> NodeConfig:
             }
         ],
         respond_immediately=False,
-        functions=[search_patient_schema(), register_patient_schema()],
+        functions=[],
     )
 
 

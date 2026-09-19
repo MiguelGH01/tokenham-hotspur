@@ -18,7 +18,16 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import (
+    BotSpeakingFrame,
+    InterimTranscriptionFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    TranscriptionFrame,
+    TTSSpeakFrame,
+    UserSpeakingFrame,
+    UserStartedSpeakingFrame,
+)
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -27,7 +36,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
-from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
+from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -51,12 +60,15 @@ from pipecat.workers.runner import WorkerRunner
 from audio_models import CallSileroVADAnalyzer, CallSmartTurnAnalyzer, warm_audio_models
 from booking import MADRID
 from clinic.clinic_client import ClinicClient
+from clinic.speech import chat_role, chat_text
 from flow import FILLER, GREETING, RAILS, create_identify_node
 from flow.speak import speak_as_llm
 from gateway_llm import StallGuardedLLMService
 from submission import CallSubmission
+from ws_probes import quiet_empty_websocket_probes
 
 load_dotenv(override=True)
+quiet_empty_websocket_probes()
 
 # The platform cuts a call after ~30-35s without audible agent audio (SC-silence-cut).
 # The idle re-prompt is counted from when the bot STOPS speaking.
@@ -98,6 +110,24 @@ def _is_twilio_session(runner_args: RunnerArguments) -> bool:
     )
 
 
+def _is_eval_session(runner_args: RunnerArguments) -> bool:
+    return isinstance(runner_args, EvalRunnerArguments)
+
+
+def _session_state(call_id: str, submission: CallSubmission) -> dict:
+    return {
+        "call_id": call_id,
+        "connected_at": _connected_at(),
+        "client": submission._client,
+        "submission": submission,
+        "patient": None,
+        "offers": {},
+        "identify_attempts": 0,
+        "language": None,
+        "final_intent": None,
+    }
+
+
 def _call_id(runner_args: RunnerArguments) -> str:
     call_data = getattr(runner_args, "call_data", None)
     if call_data and call_data.call_id:
@@ -110,6 +140,10 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
+def _drop_probe_logs(record) -> bool:
+    return "did not receive a valid HTTP request" not in record["message"]
+
+
 def _reprompt(context: LLMContext) -> str:
     """Repeat the bot's last message so silence never outlasts the platform's window.
 
@@ -117,9 +151,9 @@ def _reprompt(context: LLMContext) -> str:
     answer a bare "Does that work for you?".
     """
     spoken = [
-        m["content"]
+        text
         for m in context.get_messages()
-        if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()
+        if chat_role(m) == "assistant" and (text := chat_text(m))
     ]
     return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
 
@@ -151,7 +185,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
     # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
     logger.remove()
-    logger.add(sys.stderr, level=LOG_LEVEL)
+    logger.add(sys.stderr, level=LOG_LEVEL, filter=_drop_probe_logs)
 
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
@@ -220,12 +254,25 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         pipeline_params["audio_in_sample_rate"] = 8000
         pipeline_params["audio_out_sample_rate"] = 8000
 
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(**pipeline_params),
-        idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[],
-    )
+    worker_kwargs = {
+        "params": PipelineParams(**pipeline_params),
+        "idle_timeout_secs": runner_args.pipeline_idle_timeout_secs,
+        "observers": [],
+    }
+    if _is_eval_session(runner_args):
+        # Text eval uses skip_tts, so BotSpeakingFrame never arrives. Count LLM
+        # text as activity, and never cancel the eval server on idle.
+        worker_kwargs["cancel_runner_on_idle_timeout"] = False
+        worker_kwargs["idle_timeout_frames"] = (
+            BotSpeakingFrame,
+            InterimTranscriptionFrame,
+            TranscriptionFrame,
+            UserSpeakingFrame,
+            UserStartedSpeakingFrame,
+            LLMTextFrame,
+            LLMFullResponseEndFrame,
+        )
+    worker = PipelineWorker(pipeline, **worker_kwargs)
     # Do not install SIGINT per session: on Windows each call would overwrite the
     # process handler, and a burst of 20 would cancel the last runner on Ctrl+C.
     runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
@@ -239,19 +286,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         global_functions=RAILS,
     )
     submission = CallSubmission(call_id, ClinicClient())
-    flow_manager.state.update(
-        {
-            "call_id": call_id,
-            "connected_at": _connected_at(),
-            "client": submission._client,
-            "submission": submission,
-            "patient": None,
-            "offers": {},
-            "identify_attempts": 0,
-            "language": None,
-            "final_intent": None,
-        }
-    )
+    flow_manager.state.update(_session_state(call_id, submission))
 
     # Submit a real answer before the 180s cap. Do not POST the unused
     # patient_not_found default — that locks a mismatch and the call still
@@ -297,12 +332,24 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     flow_started = False
 
-    async def start_flow():
-        nonlocal flow_started
-        if flow_started:
+    async def start_flow(*, reset: bool = False):
+        nonlocal flow_started, call_id, submission, committed_answer
+        if flow_started and not reset:
+            return
+        if reset:
+            logger.info("Eval client reused the pipeline; resetting session")
+            call_id = _call_id(runner_args)
+            submission = CallSubmission(call_id, ClinicClient())
+            committed_answer = False
+            flow_manager.state.clear()
+            flow_manager.state.update(_session_state(call_id, submission))
+            context.set_messages([])
+            await flow_manager.set_node_from_config(create_identify_node())
+            await speak_as_llm(llm, GREETING, in_context=True)
             return
         flow_started = True
-        worker.create_task(_commit_before_wall_clock(), name="wall-clock-commit")
+        if _is_twilio_session(runner_args):
+            worker.create_task(_commit_before_wall_clock(), name="wall-clock-commit")
         await flow_manager.initialize(create_identify_node())
         # Text-mode eval asserts `response` → `llm_response`. TTSSpeakFrame only
         # emits TTS events, which skip_tts drops, so turn 0 would wait 60s.
@@ -312,7 +359,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     # interrupts and drops anything queued earlier; telephony has no RTVI client.
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
-        await start_flow()
+        await start_flow(reset=flow_started and _is_eval_session(runner_args))
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -324,7 +371,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
         await submission.flush()
-        await runner.cancel()
+        # Eval reuses this pipeline across scenarios; cancelling the runner
+        # kills the server (and idle then cannot recover).
+        if _is_twilio_session(runner_args):
+            await runner.cancel()
 
     try:
         await runner.run()

@@ -31,6 +31,7 @@ from clinic.speech import (
     wants_register,
     wants_soonest,
 )
+from flow.prompts import TRIAGE_EXAMPLES
 from flow.speak import speak_as_llm
 from national_id import is_valid_national_id, normalize_national_id
 
@@ -96,6 +97,14 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     from flow.nodes import create_act_node
 
     state = flow_manager.state
+    if state.get("hard_refuse"):
+        return {"status": "refused", "reason": state["hard_refuse"]}, None
+    if state.get("patient"):
+        result, nxt = await get_earliest_slot({}, flow_manager)
+        payload = {"status": "already_identified", "search": result}
+        if nxt is not None and nxt is not NO_RESPONSE:
+            return payload, nxt
+        return payload, None
     id_type, id_value, stated_name = args["id_type"], args["id_value"], args["stated_name"]
 
     def failed(status: str):
@@ -181,6 +190,8 @@ async def _commit_register(flow_manager: FlowManager, fields: dict):
 
 
 async def register_patient(args: FlowArgs, flow_manager: FlowManager):
+    if flow_manager.state.get("patient"):
+        return {"status": "already_on_file"}, None
     fields = parse_register(args, user_speech(flow_manager))
     nid = fields["national_id"]
     if not is_valid_national_id(nid):
@@ -307,7 +318,7 @@ async def revise_search(flow_manager: FlowManager):
 
 
 async def flag_emergency(flow_manager: FlowManager):
-    """Caller describes a published medical emergency. Do not book."""
+    """Escalate a published red-flag example (see role prompt). Do not book."""
     from flow.nodes import create_close_node
 
     sub = flow_manager.state["submission"]
@@ -318,7 +329,7 @@ async def flag_emergency(flow_manager: FlowManager):
 
 
 async def decline_out_of_scope(flow_manager: FlowManager):
-    """Caller asks for another patient's data, medical advice, injection, or a sales pitch."""
+    """Decline a published out-of-scope example (see role prompt). Do not book."""
     from flow.nodes import create_close_node
 
     sub = flow_manager.state["submission"]
@@ -396,9 +407,11 @@ def register_patient_schema() -> FlowsFunctionSchema:
 
 def get_earliest_slot_schema(flow_manager: FlowManager | None = None) -> FlowsFunctionSchema:
     policy_note = (
-        "Pass a specialty id only if the caller named that specialty; omit site, doctor, "
-        "weekday, and part of day unless they said them. Do not guess a site or doctor "
-        "from the enum. Do not substitute another specialty when the chart refuses this one."
+        "If they named a specialty or GP, pass that id. If they only described symptoms, "
+        "pass the specialty from the triage examples. Omit site, doctor, weekday, and "
+        "part of day unless they said them. Do not guess a site or doctor from the enum. "
+        "Do not substitute another specialty when the chart refuses this one. "
+        + TRIAGE_EXAMPLES
     )
     state = getattr(flow_manager, "state", None) or {}
     patient = state.get("patient")
@@ -418,7 +431,7 @@ def get_earliest_slot_schema(flow_manager: FlowManager | None = None) -> FlowsFu
             "specialty": {
                 "type": "string",
                 "enum": specialty_ids(),
-                "description": "Catalogue specialty id, only if they named it or a synonym like GP.",
+                "description": "Catalogue specialty id they named, or the triage example mapping.",
             },
             "site": {
                 "type": "string",
@@ -494,4 +507,11 @@ async def refresh_act_tools(flow_manager: FlowManager) -> None:
     await worker.queue_frames([LLMSetToolsFrame(tools=ToolsSchema(standard_tools=standard))])
 
 
-RAILS = [flag_emergency, decline_out_of_scope, pin_language, record_final_intent]
+RAILS = [
+    search_patient_schema(),
+    register_patient_schema(),
+    flag_emergency,
+    decline_out_of_scope,
+    pin_language,
+    record_final_intent,
+]
