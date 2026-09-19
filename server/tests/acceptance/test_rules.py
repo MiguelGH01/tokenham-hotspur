@@ -256,7 +256,7 @@ def test_nearest_site_only_considers_sites_that_can_serve(catalogue):
 
 
 def test_hardcoded_sites_match_the_catalogue(catalogue):
-    from service_locations import SERVICE_LOCATIONS
+    from rules import SERVICE_LOCATIONS
 
     published = {loc["id"]: loc for loc in catalogue["locations"]}
     assert {site["id"] for site in SERVICE_LOCATIONS} == set(published)

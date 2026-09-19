@@ -24,12 +24,12 @@ insurer says.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from clinic_catalog import load_catalog
-from service_locations import origin_from_spoken_place as _origin_from_sites
 
 #: Self-pay. A plan a patient holds or does not — never a plan we quote to
 #: unlock a booking their real plan refuses.
@@ -423,6 +423,66 @@ def nearest_location(
     return min(candidates, key=distance_sq)
 
 
+_POSTCODE = re.compile(r"\b(\d{5})\b")
+
+#: The three sites `/clinic` publishes. Each `pattern` is matched against
+#: accent-folded speech (neighbourhood, street, postcode, site name).
+SERVICE_LOCATIONS: tuple[dict, ...] = (
+    {
+        "id": "centro",
+        "name": "Arenal Centro",
+        "address": "Calle del Arenal 12, 28013 Madrid",
+        "latitude": 40.4178,
+        "longitude": -3.7075,
+        "postcode": "28013",
+        "pattern": r"\b(?:28013|preciados|arenal|opera|(?:puerta\s+del\s+)?sol|(?:el\s+)?(?:centro|centre|center))\b",
+    },
+    {
+        "id": "norte",
+        "name": "Arenal Norte",
+        "address": "Calle de Alberto Alcocer 24, 28036 Madrid",
+        "latitude": 40.4645,
+        "longitude": -3.6836,
+        "postcode": "28036",
+        "pattern": r"\b(?:28036|28046|alcocer|castellana|castilla|chamartin|(?:el\s+)?norte|north)\b",
+    },
+    {
+        "id": "sur",
+        "name": "Arenal Sur",
+        "address": "Avenida de las Ciudades 8, 28903 Getafe",
+        "latitude": 40.305,
+        "longitude": -3.7327,
+        "postcode": "28903",
+        "pattern": r"\b(?:2890[0-9]|getafe|ciudades|(?:el\s+)?sur|south)\b",
+    },
+)
+
+for _site in SERVICE_LOCATIONS:
+    _site["regex"] = re.compile(_site["pattern"])
+
+
+def match_service_location(spoken: str) -> dict | None:
+    """The hardcoded site whose neighbourhood regex matches the caller."""
+    if not spoken or not spoken.strip():
+        return None
+    text = fold(spoken)
+    codes = _POSTCODE.findall(text)
+    if codes:
+        wanted = int(codes[0])
+        return min(SERVICE_LOCATIONS, key=lambda site: abs(int(site["postcode"]) - wanted))
+    hits = []
+    for site in SERVICE_LOCATIONS:
+        match = site["regex"].search(text)
+        if match:
+            hits.append((len(match.group(0)), site))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: item[0], reverse=True)
+    if len(hits) == 1 or hits[0][0] > hits[1][0]:
+        return hits[0][1]
+    return None
+
+
 _LANGUAGE_ALIASES = {
     "ca": "ca",
     "catalan": "ca",
@@ -473,7 +533,10 @@ def provider_speaks(catalogue: dict, provider_id: str, language: str | None) -> 
 
 def origin_from_spoken_place(spoken: str) -> tuple[float, float] | None:
     """Latitude/longitude of the hardcoded site neighbourhood the caller named."""
-    return _origin_from_sites(spoken)
+    site = match_service_location(spoken)
+    if site is None:
+        return None
+    return site["latitude"], site["longitude"]
 
 
 def location_from_spoken_place(
