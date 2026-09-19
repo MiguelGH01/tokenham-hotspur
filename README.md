@@ -7,9 +7,9 @@ A Pipecat AI voice agent built with a cascade pipeline (STT → LLM → TTS).
 - **Bot Type**: Web
 - **Transport(s)**: SmallWebRTC, Daily (WebRTC)
 - **Pipeline**: Cascade
-  - **STT**: Deepgram
-  - **LLM**: OpenAI Responses
-  - **TTS**: Cartesia
+  - **STT**: Soniox (Deepgram via `STT_PROVIDER=deepgram`)
+  - **LLM**: Helmcode / Gemini / OpenAI (via `LLM_PROVIDER`)
+  - **TTS**: ElevenLabs (Deepgram via `TTS_PROVIDER=deepgram`)
 
 ## Setup
 

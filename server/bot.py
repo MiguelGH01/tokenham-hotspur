@@ -30,9 +30,12 @@ from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
+from pipecat.services.soniox.stt import SonioxSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
@@ -114,15 +117,45 @@ def build_llm():
     )
 
 
+def build_stt():
+    provider = os.getenv("STT_PROVIDER", "soniox")
+    if provider == "deepgram":
+        return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    return SonioxSTTService(
+        api_key=os.environ["SONIOX_API_KEY"],
+        settings=SonioxSTTService.Settings(
+            model=os.getenv("SONIOX_MODEL", "stt-rt-v5"),
+            language_hints=[Language.ES, Language.CA, Language.EN, Language.EU, Language.GL],
+            enable_language_identification=True,
+        ),
+    )
+
+
+def build_tts():
+    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
+    if provider == "deepgram":
+        return DeepgramTTSService(
+            api_key=os.getenv("DEEPGRAM_API_KEY"),
+            settings=DeepgramTTSService.Settings(
+                voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
+            ),
+        )
+    return ElevenLabsTTSService(
+        api_key=os.environ["ELEVENLABS_API_KEY"],
+        settings=ElevenLabsTTSService.Settings(
+            voice=os.environ["ELEVENLABS_VOICE_ID"],
+            model=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
+            language=os.getenv("ELEVENLABS_LANGUAGE", "es"),
+        ),
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
 
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-    tts = DeepgramTTSService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=DeepgramTTSService.Settings(voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")),
-    )
+    stt = build_stt()
+    tts = build_tts()
     llm = build_llm()
 
     context = LLMContext()
