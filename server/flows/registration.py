@@ -36,7 +36,7 @@ def validate_registration(values, now):
     patient["phone"] = re.sub(r"[\s()-]", "", patient["phone"])
     if not re.fullmatch(r"(?:\+34|0034)?[6789]\d{8}", patient["phone"]):
         errors.append("phone")
-    patient["email"] = patient["email"].lower()
+    patient["email"] = re.sub(r"\s+", "", patient["email"]).lower()
     if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", patient["email"]):
         errors.append("email")
     plan_aliases = {
