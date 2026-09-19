@@ -1,5 +1,11 @@
 """Parse server/run-logs/<mode>-<timestamp>/bot.log directories (real
-webrtc/twilio calls, as opposed to the eval harness) for the local dashboard."""
+webrtc/twilio calls, as opposed to the eval harness) for the local dashboard.
+
+A single `make run-webrtc`/`make run-twilio` process can serve many calls
+back to back without restarting, so one bot.log can contain several calls'
+worth of lines. Each "Starting bot for call <id>" line marks the start of a
+new call; everything up to the next such line (or EOF) belongs to it.
+"""
 import ast
 import re
 from datetime import datetime
@@ -14,32 +20,46 @@ SUBMIT_FAIL_RE = re.compile(r"^Submission failed for call (\S+) \((.*)\): (.*)$"
 REPROMPT_RE = re.compile(r"^Call (\S+): (\d+)s of silence, re-prompting: (.*)$")
 
 
-def _offsets(ts_strs):
-    parsed = []
-    for s in ts_strs:
-        s = s.strip()
-        try:
-            parsed.append(datetime.strptime(s[:23], "%Y-%m-%d %H:%M:%S.%f"))
-        except ValueError:
-            parsed.append(None)
-    base = next((p for p in parsed if p), None)
-    return [(p - base).total_seconds() if (p and base) else 0.0 for p in parsed]
+def _parse_ts(ts_str):
+    try:
+        return datetime.strptime(ts_str.strip()[:23], "%Y-%m-%d %H:%M:%S.%f")
+    except ValueError:
+        return None
 
 
-def parse_bot_log(path: Path):
-    lines = path.read_text(errors="replace").splitlines()
-    matched = [LINE_RE.match(l) for l in lines]
-    offsets = _offsets([m.group("ts") if m else "" for m in matched])
-
-    events, errors, warnings = [], [], []
-    call_id = None
-    last_ctx = None
-
+def _find_call_boundaries(lines, matched):
+    """Return [(line_index, call_id), ...] for each 'Starting bot for call' line."""
+    boundaries = []
     for i, (line, m) in enumerate(zip(lines, matched)):
         if not m:
             continue
+        cid_m = CALL_ID_RE.search(m.group("msg"))
+        if cid_m:
+            boundaries.append((i, cid_m.group(1)))
+    return boundaries
+
+
+def _parse_segment(lines, matched, start_i, end_i, call_id):
+    """Parse one call's slice of a bot.log ([start_i, end_i)) into events/transcript."""
+    seg_lines = lines[start_i:end_i]
+    seg_matched = matched[start_i:end_i]
+
+    base_ts = None
+    for m in seg_matched:
+        if m:
+            base_ts = _parse_ts(m.group("ts"))
+            break
+    call_started_at = base_ts.strftime("%Y%m%d-%H%M%S") if base_ts else None
+
+    events, errors, warnings = [], [], []
+    last_ctx = None
+
+    for line, m in zip(seg_lines, seg_matched):
+        if not m:
+            continue
         level, src, msg = m.group("level"), m.group("src").strip(), m.group("msg")
-        t = offsets[i]
+        ts = _parse_ts(m.group("ts"))
+        t = (ts - base_ts).total_seconds() if (ts and base_ts) else 0.0
 
         ctx_m = CTX_RE.search(line)
         if ctx_m:
@@ -48,9 +68,7 @@ def parse_bot_log(path: Path):
             except Exception:
                 pass
 
-        cid_m = CALL_ID_RE.search(msg)
-        if cid_m:
-            call_id = cid_m.group(1)
+        if CALL_ID_RE.search(msg):
             events.append({"t": t, "kind": "call_start", "detail": msg})
             continue
         if "Client connected" in msg:
@@ -103,7 +121,7 @@ def parse_bot_log(path: Path):
                 ]
             transcript.append(entry)
 
-    duration = offsets[-1] if offsets else 0.0
+    duration = events[-1]["t"] if events else 0.0
     outcome = "IN_PROGRESS"
     for e in events:
         if e["kind"] == "submitted":
@@ -112,9 +130,28 @@ def parse_bot_log(path: Path):
             outcome = "SUBMIT_FAILED"
 
     return {
-        "call_id": call_id, "duration": duration, "outcome": outcome,
-        "events": events, "transcript": transcript, "errors": errors, "warnings": warnings,
+        "call_id": call_id,
+        "call_started_at": call_started_at,
+        "duration": duration,
+        "outcome": outcome,
+        "events": events,
+        "transcript": transcript,
+        "errors": errors,
+        "warnings": warnings,
     }
+
+
+def parse_bot_log(path: Path):
+    """Split one bot.log into one dict per call it contains (possibly zero)."""
+    lines = path.read_text(errors="replace").splitlines()
+    matched = [LINE_RE.match(l) for l in lines]
+    boundaries = _find_call_boundaries(lines, matched)
+
+    calls = []
+    for idx, (start_i, call_id) in enumerate(boundaries):
+        end_i = boundaries[idx + 1][0] if idx + 1 < len(boundaries) else len(lines)
+        calls.append(_parse_segment(lines, matched, start_i, end_i, call_id))
+    return calls
 
 
 def parse_real_calls(run_logs_dir: Path):
@@ -128,18 +165,20 @@ def parse_real_calls(run_logs_dir: Path):
         if not bot_log.exists():
             continue
         m = re.match(r"(webrtc|twilio)-(\d{8}-\d{6})", d.name)
-        mode, ts = (m.group(1), m.group(2)) if m else ("unknown", d.name)
-        parsed = parse_bot_log(bot_log)
-        parsed["run_dir"] = d.name
-        parsed["mode"] = mode
-        parsed["started_at"] = ts
-        recording = None
+        mode, session_started_at = (m.group(1), m.group(2)) if m else ("unknown", d.name)
+
         rec_dir = run_logs_dir / "recordings"
-        if rec_dir.exists() and parsed["call_id"]:
-            hits = list(rec_dir.glob(f"*{parsed['call_id']}*"))
-            if hits:
-                recording = hits[0].name
-        parsed["recording"] = recording
-        calls.append(parsed)
+        for call in parse_bot_log(bot_log):
+            call["run_dir"] = d.name
+            call["mode"] = mode
+            call["started_at"] = call["call_started_at"] or session_started_at
+            recording = None
+            if rec_dir.exists() and call["call_id"]:
+                hits = list(rec_dir.glob(f"*{call['call_id']}*"))
+                if hits:
+                    recording = hits[0].name
+            call["recording"] = recording
+            calls.append(call)
+
     calls.sort(key=lambda c: c["started_at"], reverse=True)
     return {"calls": calls}
