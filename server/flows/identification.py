@@ -295,7 +295,13 @@ def create_identify_node(flow_manager=None) -> NodeConfig:
                     "misheard_id, ask them to repeat the identifier slowly, digit by digit. A "
                     "lookup_failed result is a fault in the clinic's records: apologise for the "
                     "delay and call search_patient again with the same details. When they repeat "
-                    "or correct the identifier, call search_patient again."
+                    "or correct the identifier, call search_patient again. "
+                    "Do not read a DNI/NIE back for confirmation before calling search_patient — "
+                    "call the tool with what you heard; its result tells you whether it was right. "
+                    "If you already read an identifier back once and the caller said it was wrong, "
+                    "do not read the same digits back again: ask them to say it one digit at a "
+                    "time instead, then call search_patient with that — do not ask for a third "
+                    "free-form dictation of the whole number."
                 ),
             }
         ],
