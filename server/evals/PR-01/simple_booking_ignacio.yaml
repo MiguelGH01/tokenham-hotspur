@@ -1,5 +1,5 @@
 # PR-01 case simple_booking-3371b9ac9462 — Ignacio Vázquez Moreno (phone, returning, orthopaedics)
-# Expected BOOK: P00005 / PR10 / sur / orthopaedic_review / 2026-09-21T09:30:00+02:00 / cigna
+# Expected BOOK: P00005 / PR10 / sur / orthopaedic_review / <earliest slot from the day after the call> / cigna
 judge:
   eval:
     factory: eval_judge.helmcode_judge
@@ -19,7 +19,7 @@ turns:
           - name: get_earliest_slot
             args: { specialty: orthopaedics }
       - event: response
-        text_contains: Peral
+        eval: "the response offers one specific orthopaedics appointment, naming the doctor, the site, the day and the time, and asks whether it works"
   - user: "Yes please."
     expect:
       - event: function_call

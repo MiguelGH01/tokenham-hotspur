@@ -1,4 +1,4 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from booking import pick_offer
 
@@ -60,7 +60,8 @@ def test_tie_prefers_less_loaded_provider():
     av = availability(slot("PR01", "centro", "review", "2026-09-19T11:00:00+02:00"),
                       slot("PR01", "centro", "review", "2026-09-19T11:15:00+02:00"),
                       slot("PR02", "centro", "review", "2026-09-19T11:00:00+02:00"))
-    assert pick_offer(av, patient("P00001", "mapfre", True), CONNECTED)["provider_id"] == "PR02"
+    # /availability lists only FREE slots, so more free slots = less loaded: PR01 (2) beats PR02 (1).
+    assert pick_offer(av, patient("P00001", "mapfre", True), CONNECTED)["provider_id"] == "PR01"
 
 
 def test_no_slots_returns_none():

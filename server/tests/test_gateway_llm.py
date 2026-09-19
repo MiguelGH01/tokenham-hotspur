@@ -91,3 +91,41 @@ def test_client_read_timeout_is_bounded():
     llm = StallGuardedLLMService(api_key="test")
 
     assert llm._client.timeout.read == STALL_TIMEOUT_SECS
+
+
+def _warnings(monkeypatch, streams, consume=None):
+    from loguru import logger
+
+    seen = []
+    sink = logger.add(lambda m: seen.append(m.record["message"]), level="WARNING")
+    try:
+        (consume or _collect)(monkeypatch, streams)
+    finally:
+        logger.remove(sink)
+    return seen
+
+
+def test_a_response_with_no_speech_and_no_tool_call_is_flagged(monkeypatch):
+    assert any("text_chars=0 tools=[]" in w for w in _warnings(monkeypatch, [FakeStream([REASONING])]))
+    assert _warnings(monkeypatch, [FakeStream([_chunk(content="Hello.")])]) == []
+
+
+def test_a_completion_abandoned_mid_stream_is_flagged(monkeypatch):
+    # Pipecat cancels the completion on an interruption and then drops its tool call silently.
+    def abandon(monkeypatch, streams):
+        monkeypatch.setattr(OpenAILLMService, "get_chat_completions", lambda self, context: _ready(streams[0]))
+
+        async def run():
+            chunks = await StallGuardedLLMService(api_key="test").get_chat_completions(context=None)
+            await anext(chunks)
+            await chunks.aclose()
+
+        asyncio.run(run())
+
+    async def _ready(stream):
+        return stream
+
+    tool_call = SimpleNamespace(function=SimpleNamespace(name="search_patient", arguments="{}"))
+    warnings = _warnings(monkeypatch, [FakeStream([_chunk(tool_calls=[tool_call]), REASONING])], abandon)
+
+    assert any("cancelled mid-stream" in w and "search_patient" in w for w in warnings)

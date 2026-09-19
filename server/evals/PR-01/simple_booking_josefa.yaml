@@ -1,5 +1,5 @@
 # PR-01 case simple_booking-14a8720daa02 — Josefa Domínguez Navarro (DNI, returning, GP, earliest)
-# Expected BOOK: P00001 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / mapfre
+# Expected BOOK: P00001 / <least-loaded provider at that time> / <its site> / review / <earliest slot from the day after the call> / mapfre
 # The exact offer is logged by the bot as "Offer offer-1: {...}" — grep the bot log after the run.
 judge:
   eval:
@@ -20,7 +20,7 @@ turns:
           - name: get_earliest_slot
             args: { specialty: general_practice }
       - event: response
-        text_contains: Ortiz
+        eval: "the response offers one specific general practice appointment, naming the doctor, the site, the day and the time, and asks whether it works"
   - user: "Yes, that works for me."
     expect:
       - event: function_call

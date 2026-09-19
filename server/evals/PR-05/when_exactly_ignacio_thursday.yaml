@@ -1,5 +1,6 @@
 # PR-05 case when_exactly-72cdb35b9682 — Ignacio Vázquez Moreno (orthopaedics "this coming Thursday")
-# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00 (Friday) -> "this coming Thursday" = 24 Sep.
+# clock: 2026-09-18T10:00:00+02:00
+# Pinned to Friday 18 Sep (Friday) -> "this coming Thursday" = 24 Sep.
 # weekday=thursday is already a supported get_earliest_slot argument.
 # Expected BOOK: P00005 / PR06 / centro / orthopaedic_review / 2026-09-24T09:15:00+02:00 / cigna
 judge:

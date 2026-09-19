@@ -1,6 +1,7 @@
 """Static clinic catalogue, loaded once from clinic.json (identical for the whole event)."""
 
 import json
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -23,6 +24,16 @@ def location_ids() -> list[str]:
 
 def closure_days() -> frozenset[str]:
     return frozenset(load_catalog()["calendar"]["closure_days"])
+
+
+def providers() -> list[dict]:
+    return load_catalog()["providers"]
+
+
+def provider_on_leave(provider_id: str, day: date) -> bool:
+    """The API does not flag leave: `blocked` stays empty and post-leave slots are listed."""
+    leave = next(p["leave"] for p in providers() if p["id"] == provider_id)
+    return bool(leave) and leave["start"] <= day.isoformat() <= leave["end"]
 
 
 def location_name(location_id: str) -> str:

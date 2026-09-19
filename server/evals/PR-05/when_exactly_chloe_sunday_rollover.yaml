@@ -1,5 +1,6 @@
 # PR-05 case when_exactly-b1f6c257c34c — Chloe Roberts Smith (GP at Centro "this coming Sunday")
-# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00 -> "this coming Sunday" = 20 Sep.
+# clock: 2026-09-18T10:00:00+02:00
+# Pinned to Friday 18 Sep -> "this coming Sunday" = 20 Sep.
 # GAP: booking.pick_offer (server/booking.py) filters strictly on the requested weekday and has
 # no closed-day rollover (FR-closed-day-roll). Since nothing opens Sunday, the current
 # get_earliest_slot returns no_slots instead of rolling to the next open day. This scenario is

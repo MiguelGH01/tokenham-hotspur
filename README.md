@@ -50,7 +50,8 @@ stall guard. They should all pass on a fresh clone.
 The quickest way to hear the bot, with no tunnel or dashboard involved.
 
 ```bash
-make run-webrtc         # from the repo root
+cd server
+uv run bot.py -t webrtc
 ```
 
 Open <http://localhost:7860>, allow the microphone, and connect.
@@ -68,11 +69,25 @@ Run all of them, with a fresh bot before each one so no conversation state leaks
 scenarios:
 
 ```bash
-make evals              # from the repo root; logs in server/eval-runs/
+cd server
+evals/run_all.sh              # every scenario; logs in server/eval-runs/
+evals/run_all.sh evals/PR-01  # or one folder, or individual .yaml files
 ```
 
-`make evals` starts its own bot on port 7860, so stop `make run-twilio` / `make run-webrtc`
-first — otherwise the scenarios are played against whatever is already listening there.
+Scenarios run on the real clock, so none of them asserts a date or the doctor who happens to be
+earliest today. A scenario whose premise *is* a date ("tomorrow", a doctor's leave) pins it with
+a `# clock: <ISO datetime>` header, which the bot honours on the eval transport only.
+
+The evals check that the right tools get called, not which slot is offered. For that, run the
+four published PR-01 callers against the live clinic API (no LLM, never submits):
+
+```bash
+cd server
+PYTHONPATH=. uv run python evals/check_pr01_live.py
+```
+
+`evals/run_all.sh` starts its own bot on port 7861 (`PORT=...` to change it), so a bot already
+serving calls on 7860 is left alone.
 
 Run a single scenario by hand:
 
@@ -87,7 +102,6 @@ PYTHONPATH=. uv run pipecat eval run evals/PR-01/simple_booking_chloe.yaml -v
 ```
 
 Restart terminal 1 before the next scenario: the bot keeps its conversation between runs.
-(`make run-eval` is listed in `make help` but has no recipe yet — use the command above.)
 
 ## 5. Real calls from the dashboard
 
@@ -97,13 +111,14 @@ laptop has to be reachable from the internet for the whole run.
 ### 5.1 Start the bot
 
 ```bash
-make run-twilio         # from the repo root; keep this terminal open
+cd server
+uv run bot.py -t twilio      # keep this terminal open
 ```
 
 Wait for `Uvicorn running on http://localhost:7860`. If you want a log file to search later:
 
 ```bash
-make run-twilio 2>&1 | tee /tmp/bot.log
+uv run bot.py -t twilio 2>&1 | tee /tmp/bot.log
 ```
 
 ### 5.2 Open the tunnel
@@ -113,7 +128,7 @@ static domain at dashboard.ngrok.com → Domains, so your endpoint survives rest
 the URL changes every time and you have to update the dashboard again.
 
 ```bash
-make tunnel NGROK_DOMAIN=your-reserved-domain.ngrok-free.dev    # second terminal, keep it open
+NGROK_DOMAIN=your-reserved-domain.ngrok-free.dev scripts/tunnel.sh    # from the repo root; second terminal, keep it open
 ```
 
 It prints the endpoint ready to paste:
@@ -172,19 +187,18 @@ grep -E "Submitted|forcing submission|ERROR" /tmp/bot.log       # outcome of eve
 
 | Symptom | Cause and fix |
 |---|---|
-| `make: *** No rule to make target 'run-twilio'` | You are in `server/`. The Makefile is in the repo root. |
 | Your code change has no effect | The bot does not hot-reload. Stop it with Ctrl+C and start it again. |
 | Dashboard shows "Connection lost" within seconds | The tunnel is down, or the endpoint is missing `wss://` or `/ws`. Check <http://127.0.0.1:4040> for a `GET /ws → 101`. |
 | Bot greets, then never reacts; no `User started speaking` in the log | Audio input died. This happened with `RNNoiseFilter` (pyrnnoise 0.4.3 crashes against av 17 on the first frame), which is why noise suppression is off in `bot()`. Test any audio filter on a real call before relying on it. |
 | Bot goes silent mid-call | The LLM gateway opened a response stream and then stopped sending. `server/gateway_llm.py` cuts a stream that is silent for 4 seconds and retries once; look for `LLM stream stalled` in the log. |
 | `Submitted NO_ACTION … patient_not_found` | The caller was never identified: either the call ended first (see the two rows above), or three lookups failed. |
+| `Submitted NO_ACTION … no_availability` | Either no slot matched, or the patient was found but the call ended with nothing settled: hung up, cut off, or an offer was never answered. An offer is only ever booked on the caller's explicit yes (`NO_OUTCOME_REASON` in `server/submission.py`). |
 | `forcing submission` in the log | The call hit 150 seconds. Usually slow turn-taking rather than a crash. |
 | Several calls fail only during Run All | Suspect LLM concurrency: the `helmcode` gateway allows 5 concurrent requests per key and Run All holds 10 calls open. Not yet confirmed as a cause; switching `LLM_PROVIDER` to `gemini` or `openai` rules it out. |
 
 ## Project structure
 
 ```
-├── Makefile                 # run-webrtc, run-twilio, tunnel
 ├── scripts/tunnel.sh        # starts ngrok and prints the wss:// endpoint
 ├── docs/                    # requirements, platform API, agent process map
 └── server/

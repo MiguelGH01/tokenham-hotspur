@@ -1,7 +1,6 @@
 import os
 
 from dotenv import load_dotenv
-
 from pipecat.services.openai.llm import OpenAILLMService
 
 # The eval CLI runs as its own process (not bot.py), so it never loads .env on its own.

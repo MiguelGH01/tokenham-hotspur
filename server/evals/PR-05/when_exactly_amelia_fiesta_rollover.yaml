@@ -1,6 +1,7 @@
 # PR-05 case when_exactly-34e8e0acadb6 — Amelia Hughes White (GP at Centro, "first thing
 # Monday the twelfth of October")
-# Requires CALL_CLOCK_OVERRIDE set close to end of September (e.g. 2026-09-29T10:00:00+02:00)
+# clock: 2026-09-29T10:00:00+02:00
+# Pinned near the end of September
 # so the 14-day /availability window reaches 12-13 Oct — the default 18 Sep override does not.
 # GAP x2: (1) get_earliest_slot has no way to pin an exact calendar date, only a cyclic
 # weekday — "Monday 12 Oct" cannot be expressed with the current schema. (2) even with a date

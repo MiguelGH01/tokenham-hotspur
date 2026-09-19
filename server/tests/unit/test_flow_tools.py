@@ -5,8 +5,8 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from booking import MADRID
-from flow.tools import get_earliest_slot, search_patient
-from submission import CallSubmission
+from flow.tools import confirm_offer, get_earliest_slot, search_patient
+from submission import NO_OUTCOME_REASON, CallSubmission
 
 VALID_DNI = "12345678Z"
 PATIENT = {"patient_id": "P00001", "given_name": "Josefa", "first_surname": "Domínguez",
@@ -114,3 +114,26 @@ def test_offer_is_never_on_a_closure_day():
 
     assert result["status"] == "offer" and node["name"] == "confirm"
     assert flow.state["offers"]["offer-1"]["slot"] == "2026-10-13T09:45:00+02:00"
+
+
+def test_found_patient_who_then_vanishes_is_not_reported_as_not_found():
+    clinic = FakeClinic(matches=[PATIENT])
+    flow = _flow(clinic)
+
+    _identify(flow, VALID_DNI)
+    asyncio.run(flow.state["submission"].flush())
+
+    assert clinic.posted[0]["action"] == "NO_ACTION" and clinic.posted[0]["reason"] == NO_OUTCOME_REASON
+
+
+def test_only_the_latest_offer_can_be_confirmed():
+    clinic = FakeClinic(slots=[_slot("2026-09-21T09:00:00+02:00")])
+    flow = _flow(clinic, patient=PATIENT)
+    asyncio.run(get_earliest_slot({"specialty": "general_practice"}, flow))
+    asyncio.run(get_earliest_slot({"specialty": "general_practice"}, flow))  # caller revised: offer-2
+
+    stale, node = asyncio.run(confirm_offer({"offer_id": "offer-1"}, flow))
+    assert stale == {"status": "expired"} and node is None
+
+    fresh, node = asyncio.run(confirm_offer({"offer_id": "offer-2"}, flow))
+    assert fresh == {"status": "confirmed"} and node["name"] == "goodbye"

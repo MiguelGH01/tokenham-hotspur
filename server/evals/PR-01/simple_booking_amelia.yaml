@@ -1,5 +1,5 @@
 # PR-01 case simple_booking-12dc84a98cb2 — Amelia Hughes White (DNI, never seen, GP at Arenal Centro)
-# Expected BOOK: P00012 / PR07 / centro / first_visit / 2026-09-21T11:45:00+02:00 / sanitas
+# Expected BOOK: P00012 / PR07 / centro / first_visit / <earliest slot from the day after the call> / sanitas
 judge:
   eval:
     factory: eval_judge.helmcode_judge

@@ -1,0 +1,24 @@
+# Josefa dictates her DNI in chunks, as the real callers do (bot-0842.log: "Five zero seven five" /
+# "one five four four" / "c."). The turn analyzer closes each chunk as its own turn, so the bot must
+# hold on with a short back-channel instead of answering — or searching — on a partial identifier.
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: simple_booking_josefa_chunked_id
+turns:
+  - user: "Josefa Dominguez Navarro. My DNI is four eight zero six"
+    expect:
+      - event: response
+        eval: "the reply is only a very brief prompt to keep going (a few words, e.g. 'Yes?' or 'Go on'); it does NOT say the patient could not be found, does NOT ask the caller to repeat or start over, and does NOT ask a new question"
+  - user: "four seven one six"
+    expect:
+      - event: response
+        eval: "the reply is only a very brief prompt to keep going (a few words, e.g. 'Yes?' or 'Go on'); it does NOT say the patient could not be found, does NOT ask the caller to repeat or start over, and does NOT ask a new question"
+  - user: "Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the reply indicates the patient was found (or moves on to ask what appointment they need); it does NOT say the patient could not be found"

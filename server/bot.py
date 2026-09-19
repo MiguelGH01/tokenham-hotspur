@@ -102,6 +102,25 @@ def _reprompt(context: LLMContext) -> str:
     return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
 
 
+def build_stt():
+    if os.getenv("STT_PROVIDER", "deepgram") == "soniox":
+        return SonioxSTTService(api_key=os.environ["SONIOX_API_KEY"])
+    return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+
+
+def build_tts():
+    if os.getenv("TTS_PROVIDER", "deepgram") == "elevenlabs":
+        return ElevenLabsTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            # No default voice: an id is tied to the account, so a wrong one must fail at boot.
+            settings=ElevenLabsTTSService.Settings(voice=os.environ["ELEVENLABS_VOICE_ID"]),
+        )
+    return DeepgramTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        settings=DeepgramTTSService.Settings(voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")),
+    )
+
+
 def build_llm():
     provider = os.getenv("LLM_PROVIDER", "helmcode")
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)

@@ -1,5 +1,5 @@
 # PR-01 case simple_booking-b33e7e633856 — Chloe Roberts Smith (NIE, returning, GP at Arenal Sur, Monday morning)
-# Expected BOOK: P00011 / PR03 / sur / review / 2026-09-21T09:00:00+02:00 / mapfre
+# Expected BOOK: P00011 / PR03 / sur / review / <earliest slot from the day after the call> / mapfre
 judge:
   eval:
     factory: eval_judge.helmcode_judge
