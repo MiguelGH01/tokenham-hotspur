@@ -27,9 +27,6 @@ USD_PER_EUR = 1.1460
 
 _M = 1_000_000
 
-#: Helmcode Starter: 399 EUR / 5,000 M tokens, in USD per 1M tokens like the rest.
-_HELMCODE_USD_PER_M = 399 / 5_000 * USD_PER_EUR
-
 #: LLM prices in USD per 1M tokens. ``prompt_includes_cache`` records how pipecat's
 #: service reports ``prompt_tokens``: Google and OpenAI-compatible services report
 #: it gross (cached tokens inside it), Anthropic reports it net. Pricing both the
@@ -46,22 +43,18 @@ LLM_PRICES = {
         "input": 3.0, "cache_read": 0.30, "cache_write": 3.75, "output": 15.0,
         "prompt_includes_cache": False,
     },
-    # https://helmcode.com/pricing — Helmcode bills a flat fee per key, not per token:
-    # Starter is 399 EUR/month for 5B tokens, input and output alike. Every plan lists the
-    # same models, so Starter is the cheapest one that carries this model. The team itself
-    # runs on free hackathon tokens: this is what a clinic would pay, not our bill. It is that fee
-    # spread over the full quota, so it is a FLOOR: a key that uses 1% of its quota pays
-    # 100x this per token. Reported as amortized, never as a list price (see AMORTIZED).
+    # https://api-docs.deepseek.com/quick_start/pricing — DeepSeek's own API, not the
+    # gateway we reach it through (Helmcode bills a flat monthly fee, and the team runs on
+    # free hackathon tokens): this is what the model costs bought directly. The page says
+    # the legacy name deepseek-v4-flash is "served by the DeepSeek-V4.1-Flash model and
+    # billed at the Flash price". PEAK rate: peak is 01-04 and 06-10 UTC on weekdays, which
+    # covers a Madrid clinic's morning. Off-peak is half (0.003 / 0.15 / 0.6).
     "deepseek-v4-flash": {
-        "input": _HELMCODE_USD_PER_M, "cache_read": _HELMCODE_USD_PER_M,
-        "output": _HELMCODE_USD_PER_M, "prompt_includes_cache": True,
+        "input": 0.30, "cache_read": 0.006, "output": 1.20, "prompt_includes_cache": True,
     },
     # Deliberately absent: gpt-4.1 (bot.py runs it on the priority tier, whose price two
     # readings of the page disagreed on).
 }
-
-#: Models priced by spreading a flat fee over its quota rather than from a per-unit price.
-AMORTIZED = {"deepseek-v4-flash"}
 
 #: USD per second of audio submitted. https://soniox.com/pricing — $0.12/hour, real-time.
 #: Deliberately absent: Deepgram nova-3-general (its streaming rate is a promotion with
@@ -83,7 +76,6 @@ class CallCost:
     eur: float | None  # None when any usage could not be priced
     llm_ttfat_p50_s: float | None
     unpriced: tuple[str, ...]
-    amortized: bool = False  # some of the cost is a flat fee spread over its quota: a floor
 
 
 def llm_usd(usage: dict, price: dict) -> float:
@@ -140,9 +132,6 @@ def summarize(call_id: str, events: list[dict]) -> CallCost:
         eur=None if unpriced else usd / USD_PER_EUR,
         llm_ttfat_p50_s=percentile(ttfat, 50) if ttfat else None,
         unpriced=tuple(sorted(set(unpriced))),
-        amortized=any(
-            e.get("model") in AMORTIZED for e in events if e.get("event") == "service_usage"
-        ),
     )
 
 
@@ -177,7 +166,7 @@ def report(directory) -> str:
     lines = [f"{len(calls)} calls in {directory}", ""]
     lines.append(f"{'call_id':<38} {'seconds':>8} {'eur':>9} {'llm ttfat med':>14}")
     for c in calls:
-        eur = "UNPRICED" if c.eur is None else f"{c.eur:.4f}" + ("*" if c.amortized else "")
+        eur = "UNPRICED" if c.eur is None else f"{c.eur:.4f}"
         lines.append(
             f"{c.call_id:<38} {_fmt(c.duration_s, '.1f'):>8} {eur:>9} {_fmt(c.llm_ttfat_p50_s, '.3f'):>14}"
         )
@@ -195,11 +184,6 @@ def report(directory) -> str:
     missing = sorted({m for c in calls for m in c.unpriced})
     if missing:
         lines.append(f"UNPRICED, left out of the aggregates — no list price for: {', '.join(missing)}")
-    if any(c.amortized for c in calls):
-        lines.append(
-            "* LLM priced as Helmcode's flat fee spread over its full token quota: a floor, "
-            "real cost per call is higher the less of the quota is used."
-        )
     lines.append(
         f"Public list prices as of {PRICES_AS_OF}, not an invoice. 1 EUR = {USD_PER_EUR} USD (ECB, 2026-09-18)."
     )

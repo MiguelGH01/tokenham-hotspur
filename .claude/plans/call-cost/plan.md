@@ -167,6 +167,18 @@ Append-only. Tomadas por Adolfo el 19-sep-2026.
   lo incluye: Starter. **Lo que enseña el informe es lo que pagaría una clínica, no la
   factura del equipo, que es 0 €.** Decirlo así en el vídeo.
 
+- **D10 — `deepseek-v4-flash` al precio de la API oficial de DeepSeek; sustituye a D9**
+  (Adolfo, 19-sep: "calcúlalo con la api oficial de ellos, sin complicarse con helmcode").
+  Fuente: https://api-docs.deepseek.com/quick_start/pricing, leída dos veces con el mismo
+  resultado. La página dice que el nombre heredado `deepseek-v4-flash` "is served by the
+  DeepSeek-V4.1-Flash model and billed at the Flash price". Precio Flash, USD por 1M:
+  punta 0,006 (cache hit) / 0,30 (cache miss) / 1,20 (salida); valle, la mitad. Punta =
+  01–04 y 06–10 UTC, lunes a viernes. **Se usa la punta** (Claude): cubre la mañana de una
+  clínica en Madrid (08–12 h) y es la cifra conservadora; alternativa descartada: elegir
+  tarifa según la hora de cada llamada — exacto, pero lógica de calendario (festivos chinos
+  incluidos) para una diferencia de céntimos. Se borra el mecanismo "amortizado" de D9
+  (asterisco y nota al pie), que ya no usa nadie. La página no lleva fecha.
+
 ## Context
 
 **Leer antes de implementar**

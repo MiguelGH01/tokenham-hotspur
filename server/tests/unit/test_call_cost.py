@@ -73,22 +73,15 @@ def test_a_model_without_a_price_is_named_not_counted_as_free(tmp_path):
     assert f"{calls['call-a'].eur:.4f}" in report.split("p50")[1]
 
 
-def test_helmcode_is_priced_as_its_flat_fee_over_the_quota_and_says_so(tmp_path):
+def test_deepseek_is_priced_at_its_own_api_peak_rate(tmp_path):
     usage = {"ts": START, "event": "service_usage", "kind": "llm", "model": "deepseek-v4-flash",
              "prompt_tokens": 900_000, "cache_read_input_tokens": 300_000, "completion_tokens": 100_000}
     _write(tmp_path, "call-a", [{"ts": START, "event": "call_started"}, usage])
     (call,) = call_cost.load(tmp_path)
-    # 1M tokens in all, cached or not, in or out: 399 EUR buys 5,000M of them.
-    assert call.eur == pytest.approx(399 / 5_000)
-    assert call.amortized
-
-    report = call_cost.report(tmp_path)
-    assert f"{call.eur:.4f}*" in report and "a floor" in report
-
-
-def test_list_priced_calls_carry_no_amortized_mark(tmp_path):
-    _write(tmp_path, "call-a", _call())
-    assert "*" not in call_cost.report(tmp_path)
+    # OpenAI-compatible, so prompt tokens are gross: 600k cache miss + 300k cache hit + 100k out.
+    usd = 0.6 * 0.30 + 0.3 * 0.006 + 0.1 * 1.20
+    assert call.eur == pytest.approx(usd / call_cost.USD_PER_EUR)
+    assert call.unpriced == ()
 
 
 def test_a_call_that_never_ended_has_a_cost_but_no_duration(tmp_path):
