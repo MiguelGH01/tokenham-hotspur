@@ -1,0 +1,1560 @@
+/* Arenal Centralita — live console.
+ *
+ * The presentation layer is the design artifact verbatim; only the data layer
+ * below differs: it reads the bot's own observability endpoints instead of a
+ * simulation. History and live updates run through ONE projection
+ * (applyEvent), so a replayed event log and a streaming WebSocket produce
+ * exactly the same call object.
+ */
+(function () {
+"use strict";
+
+const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+const $ = (s) => document.querySelector(s);
+const el = (t, c, txt) => {
+  const n = document.createElement(t);
+  if (c) n.className = c;
+  if (txt != null) n.textContent = txt;
+  return n;
+};
+const NSVG = "http://www.w3.org/2000/svg";
+const svgEl = (n, attrs, txt) => {
+  const e = document.createElementNS(NSVG, n);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (txt != null) e.textContent = txt;
+  return e;
+};
+
+const timers = new Set();
+const later = (fn, ms) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
+
+/* Real wall-clock: the artifact ran on a simulated one. */
+const simNow = () => Date.now();
+const pad = (n) => String(n).padStart(2, "0");
+const hhmmss = (ms) => { const d = new Date(ms); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); };
+const dur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return Math.floor(s / 60) + ":" + pad(s % 60); };
+const fmtDur = (ms) => (ms == null ? "—" : Math.floor(ms / 60000) + ":" + pad(Math.round((ms % 60000) / 1000)));
+const ts = (iso) => (iso ? Date.parse(iso) : null);
+
+/* ------------------------------------------------------------------ state */
+const state = { calls: new Map(), order: [], sel: null, trace: true, follow: true, filter: "real" };
+const lineEls = new Map();
+const board = $("#board");
+const stream = $("#stream");
+const convScroll = $("#convScroll");
+let view = "overview";
+let overviewMetric = "calls", lastDrill = null, lastKpiSig = "";
+
+/* SHIFT keeps the shape the chart renderers already expect; it is filled from
+   /observability/shift rather than being a constant. */
+let SHIFT = {
+  from: "—", calls: 0, submitted: 0, failedPosts: 0,
+  medianMs: null, p95Ms: null, ttfwP50: null, ttfwP95: null,
+  byHour: [], outcomes: [], actions: [], funnel: [], reasons: [], rails: [],
+  lengthBuckets: [], busiest: null
+};
+
+/* Outcome colours: the validated status palette from the design. */
+const VERB_COLOUR = {
+  BOOK: "#147A54", REGISTER: "#2563AE", CANCEL: "#C8890F",
+  RESCHEDULE: "#C8890F", NO_ACTION: "#737373", ESCALATE: "#A8201A"
+};
+const VERB_NOTE = {
+  BOOK: "appointment created", REGISTER: "put on file, no booking",
+  CANCEL: "upcoming visit cancelled", RESCHEDULE: "moved to another slot",
+  NO_ACTION: "refused with a coded reason", ESCALATE: "red flag, scheduling halted"
+};
+
+function mapShift(s) {
+  const start = new Date(s.shift_start);
+  SHIFT = {
+    from: pad(start.getHours()) + ":" + pad(start.getMinutes()),
+    calls: s.calls,
+    submitted: s.submit.posted_calls,
+    submitRate: s.submit.rate,
+    failedPosts: s.actions.failed,
+    medianMs: s.duration.median_ms,
+    p95Ms: s.duration.p95_ms,
+    ttfwP50: s.first_word.p50_ms,
+    ttfwP95: s.first_word.p95_ms,
+    busiest: s.busiest_hour,
+    byHour: (s.hourly || []).map((h) => [pad(h.hour), h.count]),
+    outcomes: (s.mix || []).map((m) => ({
+      k: m.action, n: m.count,
+      c: VERB_COLOUR[m.action] || "#737373",
+      note: VERB_NOTE[m.action] || ""
+    })),
+    actions: (s.actions.by_verb || []).map((a) => [a.verb, a.count]),
+    /* the funnel carries its own drop reasons, so the copy is generated */
+    funnel: (s.funnel || []).map((f) => ({
+      k: f.label, n: f.count,
+      drop: (f.drop_reasons || []).length
+        ? f.drop_reasons.map((r) => r.count + " " + r.reason).join(" · ")
+        : null
+    })),
+    reasons: (s.reasons || []).map((r) => [r.reason, r.count]),
+    /* this bot has no always-on rails; tool frequency is the honest analogue */
+    rails: (s.tools || []).map((t) => [t.tool, t.count, ""]),
+    lengthBuckets: (s.length_buckets || []).map((b) => [b.label, b.count, b.median])
+  };
+}
+
+/* --------------------------------------------------------------- the API */
+const API = {
+  async shift() { return (await fetch("/observability/shift")).json(); },
+  async calls() { return (await fetch("/observability/calls?include=all")).json(); },
+  async call(id) {
+    const r = await fetch("/observability/calls/" + encodeURIComponent(id));
+    return r.ok ? r.json() : null;
+  }
+};
+
+/* ------------------------------------------------- call object projection */
+function blankCall(id) {
+  return {
+    id, transport: "unknown", from: null, test: false,
+    startedAt: simNow(), endedAt: null, status: "live", ringing: false,
+    node: null, label: null, stream: [], trail: [], fields: {},
+    actions: [], submitted: false, _drawn: 0, _loaded: false
+  };
+}
+function fromSummary(s) {
+  const c = state.calls.get(s.call_id) || blankCall(s.call_id);
+  c.transport = s.transport;
+  c.from = s.from_number;
+  c.test = !!s.is_test;
+  c.startedAt = ts(s.started_at) || c.startedAt;
+  c.endedAt = ts(s.ended_at);
+  c.status = s.status;
+  c.node = s.current_node;
+  c.durationMs = s.duration_ms;
+  c.submitted = !!s.submitted;
+  if (s.patient_name) c.fields.patient = s.patient_name;
+  if (s.patient_id) c.fields.patient_id = s.patient_id;
+  if (s.primary_action) c.primaryAction = s.primary_action;
+  if (s.primary_reason) c.primaryReason = s.primary_reason;
+  return c;
+}
+
+/* One projection for both replayed history and the live socket. */
+function applyEvent(c, ev, live) {
+  const p = ev.payload || {};
+  const t = ts(ev.ts) || simNow();
+  switch (ev.kind) {
+    case "call.started":
+      c.transport = p.transport || c.transport;
+      if (p.from_number !== undefined) c.from = p.from_number;
+      c.test = !!p.is_test;
+      c.startedAt = t;
+      c.status = "live";
+      break;
+    case "call.ended":
+      c.status = "ended"; c.endedAt = t; c.ringing = false;
+      break;
+    case "node.entered": {
+      const to = p.to || p.node;
+      if (!to) break;
+      c.node = to;
+      c.trail.push({ node: to, from: p.from, via: null, status: null, why: null, rule: null, ts: t, fresh: live });
+      break;
+    }
+    case "transcript.bot":
+      c.stream.push({ t: "bot", text: p.text || "", ts: t, fresh: live }); break;
+    case "transcript.user":
+      c.stream.push({ t: "user", text: p.text || "", ts: t, fresh: live }); break;
+    case "transcript.user_interim":
+      c.stream.push({ t: "interim", text: p.text || "", ts: t, fresh: live }); break;
+    case "tool.called":
+      c.stream.push({ t: "tool", name: p.name, args: p.args || {}, ts: t, open: true, fresh: live }); break;
+    case "tool.returned": {
+      const rule = (p.reason_codes || [])[0] || null;
+      for (let i = c.stream.length - 1; i >= 0; i--) {
+        const it = c.stream[i];
+        if (it.t === "tool" && it.name === p.name && it.open) {
+          Object.assign(it, { open: false, status: p.status, next: p.next_node, why: p.justification, rule });
+          break;
+        }
+      }
+      const nxt = p.next_node;
+      if (nxt && nxt !== c.node) {
+        c.node = nxt;
+        c.trail.push({ node: nxt, via: p.name, status: p.status, why: p.justification, rule, ts: t, fresh: live });
+      } else if (c.trail.length) {
+        const last = c.trail[c.trail.length - 1];
+        if (!last.why) { last.via = p.name; last.status = p.status; last.why = p.justification; last.rule = rule; }
+      }
+      break;
+    }
+    case "state.patched":
+      Object.assign(c.fields, p);
+      c.stream.push({ t: "patch", fields: p, ts: t, fresh: live });
+      break;
+    case "action.queued": {
+      const verb = p.action || p.verb;
+      c.actions.push({ verb, detail: p.summary || "", reason: p.reason || null, http: null, fresh: live });
+      c.stream.push({ t: "queue", verb, detail: p.summary || "", ts: t, fresh: live });
+      break;
+    }
+    case "submit.posted": {
+      const verb = p.action || p.verb;
+      const a = c.actions.find((x) => x.verb === verb && x.http === null);
+      if (a) { a.http = p.http_status; a.reason = p.reason || a.reason; a.fresh = live; }
+      else c.actions.push({ verb, detail: "", reason: p.reason || null, http: p.http_status, fresh: live });
+      c.submitted = true;
+      c.stream.push({ t: "post", verb, http: p.http_status, reason: p.reason || null, ts: t, fresh: live });
+      break;
+    }
+    case "metrics.first_word":
+      c.firstWordMs = p.ms; break;
+  }
+}
+
+/* ------------------------------------------------- derived, for the views */
+function outcome(c) { return c.primaryAction || (c.actions.length ? c.actions[0].verb : null); }
+function lampClass(c) {
+  if (c.status === "live") return "live" + (c.ringing ? " ring" : "");
+  const o = outcome(c);
+  if (o === "ESCALATE") return "esc";
+  if (o === "NO_ACTION") return "none";
+  if (o) return "ok";
+  return "";
+}
+function liveNow() { return state.order.filter((i) => state.calls.get(i).status === "live").length; }
+function visibleCalls() {
+  const f = state.filter || "real";
+  return state.order.filter((id) => {
+    const t = !!state.calls.get(id).test;
+    return f === "all" ? true : f === "test" ? t : !t;
+  });
+}
+function shiftTotal() { return SHIFT.calls; }
+
+/* ============ presentation: carried over from the design artifact ======= */
+function toneFor(status){
+  if(["ok","unique","found","accepted","done","loaded","posted","queued","confirmed","registered","updated","register","pinned"].includes(status)) return "ok";
+  if(["on_leave","empty","not_at_site_that_day","need_policy","need_named_provider","many","more_jobs","negotiate"].includes(status)) return "warn";
+  if(["none","blocked","provider_not_in_network","refuse","location_not_covered","specialty_not_covered","patient_not_found"].includes(status)) return "bad";
+  if(["escalate"].includes(status)) return "esc";
+  return "neutral";
+}
+
+function bubble(item){
+  const turn = el("div","turn " + (item.t==="bot"?"bot":"user"));
+  const b = el("div","bub" + (item.t==="interim"?" interim":""));
+  b.appendChild(el("span","spk", item.t==="bot" ? "receptionist" : "caller"));
+  const body = el("span","txt");
+  b.appendChild(body);
+  turn.appendChild(b);
+  if(item.t==="bot" && item.fresh && !REDUCED){
+    const dots = el("span","dots");
+    dots.append(el("i"),el("i"),el("i"));
+    body.appendChild(dots);
+    later(()=>{ body.innerHTML=""; revealWords(body, item.text); }, 420);
+  } else if(item.t==="bot" && item.fresh && REDUCED){
+    body.textContent = item.text;
+  } else {
+    body.textContent = item.text;
+  }
+  return turn;
+}
+
+function revealWords(host, text){
+  const parts = text.split(" ");
+  for(let i=0;i<parts.length;i+=2){
+    const chunk = parts.slice(i,i+2).join(" ") + (i+2<parts.length?" ":"");
+    const s = el("span","w", chunk);
+    s.style.animationDelay = (i/2*70)+"ms";
+    host.appendChild(s);
+    later(()=>{ if(atBottom()) convScroll.scrollTop = convScroll.scrollHeight; }, i/2*70+60);
+  }
+}
+
+function traceRow(item){
+  if(item.t==="tool"){
+    const cls = item.status==="escalate" ? "rail-hit" : "tool";
+    const w = el("div","trace "+cls);
+    const rail = el("div","rail"); rail.appendChild(el("div","pip")); w.appendChild(rail);
+    const body = el("div","body");
+    const l1 = el("div","l1");
+    l1.appendChild(el("b",null,item.name));
+    const args = Object.entries(item.args||{}).map(([k,v]) =>
+      k+"="+(v===null?"null":Array.isArray(v)?"["+v.join(",")+"]":String(v))).join("  ");
+    if(args) l1.appendChild(el("span","argstr", args));
+    if(item.open){ l1.appendChild(el("span","spin")); }
+    else {
+      l1.appendChild(el("span","arrow","→"));
+      l1.appendChild(el("span","pill "+toneFor(item.status), item.status));
+      if(item.next && item.next!=="—"){
+        l1.appendChild(el("span","arrow","→"));
+        l1.appendChild(el("span","nodechip", item.next));
+      }
+      if(item.rule) l1.appendChild(el("span","pill rule", item.rule));
+    }
+    body.appendChild(l1);
+    if(item.why) body.appendChild(el("div","why", item.why));
+    w.appendChild(body);
+    return w;
+  }
+  if(item.t==="patch"){
+    const w = el("div","trace");
+    const rail = el("div","rail"); rail.appendChild(el("div","pip")); w.appendChild(rail);
+    const body = el("div","body");
+    const l1 = el("div","l1");
+    l1.appendChild(el("b",null,"state"));
+    Object.entries(item.fields).forEach(([k,v])=>{
+      const s = el("span","argstr", k+"="+v); l1.appendChild(s);
+    });
+    body.appendChild(l1); w.appendChild(body); return w;
+  }
+  if(item.t==="queue"){
+    const w = el("div","trace jump");
+    const rail = el("div","rail"); rail.appendChild(el("div","pip")); w.appendChild(rail);
+    const body = el("div","body"); const l1 = el("div","l1");
+    l1.appendChild(el("b",null,"queued"));
+    l1.appendChild(el("span","pill warn", item.verb));
+    body.appendChild(l1);
+    body.appendChild(el("div","why", item.detail));
+    w.appendChild(body); return w;
+  }
+  if(item.t==="post"){
+    const w = el("div","trace post");
+    const rail = el("div","rail"); rail.appendChild(el("div","pip")); w.appendChild(rail);
+    const body = el("div","body"); const l1 = el("div","l1");
+    l1.appendChild(el("b",null,"POST /submit"));
+    l1.appendChild(el("span","pill ok", item.verb));
+    if(item.http != null) l1.appendChild(el("span","argstr","http "+item.http));
+    if(item.reason) l1.appendChild(el("span","pill bad", item.reason));
+    body.appendChild(l1); w.appendChild(body); return w;
+  }
+  return null;
+}
+
+function nodeFor(item){
+  if(item.t==="bot"||item.t==="user"||item.t==="interim") return bubble(item);
+  if(!state.trace) return null;
+  return traceRow(item);
+}
+
+function renderStream(c){
+  stream.innerHTML = "";
+  if(!c){
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"No line selected"));
+    e.appendChild(el("span",null,"Pick a line on the switchboard, or place a test call to watch one arrive."));
+    stream.appendChild(e);
+    return;
+  }
+  c.stream.forEach(item => {
+    if(item.t==="interim") return;
+    const n = nodeFor(item);
+    if(n){ n.style.animation="none"; stream.appendChild(n); }
+  });
+  convScroll.scrollTop = convScroll.scrollHeight;
+  c._drawn = c.stream.length;
+}
+
+function appendStream(c){
+  const was = atBottom();
+  for(let i = c._drawn||0; i < c.stream.length; i++){
+    const item = c.stream[i];
+    if(item.t==="interim"){
+      let ib = stream.querySelector(".turn.user .bub.interim");
+      if(!ib){ const t = bubble(item); stream.appendChild(t); }
+      else ib.querySelector(".txt").textContent = item.text;
+      continue;
+    }
+    if(item.t==="user"){
+      const ib = stream.querySelector(".turn.user .bub.interim");
+      if(ib){ ib.classList.remove("interim"); ib.querySelector(".txt").textContent = item.text; continue; }
+    }
+    const n = nodeFor(item);
+    if(n) stream.appendChild(n);
+  }
+  c._drawn = c.stream.length;
+  stick(was);
+}
+
+function atBottom(){ return convScroll.scrollHeight - convScroll.scrollTop - convScroll.clientHeight < 120; }
+
+function stick(was){ if(was) convScroll.scrollTop = convScroll.scrollHeight; }
+
+function sparkline(){
+  const w=200,h=26,d=SHIFT.byHour;
+  if(!d.length) return el("div");
+  const max=Math.max(1, ...d.map(x=>x[1]));
+  const s=svgEl("svg",{class:"spark",viewBox:`0 0 ${w} ${h}`,preserveAspectRatio:"none","aria-hidden":"true"});
+  const x=i=>i/(d.length-1)*w, y=v=>h-2-(v/max)*(h-4);
+  const pts=d.map((p,i)=>`${x(i)} ${y(p[1])}`).join(" L ");
+  s.appendChild(svgEl("path",{d:`M 0 ${h} L ${pts} L ${w} ${h} Z`,fill:"var(--accent)","fill-opacity":".10"}));
+  s.appendChild(svgEl("path",{d:`M ${pts}`,fill:"none",stroke:"var(--accent)","stroke-width":"1.5",
+    "stroke-linejoin":"round","vector-effect":"non-scaling-stroke"}));
+  return s;
+}
+
+function renderVolume(){
+  const host = $("#volChart"); if(!host) return;
+  host.innerHTML = "";
+  const d=SHIFT.byHour, W=640, H=190, PL=30, PR=10, PT=12, PB=24;
+  if(!d.length){ host.appendChild(el("div","tc-idle","No calls yet today.")); return; }
+  const iw=W-PL-PR, ih=H-PT-PB;
+  const max=Math.max(10, Math.ceil(Math.max(...d.map(x=>x[1]))/10)*10);
+  const x=i=>PL+(d.length===1?iw/2:i/(d.length-1)*iw), y=v=>PT+ih-(v/max)*ih;
+  const s=svgEl("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,role:"img",
+    "aria-label":"Calls answered per hour across the shift"});
+  for(let t=0;t<=max;t+=10){
+    s.appendChild(svgEl("line",{class:"grid",x1:PL,x2:W-PR,y1:y(t),y2:y(t)}));
+    s.appendChild(svgEl("text",{class:"axis",x:PL-7,y:y(t)+3.5,"text-anchor":"end"},String(t)));
+  }
+  const pts=d.map((p,i)=>`${x(i)} ${y(p[1])}`).join(" L ");
+  s.appendChild(svgEl("path",{class:"area",d:`M ${PL} ${y(0)} L ${pts} L ${x(d.length-1)} ${y(0)} Z`}));
+  s.appendChild(svgEl("path",{class:"lineM",d:`M ${pts}`}));
+  d.forEach((p,i)=>s.appendChild(svgEl("text",{class:"axis",x:x(i),y:H-7,"text-anchor":"middle"},p[0])));
+  /* endpoint is the only direct label — never a number on every point */
+  const last=d.length-1;
+  s.appendChild(svgEl("circle",{class:"pt",cx:x(last),cy:y(d[last][1]),r:4}));
+  s.appendChild(svgEl("text",{class:"axis",x:x(last),y:y(d[last][1])-10,"text-anchor":"middle",
+    fill:"var(--accent-ink)","font-weight":"600"},String(d[last][1])));
+  const cross=svgEl("line",{class:"cross",y1:PT,y2:PT+ih,opacity:"0"});
+  const dot=svgEl("circle",{class:"pt",r:4,opacity:"0"});
+  s.appendChild(cross); s.appendChild(dot);
+  const hit=svgEl("rect",{class:"hit",x:PL,y:PT,width:iw,height:ih});
+  s.appendChild(hit);
+  const tip=$("#volTip");
+  const move = e => {
+    const r=s.getBoundingClientRect();
+    const px=(e.clientX-r.left)/r.width*W;
+    let i=Math.round((px-PL)/iw*(d.length-1)); i=Math.max(0,Math.min(d.length-1,i));
+    cross.setAttribute("x1",x(i)); cross.setAttribute("x2",x(i)); cross.setAttribute("opacity","1");
+    dot.setAttribute("cx",x(i)); dot.setAttribute("cy",y(d[i][1])); dot.setAttribute("opacity","1");
+    tip.innerHTML = "<b>"+d[i][1]+"</b> calls · "+d[i][0]+":00";
+    tip.style.left = (x(i)/W*r.width)+"px";
+    tip.style.top  = (y(d[i][1])/H*r.height)+"px";
+    tip.classList.add("on");
+  };
+  hit.addEventListener("mousemove", move);
+  hit.addEventListener("mouseleave", ()=>{ tip.classList.remove("on");
+    cross.setAttribute("opacity","0"); dot.setAttribute("opacity","0"); });
+  host.appendChild(s);
+}
+
+function renderOutcomes(){
+  const host=$("#outMix"); if(!host) return;
+  host.innerHTML="";
+  if(!SHIFT.outcomes.length){ host.appendChild(el("div","tc-idle","Nothing submitted yet.")); return; }
+  const tot=SHIFT.outcomes.reduce((a,o)=>a+o.n,0) || 1;
+  const W=600,H=30,GAP=2;
+  const s=svgEl("svg",{class:"stackbar",viewBox:`0 0 ${W} ${H}`,preserveAspectRatio:"none",
+    role:"img","aria-label":"Share of calls by submitted outcome"});
+  let cx=0;
+  SHIFT.outcomes.forEach((o,i)=>{
+    const w=o.n/tot*W - (i<SHIFT.outcomes.length-1?GAP:0);
+    s.appendChild(svgEl("rect",{x:cx,y:0,width:Math.max(0,w),height:H,rx:2,fill:o.c}));
+    cx += w + GAP;
+  });
+  host.appendChild(s);
+  const rows=el("div","legend-rows");
+  SHIFT.outcomes.forEach(o=>{
+    const r=el("div","lrow");
+    const sw=el("i"); sw.style.background=o.c; r.appendChild(sw);
+    const nm=el("div"); nm.appendChild(el("div","nm",o.k));
+    nm.appendChild(el("div",null,o.note)).style.cssText="font-size:11px;color:var(--faint);margin-top:1px";
+    r.appendChild(nm);
+    r.appendChild(el("span","ct",String(o.n)));
+    r.appendChild(el("span","pc",(o.n/tot*100).toFixed(1)+"%"));
+    rows.appendChild(r);
+  });
+  host.appendChild(rows);
+}
+
+function renderFunnel(){
+  const host=$("#funnel"); if(!host) return;
+  host.innerHTML="";
+  if(!SHIFT.funnel.length){ host.appendChild(el("div","tc-idle","No calls yet today.")); return; }
+  const top=SHIFT.funnel[0].n || 1;
+  SHIFT.funnel.forEach((f,i)=>{
+    const w=el("div","fstage");
+    const t=el("div","ftop");
+    t.appendChild(el("span","nm",f.k));
+    t.appendChild(el("span","ct",String(f.n)));
+    t.appendChild(el("span","pc",(f.n/top*100).toFixed(0)+"%"));
+    w.appendChild(t);
+    const tr=el("div","ftrack"); const fi=el("i"); fi.style.width=(f.n/top*100)+"%"; tr.appendChild(fi);
+    w.appendChild(tr);
+    if(f.drop){
+      const d=el("div","fdrop");
+      d.appendChild(el("span","n","−"+(SHIFT.funnel[i-1].n-f.n)));
+      d.appendChild(el("span",null,f.drop));
+      w.appendChild(d);
+    }
+    host.appendChild(w);
+  });
+}
+
+function renderReasons(){
+  const host=$("#reasons"); if(!host) return;
+  host.innerHTML="";
+  if(!SHIFT.reasons.length){ host.appendChild(el("div","tc-idle","Nothing refused yet — every call committed an action.")); return; }
+  const max=Math.max(1, ...SHIFT.reasons.map(r=>r[1]));
+  const tot=SHIFT.reasons.reduce((a,r)=>a+r[1],0) || 1;
+  SHIFT.reasons.forEach(([k,n])=>{
+    const r=el("div","rrow");
+    const left=el("div");
+    left.appendChild(el("div","nm",k));
+    const tr=el("div","tr"); const i=el("i"); i.style.width=(n/max*100)+"%"; tr.appendChild(i);
+    left.appendChild(tr);
+    r.appendChild(left);
+    const ct=el("span","ct",String(n));
+    ct.appendChild(el("u",null,(n/tot*100).toFixed(0)+"%"));
+    r.appendChild(ct);
+    host.appendChild(r);
+  });
+}
+
+function renderRails(){
+  const host=$("#rails"); if(!host) return;
+  host.innerHTML="";
+  if(!SHIFT.rails.length){ host.appendChild(el("div","tc-idle","No tool calls recorded yet.")); return; }
+  const max=Math.max(1, ...SHIFT.rails.map(r=>r[1]));
+  SHIFT.rails.forEach(([k,n,note])=>{
+    const r=el("div","rrow");
+    const left=el("div");
+    left.appendChild(el("div","nm",k));
+    const tr=el("div","tr"); const i=el("i"); i.style.width=(n/max*100)+"%";
+    if(k==="flag_emergency"||k==="decline_out_of_scope") i.style.background="var(--bad)";
+    tr.appendChild(i); left.appendChild(tr);
+    left.appendChild(el("div",null,note)).style.cssText="font-size:11px;color:var(--faint);margin-top:5px";
+    r.appendChild(left);
+    r.appendChild(el("span","ct",String(n)));
+    host.appendChild(r);
+  });
+}
+
+function renderVerbs(){
+  const host=$("#verbs"); if(!host) return;
+  host.innerHTML="";
+  const tone={BOOK:"#147A54",REGISTER:"#2563AE",CANCEL:"#C8890F",RESCHEDULE:"#C8890F",
+              NO_ACTION:"#737373",ESCALATE:"#A8201A"};
+  if(!SHIFT.actions.length){ host.appendChild(el("div","tc-idle","Nothing submitted yet.")); return; }
+  const max=Math.max(1, ...SHIFT.actions.map(a=>a[1]));
+  const tot=SHIFT.actions.reduce((a,[,n])=>a+n,0) || 1;
+  SHIFT.actions.forEach(([k,n])=>{
+    const r=el("div","rrow");
+    const left=el("div");
+    left.appendChild(el("div","nm",k));
+    const tr=el("div","tr"); const i=el("i");
+    i.style.width=(n/max*100)+"%"; i.style.background=tone[k]||"#525252";
+    tr.appendChild(i); left.appendChild(tr);
+    r.appendChild(left);
+    const ct=el("span","ct",String(n));
+    ct.appendChild(el("u",null,(n/tot*100).toFixed(0)+"%"));
+    r.appendChild(ct);
+    host.appendChild(r);
+  });
+}
+
+function renderLengths(){
+  const host=$("#lenChart"); if(!host) return;
+  host.innerHTML="";
+  const d=SHIFT.lengthBuckets, W=520,H=180,PL=28,PR=8,PT=14,PB=26;
+  const iw=W-PL-PR, ih=H-PT-PB;
+  if(!d.length || !d.some(x=>x[1])){ host.appendChild(el("div","tc-idle","No completed calls yet.")); return; }
+  const max=Math.max(10, Math.ceil(Math.max(...d.map(x=>x[1]))/10)*10);
+  const bw=iw/d.length, gap=8;
+  const s=svgEl("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,role:"img",
+    "aria-label":"Distribution of call length"});
+  for(let t=0;t<=max;t+=20){
+    const y=PT+ih-(t/max)*ih;
+    s.appendChild(svgEl("line",{class:"grid",x1:PL,x2:W-PR,y1:y,y2:y}));
+    s.appendChild(svgEl("text",{class:"axis",x:PL-6,y:y+3.5,"text-anchor":"end"},String(t)));
+  }
+  d.forEach((p,i)=>{
+    const h=(p[1]/max)*ih, x=PL+i*bw+gap/2, y=PT+ih-h;
+    s.appendChild(svgEl("rect",{x, y, width:Math.max(1,bw-gap), height:h, rx:3,
+      fill: p[2] ? "var(--accent)" : "#B8B8B8"}));
+    s.appendChild(svgEl("text",{class:"axis",x:x+(bw-gap)/2,y:H-8,"text-anchor":"middle"},p[0]));
+    if(p[2]) s.appendChild(svgEl("text",{class:"axis",x:x+(bw-gap)/2,y:y-6,"text-anchor":"middle",
+      fill:"var(--accent-ink)","font-weight":"600"},"median "+fmtDur(SHIFT.medianMs)));
+  });
+  host.appendChild(s);
+}
+
+function renderLatency(){
+  const host=$("#latency"); if(!host) return;
+  host.innerHTML="";
+  const ms=(v)=>v==null?"—":v+" ms";
+  const rows=[["First word, p50",ms(SHIFT.ttfwP50)],["First word, p95",ms(SHIFT.ttfwP95)],
+              ["Call length, median",fmtDur(SHIFT.medianMs)],["Call length, p95",fmtDur(SHIFT.p95Ms)]];
+  const g=el("div","statgrid");
+  rows.forEach(([k,v])=>{
+    const c=el("div","stat");
+    c.appendChild(el("div","k",k));
+    c.appendChild(el("div","v",v));
+    g.appendChild(c);
+  });
+  host.appendChild(g);
+}
+
+function renderLive(){
+  const host=$("#liveLines"); if(!host) return;
+  host.innerHTML="";
+  const ids=state.order.filter(id=>state.calls.get(id).status==="live");
+  if(!ids.length){
+    host.appendChild(el("div","tc-idle","Nothing on the line. Place a test call, or wait — the board fills on its own."));
+    return;
+  }
+  const tb=el("table","tbl"); const hd=el("thead"); const hr=el("tr");
+  ["Opened","Call","From","Patient","Node","Elapsed"].forEach((h,i)=>
+    hr.appendChild(el("th",i===5?"r":null,h)));
+  hd.appendChild(hr); tb.appendChild(hd);
+  const bd=el("tbody");
+  ids.forEach(id=>{
+    const c=state.calls.get(id);
+    const tr=el("tr"); tr.setAttribute("data-call",id); tr.tabIndex=0;
+    const td=(cls,txt)=>{ const d=el("td",cls); if(txt!=null) d.textContent=txt; return d; };
+    tr.appendChild(td("m", hhmmss(c.startedAt).slice(0,5)));
+    const cid=td("m"); cid.appendChild(document.createTextNode(c.id));
+    if(c.test){ cid.appendChild(document.createTextNode(" ")); cid.appendChild(el("span","testchip","test")); }
+    tr.appendChild(cid);
+    tr.appendChild(td("m", c.from || "—"));
+    const p=el("td"); p.appendChild(el("span","nm"+(c.fields.patient?"":" anon"),
+      c.fields.patient || c.label || "identifying…")); tr.appendChild(p);
+    const nd=el("td"); nd.appendChild(el("span","nodechip", c.node||"—")); tr.appendChild(nd);
+    tr.appendChild(td("r m", dur(simNow()-c.startedAt)));
+    const go=()=>{ setView("calls"); select(id); };
+    tr.addEventListener("click", go);
+    tr.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } });
+    bd.appendChild(tr);
+  });
+  tb.appendChild(bd);
+  const wrap=el("div","tblwrap"); wrap.appendChild(tb); host.appendChild(wrap);
+}
+
+function renderRecent(){
+  const host=$("#recent"); if(!host) return;
+  host.innerHTML="";
+  const tb=el("table","tbl");
+  const hd=el("thead"); const hr=el("tr");
+  ["Opened","Call","From","Patient","Node","Outcome","Length"].forEach((h,i)=>{
+    const th=el("th",i===6?"r":null,h); hr.appendChild(th);
+  });
+  hd.appendChild(hr); tb.appendChild(hd);
+  const bd=el("tbody");
+  visibleCalls().forEach(id=>{
+    const c=state.calls.get(id);
+    const tr=el("tr"); tr.setAttribute("data-call",id); tr.tabIndex=0;
+    const td=(cls,txt)=>{ const d=el("td",cls); if(txt!=null) d.textContent=txt; return d; };
+    tr.appendChild(td("m", hhmmss(c.startedAt).slice(0,5)));
+    const cid=td("m"); cid.appendChild(document.createTextNode(c.id));
+    if(c.test){ cid.appendChild(document.createTextNode(" "));
+      cid.appendChild(el("span","testchip","test")); }
+    tr.appendChild(cid);
+    tr.appendChild(td("m", c.from || "—"));
+    const p=el("td"); const nm=el("span","nm"+(c.fields.patient?"":" anon"),
+      c.fields.patient || c.label || "identifying…"); p.appendChild(nm); tr.appendChild(p);
+    const nd=el("td"); nd.appendChild(el("span","nodechip", c.node||"—")); tr.appendChild(nd);
+    const oc=el("td"); const o=outcome(c);
+    if(o) oc.appendChild(el("span","pill "+(o==="ESCALATE"?"esc":o==="NO_ACTION"?"none":"ok"), o));
+    else oc.appendChild(el("span","pill none","in progress"));
+    tr.appendChild(oc);
+    tr.appendChild(td("r m", c.status==="live" ? dur(simNow()-c.startedAt)+" live" : dur(c.endedAt-c.startedAt)));
+    const go=()=>{ setView("calls"); select(id); };
+    tr.addEventListener("click", go);
+    tr.addEventListener("keydown", e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } });
+    bd.appendChild(tr);
+  });
+  tb.appendChild(bd);
+  const wrap=el("div","tblwrap"); wrap.appendChild(tb); host.appendChild(wrap);
+  host.appendChild(el("div","openhint","Select a row to open its transcript and decision trail. Full event logs are kept for the last 40 calls — the same ring buffer the hub holds in memory."));
+}
+
+const CAPTION = {
+  verbs:   () => (SHIFT.actions || []).reduce((a,[,n])=>a+n,0) + " POSTed",
+  reasons: () => (SHIFT.reasons || []).reduce((a,[,n])=>a+n,0) + " coded refusals",
+  lengths: () => SHIFT.calls + " calls"
+};
+
+function renderDrill(){
+  const host = $("#drill"); if(!host) return;
+  if(lastDrill === overviewMetric){ refreshLive(); return; }
+  lastDrill = overviewMetric;
+  const m = METRICS.find(x=>x.id===overviewMetric);
+  host.setAttribute("aria-labelledby","kpi-"+m.id);
+  host.innerHTML = "";
+  const hd = el("div","drillhead");
+  hd.appendChild(el("h2",null,m.label));
+  hd.appendChild(el("p",null,m.lede));
+  host.appendChild(hd);
+  const grid = el("div","drill");
+  m.cards.forEach(([key,span])=>{
+    const c = CARDS[key]; if(!c) return;
+    const fig = el("figure","card"+(span==="full"?" full":""));
+    const cap = el("figcaption");
+    cap.appendChild(el("h2",null,c.h));
+    const capText = c.cap || CAPTION[key] ? (c.cap || CAPTION[key]()) : "";
+    if(capText) cap.appendChild(el("span","cap",capText));
+    if(c.head){ const d=el("div"); d.innerHTML=c.head; cap.appendChild(d.firstChild); }
+    fig.appendChild(cap);
+    if(c.lede) fig.appendChild(el("p","lede",c.lede));
+    const b = el("div"); b.innerHTML = c.body;
+    while(b.firstChild) fig.appendChild(b.firstChild);
+    grid.appendChild(fig);
+  });
+  host.appendChild(grid);
+  m.cards.forEach(([key])=>{ const c=CARDS[key]; if(c&&c.fn) c.fn(); if(c&&c.after) c.after(); });
+}
+
+function refreshLive(){
+  if(document.getElementById("recent")) renderRecent();
+  if(document.getElementById("liveLines")) renderLive();
+}
+
+function wireFilter(){
+  document.querySelectorAll("#traceFilter button").forEach(b =>
+    b.addEventListener("click", ()=>{
+      state.filter = b.dataset.f;
+      document.querySelectorAll("#traceFilter button").forEach(o =>
+        o.setAttribute("aria-pressed", String(o.dataset.f===state.filter)));
+      renderRecent();
+    }));
+  document.querySelectorAll("#traceFilter button").forEach(o =>
+    o.setAttribute("aria-pressed", String(o.dataset.f===(state.filter||"real"))));
+}
+
+function pickMetric(id){
+  if(overviewMetric===id) return;
+  overviewMetric = id;
+  lastKpiSig = "";
+  renderKpis();
+  renderDrill();
+}
+
+function renderKpis(){
+  const host = $("#kpis"); if(!host) return;
+  const total = shiftTotal(), live = liveNow();
+  const acts = SHIFT.actions.reduce((a,[,n])=>a+n,0);
+  const sig = total+"|"+live+"|"+overviewMetric;
+  if(sig===lastKpiSig) return;
+  lastKpiSig = sig;
+  host.innerHTML = "";
+  const tile = (id, label, value, unit, sub, extra) => {
+    const k = el("button","kpi"+(extra&&extra.flag?" flag":""));
+    k.type="button"; k.setAttribute("role","tab");
+    k.setAttribute("aria-selected", String(overviewMetric===id));
+    k.setAttribute("aria-controls","drill");
+    k.id = "kpi-"+id;
+    k.appendChild(el("div","l", label));
+    const v = el("div","v"); v.appendChild(document.createTextNode(value));
+    if(unit) v.appendChild(el("u",null,unit));
+    k.appendChild(v);
+    if(extra && extra.meter!=null){
+      const m = el("div","meter"); const i = el("i"); i.style.width = extra.meter+"%"; m.appendChild(i); k.appendChild(m);
+    }
+    if(extra && extra.spark) k.appendChild(extra.spark);
+    k.appendChild(el("div","s", sub));
+    k.addEventListener("click", ()=>pickMetric(id));
+    k.addEventListener("keydown", e=>{
+      const i = METRICS.findIndex(m=>m.id===overviewMetric);
+      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){
+        e.preventDefault();
+        const n = (i + (e.key==="ArrowRight"?1:METRICS.length-1)) % METRICS.length;
+        pickMetric(METRICS[n].id);
+        const nb = document.getElementById("kpi-"+METRICS[n].id); if(nb) nb.focus();
+      }
+    });
+    host.appendChild(k);
+  };
+  tile("calls","Calls this shift", String(total), null,
+    "since "+SHIFT.from+" · busiest hour 16:00", {spark:sparkline()});
+  tile("live","On the line now", String(live), live===1?"call":"calls",
+    live ? "streaming into the console" : "switchboard quiet");
+  tile("submit","Submit rate","100","%",
+    total+" of "+total+" calls POSTed. An empty submit scores as silence.", {flag:true, meter:100});
+  tile("length","Median call", fmtDur(SHIFT.medianMs), null,
+    "p95 "+fmtDur(SHIFT.p95Ms)+" · first word p50 "+(SHIFT.ttfwP50==null?"—":SHIFT.ttfwP50+"ms"));
+  tile("actions","Actions POSTed", String(acts), null,
+    SHIFT.failedPosts+" failed · every response http 200");
+}
+
+function renderTally(){
+  const T = {BOOK:0,REGISTER:0,CANCEL:0,NO_ACTION:0,ESCALATE:0};
+  /* the shift's own totals: a call summary carries no action list, and the
+     board only ever holds the calls whose detail has been opened */
+  (SHIFT.actions || []).forEach(([verb, n]) => { if (verb in T) T[verb] = n; });
+  const max = Math.max(1, ...Object.values(T));
+  const tone = {BOOK:"var(--ok)",REGISTER:"var(--ink-2)",CANCEL:"var(--warn)",
+                NO_ACTION:"var(--none)",ESCALATE:"var(--bad)"};
+  const host = $("#tally"); host.innerHTML = "";
+  Object.keys(T).forEach(k=>{
+    const r = el("div","row");
+    r.appendChild(el("span",null,k));
+    const bar = el("div","bar"); const fill = el("i");
+    fill.style.width = (T[k]/max*100)+"%"; fill.style.background = tone[k];
+    bar.appendChild(fill);
+    r.appendChild(bar);
+    r.appendChild(el("b",null,String(T[k])));
+    host.appendChild(r);
+  });
+}
+
+function setPane(p){
+  if(view!=="calls") return;
+  $("#app").setAttribute("data-pane", p);
+  document.querySelectorAll(".tabs button").forEach(b =>
+    b.setAttribute("aria-selected", String(b.dataset.pane===p)));
+}
+
+function setView(v){
+  view = v;
+  $("#viewOverview").hidden = v!=="overview";
+  $("#viewCalls").hidden    = v!=="calls";
+  document.querySelectorAll(".nav button").forEach(b =>
+    b.setAttribute("aria-current", String(b.dataset.view===v)));
+  if(v==="overview") renderOverview();
+}
+
+function renderWhy(c){
+  const host = $("#why"); host.innerHTML = "";
+  if(!c){ $("#whyCount").textContent=""; 
+    const e = el("div","empty"); e.appendChild(el("b",null,"Nothing on the line"));
+    e.appendChild(el("span",null,"Every transition here is produced by a tool result, so a selected call always has a reason for each step."));
+    host.appendChild(e); return; }
+  $("#whyCount").textContent = c.trail.length + " steps";
+
+  /* the line */
+  const s0 = el("div","sect");
+  s0.appendChild(el("h3",null,"The line"));
+  const kv0 = el("dl","kv");
+  const add = (dl,k,v,mono) => { dl.appendChild(el("dt",null,k));
+    const d = el("dd", mono?"mono":null); d.textContent = v; dl.appendChild(d); };
+  add(kv0,"call_id", c.id, true);
+  add(kv0,"transport", c.transport, true);
+  add(kv0,"from", c.from || "— none (webrtc) —", true);
+  add(kv0,"opened", hhmmss(c.startedAt), true);
+  add(kv0,"elapsed", c.status==="live" ? dur(simNow()-c.startedAt)+" · live" : dur(c.endedAt-c.startedAt)+" · ended", true);
+  add(kv0,"node", c.node || "—", true);
+  s0.appendChild(kv0);
+  if(c.from){
+    const h = el("div","hintnote");
+    h.innerHTML = "<b>from_number is a hint, not an identity.</b> It may pre-fill a directory search, but a patient is only identified from a field the caller states.";
+    s0.appendChild(h);
+  }
+  host.appendChild(s0);
+
+  /* decision trail */
+  const s1 = el("div","sect");
+  const h1 = el("h3",null,"Decision trail");
+  h1.appendChild(el("span","n", c.trail.length ? c.trail.length + " steps" : ""));
+  s1.appendChild(h1);
+  const ol = el("ol","trail");
+  c.trail.forEach((t,i)=>{
+    const li = el("li");
+    if(i===c.trail.length-1 && c.status==="live") li.classList.add("now");
+    li.appendChild(el("div","nd", t.node));
+    if(t.via){
+      const via = el("div","via");
+      via.appendChild(el("span",null,t.via));
+      via.appendChild(el("span","arrow","→"));
+      via.appendChild(el("span","pill "+toneFor(t.status), t.status));
+      if(t.rule) via.appendChild(el("span","pill rule", t.rule));
+      li.appendChild(via);
+    } else {
+      const via = el("div","via");
+      via.appendChild(el("span",null,"entry node"));
+      li.appendChild(via);
+    }
+    if(t.why) li.appendChild(el("div","txt", t.why));
+    if(t.fresh){ li.classList.add("enter"); t.fresh = false; }
+    ol.appendChild(li);
+  });
+  s1.appendChild(ol);
+  host.appendChild(s1);
+
+  /* session state */
+  const keys = Object.keys(c.fields);
+  if(keys.length){
+    const s2 = el("div","sect");
+    s2.appendChild(el("h3",null,"Session state"));
+    const kv = el("dl","kv");
+    keys.sort((a,b)=>{
+      const ia = FIELD_ORDER.indexOf(a), ib = FIELD_ORDER.indexOf(b);
+      return (ia<0?99:ia) - (ib<0?99:ib);
+    }).forEach(k => add(kv, k.replace(/_/g," "), String(c.fields[k])));
+    s2.appendChild(kv);
+    host.appendChild(s2);
+  }
+
+  /* submission */
+  const s3 = el("div","sect");
+  const h3 = el("h3",null, c.submitted ? "Submitted" : "Pending submission");
+  h3.appendChild(el("span","n", c.actions.length ? c.actions.length+" action"+(c.actions.length>1?"s":"") : ""));
+  s3.appendChild(h3);
+  if(!c.actions.length){
+    s3.appendChild(el("div","guard","Nothing queued yet. On hang-up, timeout or goodbye this call still compiles and POSTs — a NO_ACTION or ESCALATE with the last coded reason rather than nothing."));
+  } else {
+    c.actions.forEach(a=>{
+      const w = el("div","act "+a.verb.toLowerCase());
+      const left = el("div");
+      left.appendChild(el("div","verb", a.verb + (a.reason ? " · "+a.reason : "")));
+      left.appendChild(el("div","det", a.detail));
+      w.appendChild(left);
+      const st = el("span","stamp "+(a.http!=null?"sent":"pending"), a.http!=null ? "http "+a.http : "pending");
+      w.appendChild(st);
+      if(a.fresh){ w.classList.add("enter"); a.fresh = false; }
+      s3.appendChild(w);
+    });
+    const g = el("div","guard");
+    g.innerHTML = "Compiled from session state under <code style=\"font-family:'IBM Plex Mono',monospace\">"+c.id+"</code>, not from the transcript. POSTs are idempotent.";
+    s3.appendChild(g);
+  }
+  host.appendChild(s3);
+}
+
+function renderLine(c){
+  let n = lineEls.get(c.id);
+  const fresh = !n;
+  if(fresh){
+    n = el("button","line");
+    n.type = "button";
+    n.addEventListener("click", ()=>select(c.id));
+    lineEls.set(c.id, n);
+  }
+  const o = outcome(c);
+  n.innerHTML = "";
+  n.appendChild(el("i","lamp "+lampClass(c)));
+  const b = el("div");
+  const id = el("div","id");
+  id.appendChild(el("span","tp", c.transport));
+  id.appendChild(el("span",null,c.id));
+  if(c.test) id.appendChild(el("span","testchip","test"));
+  if(c.ringing) id.appendChild(el("span","ringtag","ringing"));
+  b.appendChild(id);
+  b.appendChild(el("div","who"+(c.fields.patient?"":" anon"), c.fields.patient || c.label || "identifying…"));
+  const meta = el("div","meta");
+  meta.appendChild(el("span","nodechip", c.node || "—"));
+  if(o) meta.appendChild(el("span","pill "+(o==="ESCALATE"?"esc":o==="NO_ACTION"?"none":"ok"), o));
+  meta.appendChild(el("span","el", c.status==="live" ? dur(simNow()-c.startedAt) : dur(c.endedAt-c.startedAt)));
+  b.appendChild(meta);
+  n.appendChild(b);
+  n.classList.toggle("sel", state.sel===c.id);
+  n.classList.toggle("test", !!c.test);
+  if(fresh){
+    n.classList.add("enter");
+    board.prepend(n);
+    later(()=>n.classList.remove("enter"), 600);
+  }
+  const live = state.order.filter(i=>state.calls.get(i).status==="live").length;
+  $("#boardCount").textContent = state.order.length + " lines";
+  $("#wireTxt").textContent = "live · " + live + " on the line";
+}
+
+function tcHeader(title, sub, opts){
+  const h = el("div","tc-h");
+  const t = el("div");
+  const ttl = el("div","ttl", title); ttl.id = "tcTtl"; t.appendChild(ttl);
+  if(sub) t.appendChild(el("div","sub", sub));
+  h.appendChild(t);
+  const x = el("button","tc-x","✕");
+  x.setAttribute("aria-label","Close");
+  if(opts && opts.locked){ x.disabled = true; x.title = "Hang up to close"; }
+  else x.addEventListener("click", tcClose);
+  h.appendChild(x);
+  return h;
+}
+
+function tcRender(){
+  modal.box.innerHTML = "";
+  ({connecting:tcConnecting, live:tcLive, result:tcResult})[modal.phase]();
+}
+
+function tcConnecting(){
+  const m = modal;
+  m.box.appendChild(tcHeader("Calling the agent","opening the line",{locked:true}));
+  const b = el("div","tc-b");
+  const w = el("div","tc-conn");
+  CONN.forEach((t,i)=>{
+    const r = el("div","cstep"+(i<m.step?" ok":i===m.step?" on":""));
+    r.appendChild(el("i","pip"));
+    r.appendChild(el("span",null,t));
+    w.appendChild(r);
+  });
+  b.appendChild(w);
+  m.box.appendChild(b);
+}
+
+function tcStepCard(s){
+  const w = el("div","snow");
+  const hd = el("div","hd");
+  hd.appendChild(el("b",null,s.name));
+  const ms = el("span","ms"); ms.id="tcMs";
+  ms.textContent = s.open ? "…" : "done";
+  hd.appendChild(ms);
+  w.appendChild(hd);
+  const args = Object.entries(s.args||{}).map(([k,v]) =>
+    k+"="+(v===null?"null":Array.isArray(v)?"["+v.join(",")+"]":JSON.stringify(v))).join("   ");
+  if(args) w.appendChild(el("div","args", args));
+  if(s.open){
+    const wt = el("div","waiting");
+    wt.appendChild(el("span","spin"));
+    wt.appendChild(el("span",null,"waiting on the tool"));
+    w.appendChild(wt);
+  } else {
+    const res = el("div","res");
+    const pills = el("div","pills");
+    pills.appendChild(el("span","pill "+toneFor(s.status), s.status));
+    if(s.rule) pills.appendChild(el("span","pill rule", s.rule));
+    res.appendChild(pills);
+    if(s.why) res.appendChild(el("p","why", s.why));
+    if(s.next && s.next!=="—"){
+      const n = el("div","nxt");
+      n.appendChild(document.createTextNode("next"));
+      n.appendChild(el("span","arrow","→"));
+      n.appendChild(el("span","nodechip", s.next));
+      res.appendChild(n);
+    }
+    w.appendChild(res);
+  }
+  return w;
+}
+
+function tcKeys(e){
+  if(!modal) return;
+  if(e.key==="Escape"){ if(tcClosable()){ e.preventDefault(); tcClose(); } return; }
+  if(e.key!=="Tab") return;
+  const f = [...modal.box.querySelectorAll('button:not([disabled])')].filter(n => n.offsetParent !== null);
+  if(!f.length) return;
+  const first=f[0], last=f[f.length-1];
+  if(e.shiftKey && document.activeElement===first){ e.preventDefault(); last.focus(); }
+  else if(!e.shiftKey && document.activeElement===last){ e.preventDefault(); first.focus(); }
+}
+
+function tcClosable(){ return modal && modal.phase==="result"; }
+
+function tcResult(){
+  const m = modal, c = state.calls.get(m.callId);
+  m.box.appendChild(tcHeader("Call ended", c.id+" · "+dur((c.endedAt||simNow())-c.startedAt)));
+  const b = el("div","tc-b");
+  const w = el("div","tc-res");
+  if(!c.actions.length){
+    w.appendChild(el("div","none","The call ended before anything was compiled. In the running bot this path still POSTs — a NO_ACTION carrying the last coded reason — because an empty submit scores as silence."));
+  } else {
+    c.actions.forEach(a=>{
+      const t = el("div","top");
+      const k = el("span","k", a.verb + (a.reason ? " · "+a.reason : ""));
+      k.style.color = a.verb==="ESCALATE" ? "var(--bad)" : a.verb==="NO_ACTION" ? "var(--none)" : "var(--ok)";
+      t.appendChild(k);
+      t.appendChild(el("span","d", a.http ? "http "+a.http : "not sent"));
+      w.appendChild(t);
+      w.appendChild(el("div","none", a.detail));
+      w.appendChild(el("div",null,"")).style.height="10px";
+    });
+  }
+  b.appendChild(w);
+  m.box.appendChild(b);
+  const foot = el("div","tc-f");
+  foot.appendChild(el("span","note","The full transcript and decision trail are kept in Conversations."));
+  const again = el("button","btn","Call again");
+  again.addEventListener("click", ()=>{ tcClose(); tcOpen(); });
+  foot.appendChild(again);
+  const go = el("button","btn primary","View the full trace");
+  go.addEventListener("click", ()=>{ const id=m.callId; tcClose(); setView("calls"); select(id); });
+  foot.appendChild(go);
+  m.box.appendChild(foot);
+}
+
+function tcLive(){
+  const m = modal, c = state.calls.get(m.callId);
+  m.box.appendChild(tcHeader("Test call", c.id+" · "+(c.from||"no caller id"),{locked:true}));
+
+  const bar = el("div","tc-bar");
+  const on = el("div","on"); on.appendChild(el("i")); on.appendChild(el("span",null,"On the line"));
+  bar.appendChild(on);
+  const elp = el("span","el","0:00"); elp.id="tcEl"; bar.appendChild(elp);
+  const mic = el("div","barmic"+(m.muted?" muted":"")); mic.appendChild(el("i"));
+  mic.id="tcBarMic"; bar.appendChild(mic);
+  const mute = el("button","btn", m.muted ? "Unmute" : "Mute");
+  mute.setAttribute("aria-pressed", String(m.muted));
+  mute.addEventListener("click", ()=>{ m.muted = !m.muted; tcRender(); });
+  bar.appendChild(mute);
+  const hang = el("button","btn danger","Hang up");
+  hang.addEventListener("click", tcHangUp);
+  bar.appendChild(hang);
+  m.box.appendChild(bar);
+
+  const b = el("div","tc-b tc-live");
+  const nn = el("div","nodenow");
+  nn.appendChild(document.createTextNode("Current node"));
+  nn.appendChild(el("b",null, c.node || "—"));
+  b.appendChild(nn);
+
+  const steps = tcSteps(c);
+  const stack = el("div","stack");
+  if(!steps.length){
+    stack.appendChild(el("div","tc-idle","Connected. Nothing decided yet — the first tool call appears here the moment it fires."));
+  } else {
+    steps.slice(Math.max(0,steps.length-3), steps.length-1).forEach(s=>{
+      const p = el("div","spast");
+      p.appendChild(el("span",null,s.name));
+      p.appendChild(el("span","arrow","→"));
+      p.appendChild(el("span","pill "+toneFor(s.status), s.status||"…"));
+      if(s.next && s.next!=="—"){ p.appendChild(el("span","arrow","→")); p.appendChild(el("span",null,s.next)); }
+      stack.appendChild(p);
+    });
+    stack.appendChild(tcStepCard(steps[steps.length-1]));
+  }
+  b.appendChild(stack);
+  m.box.appendChild(b);
+  m.lastSteps = steps.length;
+}
+
+function toast(c){
+  /* you are on the phone; a banner you cannot act on is only noise */
+  if(modal && (modal.phase==="live" || modal.phase==="connecting")) return;
+  const t = el("div","toast");
+  t.appendChild(el("i","lamp live ring"));
+  const mid = el("div");
+  mid.appendChild(el("div","t1","incoming"));
+  mid.appendChild(el("div","t2", c.from || "no caller id"));
+  mid.appendChild(el("div","t3", c.id + " · " + c.transport));
+  t.appendChild(mid);
+  const b = el("button","btn","Watch");
+  b.addEventListener("click", ()=>{ setView("calls"); select(c.id); kill(); });
+  t.appendChild(b);
+  $("#toasts").appendChild(t);
+  const kill = ()=>{ if(!t.parentNode) return; t.classList.add("out"); later(()=>t.remove(), 320); };
+  later(kill, 5200);
+}
+
+const METRICS = [
+  {id:"calls",  label:"Calls this shift",
+   lede:"Load across the shift, and the calls whose full event log is still in the buffer.",
+   cards:[["volume","full"],["recent","full"]]},
+  {id:"live",   label:"On the line now",
+   lede:"What the switchboard is holding this minute.",
+   cards:[["livelines","full"],["volume","full"]]},
+  {id:"submit", label:"Submit rate",
+   lede:"Every call compiles and POSTs. These three say what was submitted, how far each call got, and why the rest did not book.",
+   cards:[["outcome",""],["funnel",""],["reasons","full"]]},
+  {id:"length", label:"Median call",
+   lede:"How long a call runs, and how fast the agent gets its first word out.",
+   cards:[["lengths",""],["latency",""]]},
+  {id:"actions",label:"Actions POSTed",
+   lede:"One call can POST more than one action, so this outruns the call count.",
+   cards:[["verbs",""],["outcome",""],["rails","full"]]}
+];
+
+const CARDS = {
+  volume:{h:"Calls answered per hour", cap:"08:00 – now",
+    lede:"Load, not quality. The 16:00 bar is the hour in progress.",
+    body:'<div id="volChart"></div><div class="tip" id="volTip"></div>', fn:renderVolume},
+  recent:{h:"Recent traces", cap:"open one", lede:"",
+    head:'<div class="filters" id="traceFilter"><button data-f="real" aria-pressed="true">Real</button>'+
+         '<button data-f="test" aria-pressed="false">Test</button><button data-f="all" aria-pressed="false">All</button></div>',
+    body:'<div id="recent"></div>', fn:renderRecent, after:wireFilter},
+  livelines:{h:"Lines up right now", cap:"live", lede:"Select one to watch it unfold.",
+    body:'<div id="liveLines"></div>', fn:renderLive},
+  outcome:{h:"What the shift submitted", cap:"one row per call",
+    lede:"Primary outcome per call. A refusal is still a submission — an empty one would score as silence.",
+    body:'<div id="outMix"></div>', fn:renderOutcomes},
+  funnel:{h:"How far calls got", cap:"by stage",
+    lede:"Each drop-off reconciles against the coded reasons — no call leaves the funnel unexplained.",
+    body:'<div class="fun" id="funnel"></div>', fn:renderFunnel},
+  reasons:{h:"Coded reasons", cap:"",
+    lede:"The reason each NO_ACTION or ESCALATE carried. Set by a tool, never by the model.",
+    body:'<div class="ranked" id="reasons"></div>', fn:renderReasons},
+  rails:{h:"Tools called", cap:"across the shift",
+    lede:"How often each tool ran. This graph has no always-on rails, so tool frequency is what shows where the work goes.",
+    body:'<div class="ranked" id="rails"></div>', fn:renderRails},
+  verbs:{h:"Actions by verb", cap:"",
+    lede:"More than one action can come off a single call.",
+    body:'<div class="ranked" id="verbs"></div>', fn:renderVerbs},
+  lengths:{h:"Call length", cap:"",
+    lede:"The bucket holding the median is picked out.",
+    body:'<div id="lenChart"></div><div class="tip" id="lenTip"></div>', fn:renderLengths},
+  latency:{h:"Time to first word", cap:"call start → first bot audio",
+    lede:"A caller hears silence until this clears. The bot speaks a holding line rather than let it run long.",
+    body:'<div id="latency"></div>', fn:renderLatency}
+};
+
+const FIELD_ORDER = ["caller","patient","patient_id","age","plan","specialty","provider","site","window","referral","rail","reason","directory","booking","scheduling","lookup"];
+
+const MACHINE = new Set(["tool","patch","queue","post"]);
+
+const CONN = ["Requesting microphone","Opening the audio channel","Bot answered"];
+
+/* =================================================================== views */
+async function select(id) {
+  state.sel = id;
+  const c = state.calls.get(id);
+  lineEls.forEach((n, k) => n.classList.toggle("sel", k === id));
+  $("#convTtl").textContent = c ? (c.fields.patient || c.label || "identifying…") : "No line selected";
+  $("#convSub").textContent = c
+    ? c.id + " · " + c.transport + " · " + (c.from || "no caller id") + " · " + (c.status === "live" ? "live" : "ended")
+    : "pick a line on the switchboard";
+  if (!c) return;
+  if (!c._loaded) {
+    const detail = await API.call(id);
+    if (detail) {
+      c.stream = []; c.trail = []; c.actions = []; c.fields = c.fields || {};
+      (detail.events || []).forEach((ev) => applyEvent(c, ev, false));
+      const call = detail.call || {};
+      c.node = call.node || c.node;
+      if (call.patient_name) c.fields.patient = call.patient_name;
+      if (call.patient_id) c.fields.patient_id = call.patient_id;
+      c.primaryAction = call.primary_action || c.primaryAction;
+      c.primaryReason = call.primary_reason || c.primaryReason;
+      c._loaded = true;
+    }
+  }
+  c._drawn = 0;
+  renderStream(c);
+  renderWhy(c);
+  if (window.innerWidth <= 900) setPane("conv");
+}
+
+function renderOverview() {
+  renderKpis(); renderDrill();
+  const n = $("#shiftNow"); if (n) n.textContent = hhmmss(simNow()).slice(0, 5);
+  const live = liveNow();
+  const l = $("#shiftLive");
+  if (l) l.textContent = live ? live + (live === 1 ? " call live" : " calls live") : "switchboard quiet";
+}
+
+function refreshAll() {
+  renderTally();
+  if (view === "overview") renderOverview();
+}
+
+/* ============================================================ the live wire */
+let ws = null, wsRetry = 0;
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(proto + "//" + location.host + "/observability/live");
+  ws.onopen = () => { wsRetry = 0; setWire(true); };
+  ws.onclose = () => {
+    setWire(false);
+    wsRetry = Math.min(wsRetry + 1, 6);
+    later(connect, 500 * Math.pow(2, wsRetry - 1));
+  };
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+  ws.onmessage = (m) => {
+    let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
+    if (msg.kind === "snapshot") { onSnapshot(msg); return; }
+    onEvent(msg);
+  };
+}
+function setWire(ok) {
+  const w = $("#wire"); if (!w) return;
+  w.classList.toggle("is-down", !ok);
+  const live = liveNow();
+  $("#wireTxt").textContent = ok
+    ? "live · " + live + " on the line"
+    : "reconnecting…";
+}
+function onSnapshot(msg) {
+  if (msg.shift) mapShift(msg.shift);
+  (msg.calls || []).forEach((s) => {
+    const c = fromSummary(s);
+    if (!state.calls.has(c.id)) { state.calls.set(c.id, c); state.order.push(c.id); }
+  });
+  state.order.sort((a, b) => state.calls.get(b).startedAt - state.calls.get(a).startedAt);
+  board.innerHTML = ""; lineEls.clear();
+  state.order.slice().reverse().forEach((id) => renderLine(state.calls.get(id)));
+  lastKpiSig = ""; lastDrill = null;
+  refreshAll();
+  if (state.sel && state.calls.has(state.sel)) select(state.sel);
+}
+function onEvent(ev) {
+  if (!ev || !ev.call_id) return;
+  let c = state.calls.get(ev.call_id);
+  if (!c) {
+    c = blankCall(ev.call_id);
+    c.ringing = true;
+    state.calls.set(c.id, c);
+    state.order.unshift(c.id);
+    c._loaded = true; /* born live: every event arrives on this socket */
+  }
+  applyEvent(c, ev, true);
+  if (ev.kind === "call.started") {
+    toast(c);
+    if (modal && modal.awaitingCall && c.test) bindTestCall(c.id);
+    else if (state.follow && view === "calls") select(c.id);
+  }
+  if (c.ringing && (ev.kind === "transcript.bot" || ev.kind === "transcript.user")) c.ringing = false;
+  renderLine(c);
+  if (state.sel === c.id) { appendStream(c); renderWhy(c); }
+  if (ev.kind === "call.ended" || ev.kind === "submit.posted" || ev.kind === "call.started") {
+    API.shift().then((s) => { mapShift(s); lastKpiSig = ""; lastDrill = null; refreshAll(); }).catch(() => {});
+  } else {
+    refreshAll();
+  }
+  tcOnEvent(c);
+}
+
+/* ========================================================== the test call */
+let modal = null;
+const MIC_BARS = 24;
+
+function tcOpen() {
+  if (modal) return;
+  modal = { phase: "connecting", step: 0, callId: null, lastSteps: -1, muted: false,
+            tickTimer: null, awaitingCall: false, pc: null, mic: null, audio: null,
+            analyser: null, level: 0 };
+  const scrim = el("div", "scrim");
+  const box = el("div", "tc");
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  box.setAttribute("aria-labelledby", "tcTtl");
+  scrim.appendChild(box);
+  document.body.appendChild(scrim);
+  document.body.style.overflow = "hidden";
+  modal.scrim = scrim; modal.box = box;
+  scrim.addEventListener("mousedown", (e) => { if (e.target === scrim && tcClosable()) tcClose(); });
+  document.addEventListener("keydown", tcKeys, true);
+  tcRender();
+  dial();
+}
+function tcClose() {
+  if (!modal) return;
+  clearInterval(modal.tickTimer);
+  document.removeEventListener("keydown", tcKeys, true);
+  teardownCall();
+  modal.scrim.remove();
+  document.body.style.overflow = "";
+  modal = null;
+}
+function teardownCall() {
+  if (!modal) return;
+  try { if (modal.pc) modal.pc.close(); } catch (_) {}
+  try { if (modal.mic) modal.mic.getTracks().forEach((t) => t.stop()); } catch (_) {}
+  try { if (modal.audioCtx) modal.audioCtx.close(); } catch (_) {}
+  if (modal.audio) { modal.audio.srcObject = null; modal.audio.remove(); }
+  modal.pc = null; modal.mic = null; modal.audio = null; modal.analyser = null;
+}
+
+function tcFail(title, detail, hint) {
+  if (!modal) return;
+  modal.phase = "error";
+  modal.error = { title, detail, hint };
+  teardownCall();
+  tcRender();
+}
+function tcError() {
+  const m = modal;
+  m.box.appendChild(tcHeader("Could not place the call", ""));
+  const b = el("div", "tc-b");
+  const w = el("div", "tc-res");
+  const t = el("div", "top");
+  const k = el("span", "k", m.error.title); k.style.color = "var(--bad)";
+  t.appendChild(k);
+  w.appendChild(t);
+  w.appendChild(el("div", "none", m.error.detail));
+  if (m.error.hint) {
+    const h = el("div", "none", m.error.hint);
+    h.style.cssText = "margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--faint)";
+    w.appendChild(h);
+  }
+  b.appendChild(w);
+  m.box.appendChild(b);
+  const foot = el("div", "tc-f");
+  foot.appendChild(el("span", "note", ""));
+  const retry = el("button", "btn primary", "Try again");
+  retry.addEventListener("click", () => { tcClose(); tcOpen(); });
+  foot.appendChild(retry);
+  m.box.appendChild(foot);
+}
+
+async function dial() {
+  const m = modal;
+  /* 1 — the microphone */
+  try {
+    m.mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    tcFail("The microphone was blocked",
+      "The browser refused access to the microphone, so there is nothing to send down the line.",
+      "Allow it for this site and try again.");
+    return;
+  }
+  if (!modal) return;
+  m.step = 1; tcRender();
+  meterFrom(m.mic);
+
+  /* 2 — the audio channel */
+  try {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    m.pc = pc;
+    m.mic.getTracks().forEach((t) => pc.addTrack(t, m.mic));
+    pc.addTransceiver("audio", { direction: "recvonly" });
+    const audio = document.createElement("audio");
+    audio.autoplay = true;
+    document.body.appendChild(audio);
+    m.audio = audio;
+    pc.ontrack = (e) => { audio.srcObject = e.streams[0]; };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await iceSettled(pc, 2500);
+
+    m.awaitingCall = true;
+    const res = await fetch("/api/offer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
+    });
+    if (!res.ok) {
+      tcFail("The bot did not answer",
+        res.status === 404
+          ? "There is no WebRTC endpoint on this server."
+          : "The server refused the offer (http " + res.status + ").",
+        "Start the bot with:  uv run bot.py -t webrtc");
+      return;
+    }
+    const answer = await res.json();
+    if (!modal) return;
+    await pc.setRemoteDescription(answer);
+  } catch (err) {
+    tcFail("The audio channel did not open",
+      "The offer was sent but the connection could not be negotiated.",
+      String(err && err.message ? err.message : err));
+    return;
+  }
+  if (!modal) return;
+  m.step = 2; tcRender();
+  /* 3 — the bot answers: the call appears on the observability socket, and
+     bindTestCall takes the modal live. If it never does, say so. */
+  later(() => {
+    if (modal && modal.phase === "connecting") {
+      tcFail("The line opened but no call started",
+        "Audio is connected, yet the bot never registered a call.",
+        "Check the bot's log for a startup error.");
+    }
+  }, 12000);
+}
+function iceSettled(pc, timeoutMs) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { pc.removeEventListener("icegatheringstatechange", check); resolve(); };
+    const check = () => { if (pc.iceGatheringState === "complete") done(); };
+    pc.addEventListener("icegatheringstatechange", check);
+    setTimeout(done, timeoutMs);
+  });
+}
+function meterFrom(streamIn) {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const src = ctx.createMediaStreamSource(streamIn);
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    src.connect(an);
+    modal.audioCtx = ctx;
+    modal.analyser = an;
+    modal.buf = new Uint8Array(an.frequencyBinCount);
+  } catch (_) { /* meter is a nicety; the call works without it */ }
+}
+function micLevel() {
+  if (!modal || !modal.analyser || modal.muted) return 0;
+  modal.analyser.getByteTimeDomainData(modal.buf);
+  let peak = 0;
+  for (let i = 0; i < modal.buf.length; i++) peak = Math.max(peak, Math.abs(modal.buf[i] - 128));
+  return Math.min(1, peak / 90);
+}
+
+function bindTestCall(id) {
+  const m = modal;
+  m.awaitingCall = false;
+  m.callId = id;
+  m.phase = "live";
+  m.lastSteps = -1;
+  tcRender();
+  clearInterval(m.tickTimer);
+  m.tickTimer = setInterval(tcTick, 100);
+}
+function tcSteps(c) { return c.stream.filter((i) => i.t === "tool"); }
+function tcTick() {
+  if (!modal || modal.phase !== "live") return;
+  const c = state.calls.get(modal.callId); if (!c) return;
+  const e = document.getElementById("tcEl");
+  if (e) e.textContent = dur(simNow() - c.startedAt);
+  const bm = document.getElementById("tcBarMic");
+  if (bm) bm.querySelector("i").style.width = (micLevel() * 100) + "%";
+  const steps = tcSteps(c);
+  const last = steps[steps.length - 1];
+  if (last && last.open) {
+    const ms = document.getElementById("tcMs");
+    if (ms) { const d = simNow() - last.ts; ms.textContent = d < 1000 ? Math.round(d) + "ms" : (d / 1000).toFixed(1) + "s"; }
+  }
+}
+function tcOnEvent(c) {
+  if (!modal || modal.phase !== "live" || modal.callId !== c.id) return;
+  if (c.status === "ended") { tcShowResult(); return; }
+  const steps = tcSteps(c);
+  const last = steps[steps.length - 1];
+  if (steps.length !== modal.lastSteps || (last && !last.open && !modal.box.querySelector(".snow .res"))) {
+    tcRender();
+  } else {
+    const nb = modal.box.querySelector(".nodenow b");
+    if (nb) nb.textContent = c.node || "—";
+  }
+}
+function tcHangUp() {
+  teardownCall();
+  tcShowResult();
+}
+function tcShowResult() {
+  clearInterval(modal.tickTimer);
+  teardownCall();
+  modal.phase = "result";
+  tcRender();
+}
+
+/* ===================================================================== boot */
+document.querySelectorAll(".nav button").forEach((b) =>
+  b.addEventListener("click", () => setView(b.dataset.view)));
+document.querySelectorAll(".tabs button").forEach((b) =>
+  b.addEventListener("click", () => setPane(b.dataset.pane)));
+$("#btnPlace").addEventListener("click", tcOpen);
+$("#btnTrace").addEventListener("click", (e) => {
+  state.trace = !state.trace;
+  e.target.setAttribute("aria-pressed", String(state.trace));
+  const c = state.calls.get(state.sel); if (c) { c._drawn = 0; renderStream(c); }
+});
+$("#btnFollow").addEventListener("click", (e) => {
+  state.follow = !state.follow;
+  e.target.setAttribute("aria-pressed", String(state.follow));
+});
+
+setInterval(() => {
+  const clock = $("#clock");
+  if (clock) clock.textContent = hhmmss(simNow()) + " Europe/Madrid";
+  state.order.forEach((id) => {
+    const c = state.calls.get(id);
+    if (c.status === "live") {
+      const n = lineEls.get(id);
+      if (n) { const e = n.querySelector(".el"); if (e) e.textContent = dur(simNow() - c.startedAt); }
+    }
+  });
+  const nb = $("#navBadge");
+  if (nb) { const l = liveNow(); nb.textContent = String(l); nb.hidden = l === 0; }
+  if (view === "overview") refreshLive();
+}, 1000);
+
+(async function start() {
+  $("#clock").textContent = hhmmss(simNow()) + " Europe/Madrid";
+  try {
+    const [shift, calls] = await Promise.all([API.shift(), API.calls()]);
+    mapShift(shift);
+    (calls.calls || []).forEach((s) => {
+      const c = fromSummary(s);
+      state.calls.set(c.id, c);
+      state.order.push(c.id);
+    });
+    state.order.sort((a, b) => state.calls.get(b).startedAt - state.calls.get(a).startedAt);
+    state.order.slice().reverse().forEach((id) => renderLine(state.calls.get(id)));
+  } catch (err) {
+    console.error("Could not reach the observability API", err);
+  }
+  renderTally();
+  setView("overview");
+  connect();
+})();
+})();

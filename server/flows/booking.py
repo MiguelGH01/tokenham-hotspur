@@ -18,6 +18,7 @@ import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
 from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node, gated_confirmation
+from observability.emit import trace_tool
 from rules import check_patient_rules, check_provider_rules, resolve_plan
 from submission import book_action, reschedule_action
 
@@ -118,6 +119,7 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     return matches
 
 
+@trace_tool()
 async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     """Find the earliest bookable slot, applying the rules the API cannot.
 
@@ -376,6 +378,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     return result, create_confirm_node(flow_manager)
 
 
+@trace_tool()
 async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     from flows.common import create_completion_node, record_already_settled
     from flows.requests import proposal_status

@@ -1,0 +1,29 @@
+# Fixture: one simple-booking call for UI work without dialing.
+# Replay via POST /observability/fixtures/simple_booking/load
+{"kind":"call.started","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:00+00:00","payload":{"transport":"eval","from_number":null}}
+{"kind":"node.entered","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:00.100+00:00","payload":{"from":null,"to":"reception"}}
+{"kind":"metrics.first_word","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:00.700+00:00","payload":{"ms":700}}
+{"kind":"transcript.bot","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:01+00:00","payload":{"text":"Clínica Arenal, en qué puedo ayudarte?","final":true}}
+{"kind":"transcript.user","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:08+00:00","payload":{"text":"Hola, soy Amelia Ruiz, quiero una cita con el médico de cabecera. Mi DNI es 12345678Z.","final":true}}
+{"kind":"tool.called","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:08.500+00:00","payload":{"name":"route_request","args":{"intent":"book"},"node":"reception"}}
+{"kind":"tool.returned","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:08.600+00:00","payload":{"name":"route_request","status":"routed","next_node":"identify","justification":"Caller asked to book.","from_node":"reception"}}
+{"kind":"node.entered","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:08.650+00:00","payload":{"from":"reception","to":"identify"}}
+{"kind":"tool.called","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:09+00:00","payload":{"name":"search_patient","args":{"stated_name":"Amelia Ruiz","id_type":"national_id","id_value":"•••••••8Z"}}}
+{"kind":"tool.returned","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:09.400+00:00","payload":{"name":"search_patient","status":"found","next_node":"find_slot","justification":"search_patient returned found: name + national id matched exactly (1 row), so next node is find_slot.","reason_codes":["FR-identify"]}}
+{"kind":"node.entered","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:09.450+00:00","payload":{"from":"identify","to":"find_slot"}}
+{"kind":"state.patched","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:09.500+00:00","payload":{"patient_name":"Amelia Ruiz","identify_attempts":0,"pending_action":"NO_ACTION"}}
+{"kind":"transcript.bot","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:11+00:00","payload":{"text":"Te tengo, Amelia. ¿Para qué especialidad?","final":true}}
+{"kind":"transcript.user","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:16+00:00","payload":{"text":"Medicina general, lo antes posible.","final":true}}
+{"kind":"tool.called","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:17+00:00","payload":{"name":"get_earliest_slot","args":{"specialty":"general_medicine"}}}
+{"kind":"tool.returned","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:17.800+00:00","payload":{"name":"get_earliest_slot","status":"offer","next_node":"confirm","justification":"get_earliest_slot returned offer: earliest bookable slot from /availability for general_medicine, so next node is confirm."}}
+{"kind":"node.entered","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:17.850+00:00","payload":{"from":"find_slot","to":"confirm"}}
+{"kind":"transcript.bot","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:19+00:00","payload":{"text":"Tengo con la Dra. López en Arenal Centro, el lunes 22 a las 09:20. ¿Te viene bien?","final":true}}
+{"kind":"transcript.user","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:24+00:00","payload":{"text":"Sí, perfecto.","final":true}}
+{"kind":"tool.called","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:25+00:00","payload":{"name":"confirm_offer","args":{"offer_id":"offer-1"}}}
+{"kind":"tool.returned","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:25.100+00:00","payload":{"name":"confirm_offer","status":"confirmed","next_node":"goodbye","justification":"confirm_offer returned confirmed: caller accepted offer-1; BOOK queued for compile."}}
+{"kind":"node.entered","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:25.150+00:00","payload":{"from":"confirm","to":"goodbye"}}
+{"kind":"action.queued","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:25.200+00:00","payload":{"action":"BOOK","seq":1,"summary":"Amelia · Dra. López · lun 22 09:20"}}
+{"kind":"state.patched","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:25.250+00:00","payload":{"patient_name":"Amelia Ruiz","pending_action":"BOOK"}}
+{"kind":"transcript.bot","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:27+00:00","payload":{"text":"Queda anotada. Hasta luego.","final":true}}
+{"kind":"submit.posted","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:28+00:00","payload":{"action":"BOOK","http_status":200,"ok":true,"reason":null}}
+{"kind":"call.ended","call_id":"CA-fixture-amelia","ts":"2026-09-19T10:00:29+00:00","payload":{}}

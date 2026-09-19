@@ -50,6 +50,9 @@ from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
 from liveness import SilenceWatchdog
 from llm_deadline import FirstTokenDeadlineLLM
+from observability.emit import emit_node_entered
+from observability.hub import get_hub
+from observability.observer import TraceObserver
 from resolution import resolve_fallback
 from submission import CallSubmission
 
@@ -94,6 +97,30 @@ def _call_id(runner_args: RunnerArguments) -> str:
     # The platform validates call_id as a UUID before anything else, so the
     # local (eval/no-call) fallback must be a well-formed UUID too.
     return str(uuid.uuid4())
+
+
+def _transport_name(runner_args: RunnerArguments) -> str:
+    if isinstance(runner_args, EvalRunnerArguments):
+        return "eval"
+    if _is_twilio_session(runner_args):
+        return "twilio"
+    t = getattr(runner_args, "transport_type", None) or getattr(runner_args, "transport", None)
+    if t in {"daily", "webrtc", "twilio", "eval"}:
+        return t
+    return "unknown"
+
+
+def _from_number(runner_args: RunnerArguments) -> str | None:
+    call_data = getattr(runner_args, "call_data", None)
+    if not call_data:
+        return None
+    for key in ("from_number", "from", "caller"):
+        value = getattr(call_data, key, None) if not isinstance(call_data, dict) else call_data.get(key)
+        if value:
+            return str(value)
+    if isinstance(call_data, dict):
+        return call_data.get("from_number") or call_data.get("from")
+    return None
 
 
 def _connected_at() -> datetime:
@@ -294,6 +321,20 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
     telephony = _is_twilio_session(runner_args)
+    hub = get_hub()
+    await hub.ensure_ready()
+    connected_at = _connected_at()
+    transport_name = _transport_name(runner_args)
+    # A browser WebRTC call is somebody testing from the console; real callers
+    # arrive over Twilio. Keeping them apart stops a tuning session from
+    # wrecking the shift's submit rate and outcome mix.
+    await hub.start_call(
+        call_id,
+        transport=transport_name,  # type: ignore[arg-type]
+        from_number=_from_number(runner_args),
+        is_test=transport_name == "webrtc",
+    )
+    await emit_node_entered(call_id, to="reception")
 
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
@@ -382,7 +423,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         pipeline,
         params=PipelineParams(**pipeline_params),
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[],
+        observers=[TraceObserver(hub, call_id, started_at=connected_at)],
     )
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)
@@ -411,7 +452,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     flow_manager.state.update(
         {
             "call_id": call_id,
-            "connected_at": _connected_at(),
+            "connected_at": connected_at,
             "client": submission._client,
             "submission": submission,
             "patient": None,
@@ -477,6 +518,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
         await submission.close()
+        await hub.end_call(call_id)
         await runner.cancel()
 
     async def deliver_until_accepted():
@@ -501,7 +543,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             _start_task.cancel()
         _deliver_task.cancel()
         await submission.close()
-
+        await hub.end_call(call_id)
 
 def _audio_kwargs() -> dict:
     return {
@@ -556,6 +598,9 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
+    from pipecat.runner.run import app, main
 
+    from observability import mount_observability_routes
+
+    mount_observability_routes(app)
     main()

@@ -1,0 +1,856 @@
+# Generated shift seed — do not hand-edit; regenerate with seed_shift.py
+{"kind": "call.started", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:37.040975+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:37.090975+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:38.003975+00:00", "payload": {"ms": 963}}
+{"kind": "transcript.bot", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:38.040975+00:00", "payload": {"text": "Clínica Arenal, ¿en qué puedo ayudarte?", "final": true}}
+{"kind": "transcript.user", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:45.040975+00:00", "payload": {"text": "Necesito una cita, por favor.", "final": true}}
+{"kind": "tool.called", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:46.040975+00:00", "payload": {"name": "route_request", "args": {"intent": "book"}}}
+{"kind": "tool.returned", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:46.140975+00:00", "payload": {"name": "route_request", "status": "routed", "next_node": "identify", "justification": "Caller asked to book.", "reason_codes": ["capture_intent"]}}
+{"kind": "node.entered", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:46.190975+00:00", "payload": {"from": "reception", "to": "identify"}}
+{"kind": "state.patched", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:37:57.040975+00:00", "payload": {"patient_name": "Paciente 0", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:38:29.040975+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 0 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:38:32.040975+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0000", "ts": "2026-09-19T11:38:34.040975+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:57:17.839762+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:57:17.889762+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:57:19.448762+00:00", "payload": {"ms": 1609}}
+{"kind": "state.patched", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:57:37.839762+00:00", "payload": {"patient_name": "Paciente 1", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:58:41.839762+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 1 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:58:44.839762+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0001", "ts": "2026-09-19T11:58:46.839762+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:02:50.697103+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:02:50.747103+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:02:52.246103+00:00", "payload": {"ms": 1549}}
+{"kind": "state.patched", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:03:10.697103+00:00", "payload": {"patient_name": "Paciente 2", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:03:43.697103+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 2 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:03:46.697103+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0002", "ts": "2026-09-19T08:03:48.697103+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0003", "ts": "2026-09-19T09:57:10.942586+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0003", "ts": "2026-09-19T09:57:10.992586+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0003", "ts": "2026-09-19T09:57:11.355586+00:00", "payload": {"ms": 413}}
+{"kind": "state.patched", "call_id": "CA-seed-0003", "ts": "2026-09-19T09:57:30.942586+00:00", "payload": {"patient_name": "Paciente 3", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0003", "ts": "2026-09-19T10:00:12.942586+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 3 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0003", "ts": "2026-09-19T10:00:15.942586+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0003", "ts": "2026-09-19T10:00:17.942586+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0004", "ts": "2026-09-19T08:59:39.136363+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0004", "ts": "2026-09-19T08:59:39.186363+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0004", "ts": "2026-09-19T08:59:39.976363+00:00", "payload": {"ms": 840}}
+{"kind": "state.patched", "call_id": "CA-seed-0004", "ts": "2026-09-19T08:59:59.136363+00:00", "payload": {"patient_name": "Paciente 4", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0004", "ts": "2026-09-19T09:01:38.136363+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 4 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0004", "ts": "2026-09-19T09:01:41.136363+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0004", "ts": "2026-09-19T09:01:43.136363+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:20:36.096884+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:20:36.146884+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:20:37.200884+00:00", "payload": {"ms": 1104}}
+{"kind": "state.patched", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:20:56.096884+00:00", "payload": {"patient_name": "Paciente 5", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:24:19.096884+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 5 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:24:22.096884+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0005", "ts": "2026-09-19T09:24:24.096884+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:43:07.705937+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:43:07.755937+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:43:08.266937+00:00", "payload": {"ms": 561}}
+{"kind": "state.patched", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:43:27.705937+00:00", "payload": {"patient_name": "Paciente 6", "pending_action": "REGISTER"}}
+{"kind": "action.queued", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:47:00.705937+00:00", "payload": {"action": "REGISTER", "seq": 1, "reason": null, "summary": "Paciente 6 · REGISTER"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:47:03.705937+00:00", "payload": {"action": "REGISTER", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0006", "ts": "2026-09-19T10:47:05.705937+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:10:56.597629+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:10:56.647629+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:10:57.139629+00:00", "payload": {"ms": 542}}
+{"kind": "state.patched", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:11:16.597629+00:00", "payload": {"patient_name": "Paciente 7", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:13:14.597629+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 7 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:13:17.597629+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0007", "ts": "2026-09-19T09:13:19.597629+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:40:11.817775+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:40:11.867775+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:40:12.423775+00:00", "payload": {"ms": 606}}
+{"kind": "state.patched", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:40:31.817775+00:00", "payload": {"patient_name": "Paciente 8", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:42:50.817775+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 8 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:42:53.817775+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0008", "ts": "2026-09-19T14:42:55.817775+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:12:37.883430+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:12:37.933430+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:12:39.010430+00:00", "payload": {"ms": 1127}}
+{"kind": "state.patched", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:12:57.883430+00:00", "payload": {"patient_name": "Paciente 9", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:16:26.883430+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 9 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:16:29.883430+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0009", "ts": "2026-09-19T09:16:31.883430+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:00:54.790044+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:00:54.840044+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:00:56.437044+00:00", "payload": {"ms": 1647}}
+{"kind": "state.patched", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:01:14.790044+00:00", "payload": {"patient_name": "Paciente 10", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:02:10.790044+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 10 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:02:13.790044+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0010", "ts": "2026-09-19T12:02:15.790044+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:26:16.591002+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:26:16.641002+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:26:17.543002+00:00", "payload": {"ms": 952}}
+{"kind": "state.patched", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:26:36.591002+00:00", "payload": {"patient_name": "Paciente 11", "pending_action": "RESCHEDULE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:30:10.591002+00:00", "payload": {"action": "RESCHEDULE", "seq": 1, "reason": null, "summary": "Paciente 11 · RESCHEDULE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:30:13.591002+00:00", "payload": {"action": "RESCHEDULE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0011", "ts": "2026-09-19T07:30:15.591002+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:51:13.277026+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:51:13.327026+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:51:14.146026+00:00", "payload": {"ms": 869}}
+{"kind": "state.patched", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:51:33.277026+00:00", "payload": {"patient_name": "Paciente 12", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:52:21.277026+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 12 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:52:24.277026+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0012", "ts": "2026-09-19T08:52:26.277026+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:34:56.855013+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:34:56.905013+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:34:57.690013+00:00", "payload": {"ms": 835}}
+{"kind": "state.patched", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:35:16.855013+00:00", "payload": {"patient_name": "Paciente 13", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:38:17.855013+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 13 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:38:20.855013+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0013", "ts": "2026-09-19T06:38:22.855013+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:39:25.547248+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:39:25.597248+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:39:26.489248+00:00", "payload": {"ms": 942}}
+{"kind": "state.patched", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:39:45.547248+00:00", "payload": {"patient_name": "Paciente 14", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:41:18.547248+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 14 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:41:21.547248+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0014", "ts": "2026-09-19T11:41:23.547248+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:34:25.397553+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:34:25.447553+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:34:26.992553+00:00", "payload": {"ms": 1595}}
+{"kind": "state.patched", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:34:45.397553+00:00", "payload": {"patient_name": "Paciente 15", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:38:44.397553+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 15 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:38:47.397553+00:00", "payload": {"action": "BOOK", "http_status": 503, "ok": false, "error": "ClinicApiError"}}
+{"kind": "call.ended", "call_id": "CA-seed-0015", "ts": "2026-09-19T12:38:49.397553+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:13:02.349678+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:13:02.399678+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:13:02.935678+00:00", "payload": {"ms": 586}}
+{"kind": "state.patched", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:13:22.349678+00:00", "payload": {"patient_name": "Paciente 16", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:17:54.349678+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 16 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:17:57.349678+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0016", "ts": "2026-09-19T07:17:59.349678+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:24:28.229815+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:24:28.279815+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:24:29.850815+00:00", "payload": {"ms": 1621}}
+{"kind": "state.patched", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:24:48.229815+00:00", "payload": {"patient_name": "Paciente 17", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:28:44.229815+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 17 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:28:47.229815+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0017", "ts": "2026-09-19T07:28:49.229815+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:07:07.820445+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:07:07.870445+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:07:09.353445+00:00", "payload": {"ms": 1533}}
+{"kind": "state.patched", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:07:27.820445+00:00", "payload": {"patient_name": "Paciente 18", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:09:55.820445+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 18 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:09:58.820445+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0018", "ts": "2026-09-19T10:10:00.820445+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:00:28.999218+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:00:29.049218+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:00:29.945218+00:00", "payload": {"ms": 946}}
+{"kind": "state.patched", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:00:48.999218+00:00", "payload": {"patient_name": "Paciente 19", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:05:42.999218+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 19 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:05:45.999218+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0019", "ts": "2026-09-19T07:05:47.999218+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:49:33.363141+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:49:33.413141+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:49:33.769141+00:00", "payload": {"ms": 406}}
+{"kind": "state.patched", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:49:53.363141+00:00", "payload": {"patient_name": "Paciente 20", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:54:05.363141+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 20 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:54:08.363141+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0020", "ts": "2026-09-19T09:54:10.363141+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:42:18.962466+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:42:19.012466+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:42:19.579466+00:00", "payload": {"ms": 617}}
+{"kind": "state.patched", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:42:38.962466+00:00", "payload": {"patient_name": "Paciente 21", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:47:17.962466+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 21 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:47:20.962466+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0021", "ts": "2026-09-19T12:47:22.962466+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:28:02.760101+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:28:02.810101+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:28:03.473101+00:00", "payload": {"ms": 713}}
+{"kind": "state.patched", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:28:22.760101+00:00", "payload": {"patient_name": "Paciente 22", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:30:23.760101+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 22 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:30:26.760101+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0022", "ts": "2026-09-19T10:30:28.760101+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:51:06.886843+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:51:06.936843+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:51:07.287843+00:00", "payload": {"ms": 401}}
+{"kind": "state.patched", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:51:26.886843+00:00", "payload": {"patient_name": "Paciente 23", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:56:17.886843+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 23 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:56:20.886843+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0023", "ts": "2026-09-19T12:56:22.886843+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:10:33.844163+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:10:33.894163+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:10:34.734163+00:00", "payload": {"ms": 890}}
+{"kind": "state.patched", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:10:53.844163+00:00", "payload": {"patient_name": "Paciente 24", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:13:50.844163+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 24 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:13:53.844163+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0024", "ts": "2026-09-19T14:13:55.844163+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:45:13.501362+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:45:13.551362+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:45:14.042362+00:00", "payload": {"ms": 541}}
+{"kind": "state.patched", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:45:33.501362+00:00", "payload": {"patient_name": "Paciente 25", "pending_action": "RESCHEDULE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:50:01.501362+00:00", "payload": {"action": "RESCHEDULE", "seq": 1, "reason": null, "summary": "Paciente 25 · RESCHEDULE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:50:04.501362+00:00", "payload": {"action": "RESCHEDULE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0025", "ts": "2026-09-19T06:50:06.501362+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:07:47.441595+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:07:47.491595+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:07:48.966595+00:00", "payload": {"ms": 1525}}
+{"kind": "state.patched", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:08:07.441595+00:00", "payload": {"patient_name": "Paciente 26", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:12:30.441595+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 26 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:12:33.441595+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0026", "ts": "2026-09-19T07:12:35.441595+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:43:25.009946+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:43:25.059946+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:43:26.513946+00:00", "payload": {"ms": 1504}}
+{"kind": "state.patched", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:43:45.009946+00:00", "payload": {"patient_name": "Paciente 27", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:45:53.009946+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 27 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:45:56.009946+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0027", "ts": "2026-09-19T09:45:58.009946+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:30:40.076064+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:30:40.126064+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:30:41.373064+00:00", "payload": {"ms": 1297}}
+{"kind": "state.patched", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:31:00.076064+00:00", "payload": {"patient_name": "Paciente 28", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:34:31.076064+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 28 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:34:34.076064+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0028", "ts": "2026-09-19T09:34:36.076064+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0029", "ts": "2026-09-19T07:58:38.411637+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0029", "ts": "2026-09-19T07:58:38.461637+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0029", "ts": "2026-09-19T07:58:38.854637+00:00", "payload": {"ms": 443}}
+{"kind": "state.patched", "call_id": "CA-seed-0029", "ts": "2026-09-19T07:58:58.411637+00:00", "payload": {"patient_name": "Paciente 29", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0029", "ts": "2026-09-19T08:02:11.411637+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 29 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0029", "ts": "2026-09-19T08:02:14.411637+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0029", "ts": "2026-09-19T08:02:16.411637+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:03:47.805779+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:03:47.855779+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:03:48.673779+00:00", "payload": {"ms": 868}}
+{"kind": "state.patched", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:04:07.805779+00:00", "payload": {"patient_name": "Paciente 30", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:04:57.805779+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 30 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:05:00.805779+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0030", "ts": "2026-09-19T06:05:02.805779+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:37:24.760844+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:37:24.810844+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:37:25.730844+00:00", "payload": {"ms": 970}}
+{"kind": "state.patched", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:37:44.760844+00:00", "payload": {"patient_name": "Paciente 31", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:40:05.760844+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 31 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:40:08.760844+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0031", "ts": "2026-09-19T06:40:10.760844+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:21:55.809287+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:21:55.859287+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:21:56.706287+00:00", "payload": {"ms": 897}}
+{"kind": "state.patched", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:22:15.809287+00:00", "payload": {"patient_name": "Paciente 32", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:26:37.809287+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 32 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:26:40.809287+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0032", "ts": "2026-09-19T12:26:42.809287+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:51:10.768195+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:51:10.818195+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:51:11.893195+00:00", "payload": {"ms": 1125}}
+{"kind": "state.patched", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:51:30.768195+00:00", "payload": {"patient_name": "Paciente 33", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:55:30.768195+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 33 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:55:33.768195+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0033", "ts": "2026-09-19T06:55:35.768195+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:28:36.143212+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:28:36.193212+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:28:36.667212+00:00", "payload": {"ms": 524}}
+{"kind": "state.patched", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:28:56.143212+00:00", "payload": {"patient_name": "Paciente 34", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:30:06.143212+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 34 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:30:09.143212+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0034", "ts": "2026-09-19T06:30:11.143212+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0035", "ts": "2026-09-19T06:57:41.642942+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0035", "ts": "2026-09-19T06:57:41.692942+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0035", "ts": "2026-09-19T06:57:42.431942+00:00", "payload": {"ms": 789}}
+{"kind": "state.patched", "call_id": "CA-seed-0035", "ts": "2026-09-19T06:58:01.642942+00:00", "payload": {"patient_name": "Paciente 35", "pending_action": "REGISTER"}}
+{"kind": "action.queued", "call_id": "CA-seed-0035", "ts": "2026-09-19T06:59:59.642942+00:00", "payload": {"action": "REGISTER", "seq": 1, "reason": null, "summary": "Paciente 35 · REGISTER"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0035", "ts": "2026-09-19T07:00:02.642942+00:00", "payload": {"action": "REGISTER", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0035", "ts": "2026-09-19T07:00:04.642942+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:27:04.310183+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:27:04.360183+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:27:04.864183+00:00", "payload": {"ms": 554}}
+{"kind": "state.patched", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:27:24.310183+00:00", "payload": {"patient_name": "Paciente 36", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:29:51.310183+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 36 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:29:54.310183+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0036", "ts": "2026-09-19T08:29:56.310183+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:44:19.950242+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:44:20.000242+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:44:20.541242+00:00", "payload": {"ms": 591}}
+{"kind": "state.patched", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:44:39.950242+00:00", "payload": {"patient_name": "Paciente 37", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:45:06.950242+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 37 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:45:09.950242+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0037", "ts": "2026-09-19T11:45:11.950242+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:16:25.110854+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:16:25.160854+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:16:26.331854+00:00", "payload": {"ms": 1221}}
+{"kind": "state.patched", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:16:45.110854+00:00", "payload": {"patient_name": "Paciente 38", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:18:54.110854+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 38 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:18:57.110854+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0038", "ts": "2026-09-19T10:18:59.110854+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:40:14.584171+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:40:14.634171+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:40:15.915171+00:00", "payload": {"ms": 1331}}
+{"kind": "state.patched", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:40:34.584171+00:00", "payload": {"patient_name": "Paciente 39", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:43:09.584171+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 39 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:43:12.584171+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0039", "ts": "2026-09-19T14:43:14.584171+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:16:57.750321+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:16:57.800321+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:16:58.757321+00:00", "payload": {"ms": 1007}}
+{"kind": "transcript.bot", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:16:58.750321+00:00", "payload": {"text": "Clínica Arenal, ¿en qué puedo ayudarte?", "final": true}}
+{"kind": "transcript.user", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:17:05.750321+00:00", "payload": {"text": "Necesito una cita, por favor.", "final": true}}
+{"kind": "tool.called", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:17:06.750321+00:00", "payload": {"name": "route_request", "args": {"intent": "book"}}}
+{"kind": "tool.returned", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:17:06.850321+00:00", "payload": {"name": "route_request", "status": "routed", "next_node": "identify", "justification": "Caller asked to book.", "reason_codes": ["capture_intent"]}}
+{"kind": "node.entered", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:17:06.900321+00:00", "payload": {"from": "reception", "to": "identify"}}
+{"kind": "state.patched", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:17:17.750321+00:00", "payload": {"patient_name": "Paciente 40", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:19:14.750321+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 40 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:19:17.750321+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0040", "ts": "2026-09-19T10:19:19.750321+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:46:16.743980+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:46:16.793980+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:46:17.260980+00:00", "payload": {"ms": 517}}
+{"kind": "state.patched", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:46:36.743980+00:00", "payload": {"patient_name": "Paciente 41", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:49:36.743980+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 41 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:49:39.743980+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0041", "ts": "2026-09-19T10:49:41.743980+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:30:14.166180+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:30:14.216180+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:30:14.682180+00:00", "payload": {"ms": 516}}
+{"kind": "state.patched", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:30:34.166180+00:00", "payload": {"patient_name": "Paciente 42", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:32:14.166180+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 42 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:32:17.166180+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0042", "ts": "2026-09-19T13:32:19.166180+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:36:10.755820+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:36:10.805820+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:36:12.537820+00:00", "payload": {"ms": 1782}}
+{"kind": "state.patched", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:36:30.755820+00:00", "payload": {"patient_name": "Paciente 43", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:37:24.755820+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 43 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:37:27.755820+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0043", "ts": "2026-09-19T06:37:29.755820+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:50:04.302112+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:50:04.352112+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:50:05.887112+00:00", "payload": {"ms": 1585}}
+{"kind": "state.patched", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:50:24.302112+00:00", "payload": {"patient_name": "Paciente 44", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:52:50.302112+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 44 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:52:53.302112+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0044", "ts": "2026-09-19T13:52:55.302112+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:47:05.581850+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:47:05.631850+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:47:06.628850+00:00", "payload": {"ms": 1047}}
+{"kind": "state.patched", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:47:25.581850+00:00", "payload": {"patient_name": "Paciente 45", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:52:12.581850+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 45 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:52:15.581850+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0045", "ts": "2026-09-19T11:52:17.581850+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:45:53.344773+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:45:53.394773+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:45:54.554773+00:00", "payload": {"ms": 1210}}
+{"kind": "state.patched", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:46:13.344773+00:00", "payload": {"patient_name": "Paciente 46", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:48:48.344773+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 46 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:48:51.344773+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0046", "ts": "2026-09-19T08:48:53.344773+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:10:31.300748+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:10:31.350748+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:10:31.719748+00:00", "payload": {"ms": 419}}
+{"kind": "state.patched", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:10:51.300748+00:00", "payload": {"patient_name": "Paciente 47", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:11:48.300748+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 47 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:11:51.300748+00:00", "payload": {"action": "BOOK", "http_status": 503, "ok": false, "error": "ClinicApiError"}}
+{"kind": "call.ended", "call_id": "CA-seed-0047", "ts": "2026-09-19T14:11:53.300748+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:38:40.899644+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:38:40.949644+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:38:42.335644+00:00", "payload": {"ms": 1436}}
+{"kind": "state.patched", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:39:00.899644+00:00", "payload": {"patient_name": "Paciente 48", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:41:09.899644+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 48 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:41:12.899644+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0048", "ts": "2026-09-19T06:41:14.899644+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:44:15.281282+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:44:15.331282+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:44:16.264282+00:00", "payload": {"ms": 983}}
+{"kind": "state.patched", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:44:35.281282+00:00", "payload": {"patient_name": "Paciente 49", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:48:04.281282+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 49 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:48:07.281282+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0049", "ts": "2026-09-19T13:48:09.281282+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:22:57.951618+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:22:58.001618+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:22:58.367618+00:00", "payload": {"ms": 416}}
+{"kind": "state.patched", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:23:17.951618+00:00", "payload": {"patient_name": "Paciente 50", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:28:07.951618+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 50 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:28:10.951618+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0050", "ts": "2026-09-19T11:28:12.951618+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:50:16.154490+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:50:16.204490+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:50:17.095490+00:00", "payload": {"ms": 941}}
+{"kind": "state.patched", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:50:36.154490+00:00", "payload": {"patient_name": "Paciente 51", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:52:04.154490+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 51 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:52:07.154490+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0051", "ts": "2026-09-19T11:52:09.154490+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:22:04.589782+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:22:04.639782+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:22:06.227782+00:00", "payload": {"ms": 1638}}
+{"kind": "state.patched", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:22:24.589782+00:00", "payload": {"patient_name": "Paciente 52", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:25:08.589782+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 52 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:25:11.589782+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0052", "ts": "2026-09-19T07:25:13.589782+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:34:52.658537+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:34:52.708537+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:34:54.093537+00:00", "payload": {"ms": 1435}}
+{"kind": "state.patched", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:35:12.658537+00:00", "payload": {"patient_name": "Paciente 53", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:37:47.658537+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 53 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:37:50.658537+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0053", "ts": "2026-09-19T11:37:52.658537+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:43:38.880475+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:43:38.930475+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:43:39.370475+00:00", "payload": {"ms": 490}}
+{"kind": "state.patched", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:43:58.880475+00:00", "payload": {"patient_name": "Paciente 54", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:46:39.880475+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 54 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:46:42.880475+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0054", "ts": "2026-09-19T09:46:44.880475+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:18:18.742714+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:18:18.792714+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:18:20.271714+00:00", "payload": {"ms": 1529}}
+{"kind": "state.patched", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:18:38.742714+00:00", "payload": {"patient_name": "Paciente 55", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:22:44.742714+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 55 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:22:47.742714+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0055", "ts": "2026-09-19T08:22:49.742714+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:39:43.725487+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:39:43.775487+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:39:45.242487+00:00", "payload": {"ms": 1517}}
+{"kind": "state.patched", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:40:03.725487+00:00", "payload": {"patient_name": "Paciente 56", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:41:39.725487+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 56 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:41:42.725487+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0056", "ts": "2026-09-19T06:41:44.725487+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:18:11.611127+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:18:11.661127+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:18:12.096127+00:00", "payload": {"ms": 485}}
+{"kind": "state.patched", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:18:31.611127+00:00", "payload": {"patient_name": "Paciente 57", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:19:56.611127+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 57 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:19:59.611127+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0057", "ts": "2026-09-19T07:20:01.611127+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:50:55.224735+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:50:55.274735+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:50:56.989735+00:00", "payload": {"ms": 1765}}
+{"kind": "state.patched", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:51:15.224735+00:00", "payload": {"patient_name": "Paciente 58", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:53:42.224735+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 58 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:53:45.224735+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0058", "ts": "2026-09-19T07:53:47.224735+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:34:34.035710+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:34:34.085710+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:34:34.919710+00:00", "payload": {"ms": 884}}
+{"kind": "state.patched", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:34:54.035710+00:00", "payload": {"patient_name": "Paciente 59", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:36:33.035710+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 59 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:36:36.035710+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0059", "ts": "2026-09-19T09:36:38.035710+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:05.231945+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:05.281945+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:06.474945+00:00", "payload": {"ms": 1243}}
+{"kind": "transcript.bot", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:06.231945+00:00", "payload": {"text": "Clínica Arenal, ¿en qué puedo ayudarte?", "final": true}}
+{"kind": "transcript.user", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:13.231945+00:00", "payload": {"text": "Necesito una cita, por favor.", "final": true}}
+{"kind": "tool.called", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:14.231945+00:00", "payload": {"name": "route_request", "args": {"intent": "book"}}}
+{"kind": "tool.returned", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:14.331945+00:00", "payload": {"name": "route_request", "status": "routed", "next_node": "identify", "justification": "Caller asked to book.", "reason_codes": ["capture_intent"]}}
+{"kind": "node.entered", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:14.381945+00:00", "payload": {"from": "reception", "to": "identify"}}
+{"kind": "state.patched", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:13:25.231945+00:00", "payload": {"patient_name": "Paciente 60", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:16:35.231945+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 60 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:16:38.231945+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0060", "ts": "2026-09-19T06:16:40.231945+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:55:44.024449+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:55:44.074449+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:55:45.207449+00:00", "payload": {"ms": 1183}}
+{"kind": "state.patched", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:56:04.024449+00:00", "payload": {"patient_name": "Paciente 61", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:57:19.024449+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 61 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:57:22.024449+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0061", "ts": "2026-09-19T12:57:24.024449+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:11:09.463665+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:11:09.513665+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:11:10.579665+00:00", "payload": {"ms": 1116}}
+{"kind": "state.patched", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:11:29.463665+00:00", "payload": {"patient_name": "Paciente 62", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:15:44.463665+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 62 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:15:47.463665+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0062", "ts": "2026-09-19T13:15:49.463665+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:48:29.851229+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:48:29.901229+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:48:30.923229+00:00", "payload": {"ms": 1072}}
+{"kind": "state.patched", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:48:49.851229+00:00", "payload": {"patient_name": "Paciente 63", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:52:33.851229+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 63 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:52:36.851229+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0063", "ts": "2026-09-19T11:52:38.851229+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:27:22.679769+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:27:22.729769+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:27:23.897769+00:00", "payload": {"ms": 1218}}
+{"kind": "state.patched", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:27:42.679769+00:00", "payload": {"patient_name": "Paciente 64", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:32:22.679769+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 64 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:32:25.679769+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0064", "ts": "2026-09-19T08:32:27.679769+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:14:34.384953+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:14:34.434953+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:14:35.149953+00:00", "payload": {"ms": 765}}
+{"kind": "state.patched", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:14:54.384953+00:00", "payload": {"patient_name": "Paciente 65", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:17:27.384953+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 65 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:17:30.384953+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0065", "ts": "2026-09-19T06:17:32.384953+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:14:59.377358+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:14:59.427358+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:15:00.419358+00:00", "payload": {"ms": 1042}}
+{"kind": "state.patched", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:15:19.377358+00:00", "payload": {"patient_name": "Paciente 66", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:18:35.377358+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 66 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:18:38.377358+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0066", "ts": "2026-09-19T11:18:40.377358+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:54:56.309939+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:54:56.359939+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:54:57.230939+00:00", "payload": {"ms": 921}}
+{"kind": "state.patched", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:55:16.309939+00:00", "payload": {"patient_name": "Paciente 67", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:57:13.309939+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 67 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:57:16.309939+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0067", "ts": "2026-09-19T13:57:18.309939+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:08:42.221243+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:08:42.271243+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:08:43.994243+00:00", "payload": {"ms": 1773}}
+{"kind": "state.patched", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:09:02.221243+00:00", "payload": {"patient_name": "Paciente 68", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:13:57.221243+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 68 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:14:00.221243+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0068", "ts": "2026-09-19T14:14:02.221243+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:50:43.049858+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:50:43.099858+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:50:44.725858+00:00", "payload": {"ms": 1676}}
+{"kind": "state.patched", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:51:03.049858+00:00", "payload": {"patient_name": "Paciente 69", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:54:12.049858+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 69 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:54:15.049858+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0069", "ts": "2026-09-19T11:54:17.049858+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:38:34.209457+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:38:34.259457+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:38:35.974457+00:00", "payload": {"ms": 1765}}
+{"kind": "state.patched", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:38:54.209457+00:00", "payload": {"patient_name": "Paciente 70", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:41:52.209457+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 70 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:41:55.209457+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0070", "ts": "2026-09-19T08:41:57.209457+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:52:43.787292+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:52:43.837292+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:52:45.048292+00:00", "payload": {"ms": 1261}}
+{"kind": "state.patched", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:53:03.787292+00:00", "payload": {"patient_name": "Paciente 71", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:55:01.787292+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 71 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:55:04.787292+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0071", "ts": "2026-09-19T10:55:06.787292+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:56:40.879689+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:56:40.929689+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:56:42.110689+00:00", "payload": {"ms": 1231}}
+{"kind": "state.patched", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:57:00.879689+00:00", "payload": {"patient_name": "Paciente 72", "pending_action": "REGISTER"}}
+{"kind": "action.queued", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:59:54.879689+00:00", "payload": {"action": "REGISTER", "seq": 1, "reason": null, "summary": "Paciente 72 · REGISTER"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:59:57.879689+00:00", "payload": {"action": "REGISTER", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0072", "ts": "2026-09-19T13:59:59.879689+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:50:58.587457+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:50:58.637457+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:50:59.939457+00:00", "payload": {"ms": 1352}}
+{"kind": "state.patched", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:51:18.587457+00:00", "payload": {"patient_name": "Paciente 73", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:54:22.587457+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 73 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:54:25.587457+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0073", "ts": "2026-09-19T07:54:27.587457+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0074", "ts": "2026-09-19T12:59:05.537444+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0074", "ts": "2026-09-19T12:59:05.587444+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0074", "ts": "2026-09-19T12:59:07.286444+00:00", "payload": {"ms": 1749}}
+{"kind": "state.patched", "call_id": "CA-seed-0074", "ts": "2026-09-19T12:59:25.537444+00:00", "payload": {"patient_name": "Paciente 74", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0074", "ts": "2026-09-19T13:01:11.537444+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 74 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0074", "ts": "2026-09-19T13:01:14.537444+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0074", "ts": "2026-09-19T13:01:16.537444+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:26:58.182314+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:26:58.232314+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:26:59.063314+00:00", "payload": {"ms": 881}}
+{"kind": "state.patched", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:27:18.182314+00:00", "payload": {"patient_name": "Paciente 75", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:28:25.182314+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 75 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:28:28.182314+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0075", "ts": "2026-09-19T11:28:30.182314+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:17:48.173524+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:17:48.223524+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:17:49.074524+00:00", "payload": {"ms": 901}}
+{"kind": "state.patched", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:18:08.173524+00:00", "payload": {"patient_name": "Paciente 76", "pending_action": "RESCHEDULE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:18:51.173524+00:00", "payload": {"action": "RESCHEDULE", "seq": 1, "reason": null, "summary": "Paciente 76 · RESCHEDULE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:18:54.173524+00:00", "payload": {"action": "RESCHEDULE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0076", "ts": "2026-09-19T07:18:56.173524+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:38:27.198301+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:38:27.248301+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:38:28.887301+00:00", "payload": {"ms": 1689}}
+{"kind": "state.patched", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:38:47.198301+00:00", "payload": {"patient_name": "Paciente 77", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:42:39.198301+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 77 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:42:42.198301+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0077", "ts": "2026-09-19T06:42:44.198301+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:08:49.427046+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:08:49.477046+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:08:50.045046+00:00", "payload": {"ms": 618}}
+{"kind": "state.patched", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:09:09.427046+00:00", "payload": {"patient_name": "Paciente 78", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:09:31.427046+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 78 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:09:34.427046+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0078", "ts": "2026-09-19T08:09:36.427046+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:25:48.364219+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:25:48.414219+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:25:49.715219+00:00", "payload": {"ms": 1351}}
+{"kind": "state.patched", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:26:08.364219+00:00", "payload": {"patient_name": "Paciente 79", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:30:53.364219+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 79 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:30:56.364219+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0079", "ts": "2026-09-19T14:30:58.364219+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:04:04.640422+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:04:04.690422+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:04:05.991422+00:00", "payload": {"ms": 1351}}
+{"kind": "state.patched", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:04:24.640422+00:00", "payload": {"patient_name": "Paciente 80", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:05:52.640422+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 80 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:05:55.640422+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0080", "ts": "2026-09-19T07:05:57.640422+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:21:37.254795+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:21:37.304795+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:21:38.908795+00:00", "payload": {"ms": 1654}}
+{"kind": "state.patched", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:21:57.254795+00:00", "payload": {"patient_name": "Paciente 81", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:26:03.254795+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 81 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:26:06.254795+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0081", "ts": "2026-09-19T14:26:08.254795+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0082", "ts": "2026-09-19T13:58:49.157861+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0082", "ts": "2026-09-19T13:58:49.207861+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0082", "ts": "2026-09-19T13:58:49.882861+00:00", "payload": {"ms": 725}}
+{"kind": "state.patched", "call_id": "CA-seed-0082", "ts": "2026-09-19T13:59:09.157861+00:00", "payload": {"patient_name": "Paciente 82", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0082", "ts": "2026-09-19T14:03:17.157861+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 82 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0082", "ts": "2026-09-19T14:03:20.157861+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0082", "ts": "2026-09-19T14:03:22.157861+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:36:56.288596+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:36:56.338596+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:36:57.755596+00:00", "payload": {"ms": 1467}}
+{"kind": "state.patched", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:37:16.288596+00:00", "payload": {"patient_name": "Paciente 83", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:39:57.288596+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 83 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:40:00.288596+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0083", "ts": "2026-09-19T12:40:02.288596+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:40:54.672650+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:40:54.722650+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:40:55.552650+00:00", "payload": {"ms": 880}}
+{"kind": "state.patched", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:41:14.672650+00:00", "payload": {"patient_name": "Paciente 84", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:44:00.672650+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 84 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:44:03.672650+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0084", "ts": "2026-09-19T06:44:05.672650+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:42:32.700195+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:42:32.750195+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:42:33.573195+00:00", "payload": {"ms": 873}}
+{"kind": "state.patched", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:42:52.700195+00:00", "payload": {"patient_name": "Paciente 85", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:44:29.700195+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 85 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:44:32.700195+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0085", "ts": "2026-09-19T06:44:34.700195+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:33:54.769991+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:33:54.819991+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:33:55.846991+00:00", "payload": {"ms": 1077}}
+{"kind": "state.patched", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:34:14.769991+00:00", "payload": {"patient_name": "Paciente 86", "pending_action": "REGISTER"}}
+{"kind": "action.queued", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:38:02.769991+00:00", "payload": {"action": "REGISTER", "seq": 1, "reason": null, "summary": "Paciente 86 · REGISTER"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:38:05.769991+00:00", "payload": {"action": "REGISTER", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0086", "ts": "2026-09-19T06:38:07.769991+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:19:45.992245+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:19:46.042245+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:19:47.588245+00:00", "payload": {"ms": 1596}}
+{"kind": "state.patched", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:20:05.992245+00:00", "payload": {"patient_name": "Paciente 87", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:23:44.992245+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 87 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:23:47.992245+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0087", "ts": "2026-09-19T13:23:49.992245+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:44:14.036171+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:44:14.086171+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:44:15.412171+00:00", "payload": {"ms": 1376}}
+{"kind": "state.patched", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:44:34.036171+00:00", "payload": {"patient_name": "Paciente 88", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:48:08.036171+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 88 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:48:11.036171+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0088", "ts": "2026-09-19T12:48:13.036171+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:25:54.777011+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:25:54.827011+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:25:56.279011+00:00", "payload": {"ms": 1502}}
+{"kind": "state.patched", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:26:14.777011+00:00", "payload": {"patient_name": "Paciente 89", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:30:08.777011+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 89 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:30:11.777011+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0089", "ts": "2026-09-19T09:30:13.777011+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:54:02.663486+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:54:02.713486+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:54:03.512486+00:00", "payload": {"ms": 849}}
+{"kind": "state.patched", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:54:22.663486+00:00", "payload": {"patient_name": "Paciente 90", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:58:51.663486+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 90 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:58:54.663486+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0090", "ts": "2026-09-19T13:58:56.663486+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0091", "ts": "2026-09-19T08:57:28.583944+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0091", "ts": "2026-09-19T08:57:28.633944+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0091", "ts": "2026-09-19T08:57:29.321944+00:00", "payload": {"ms": 738}}
+{"kind": "state.patched", "call_id": "CA-seed-0091", "ts": "2026-09-19T08:57:48.583944+00:00", "payload": {"patient_name": "Paciente 91", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0091", "ts": "2026-09-19T09:01:35.583944+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 91 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0091", "ts": "2026-09-19T09:01:38.583944+00:00", "payload": {"action": "NO_ACTION", "http_status": 503, "ok": false, "error": "ClinicApiError"}}
+{"kind": "call.ended", "call_id": "CA-seed-0091", "ts": "2026-09-19T09:01:40.583944+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:42:01.036584+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:42:01.086584+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:42:02.648584+00:00", "payload": {"ms": 1612}}
+{"kind": "state.patched", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:42:21.036584+00:00", "payload": {"patient_name": "Paciente 92", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:46:02.036584+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 92 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:46:05.036584+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0092", "ts": "2026-09-19T10:46:07.036584+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:46:18.452543+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:46:18.502543+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:46:19.224543+00:00", "payload": {"ms": 772}}
+{"kind": "state.patched", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:46:38.452543+00:00", "payload": {"patient_name": "Paciente 93", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:50:54.452543+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 93 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:50:57.452543+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0093", "ts": "2026-09-19T09:50:59.452543+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:00:04.874617+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:00:04.924617+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:00:06.050617+00:00", "payload": {"ms": 1176}}
+{"kind": "state.patched", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:00:24.874617+00:00", "payload": {"patient_name": "Paciente 94", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:03:36.874617+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 94 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:03:39.874617+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0094", "ts": "2026-09-19T10:03:41.874617+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:43:14.789454+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:43:14.839454+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:43:16.293454+00:00", "payload": {"ms": 1504}}
+{"kind": "state.patched", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:43:34.789454+00:00", "payload": {"patient_name": "Paciente 95", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:44:03.789454+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 95 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:44:06.789454+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0095", "ts": "2026-09-19T06:44:08.789454+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:36:13.829976+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:36:13.879976+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:36:14.292976+00:00", "payload": {"ms": 463}}
+{"kind": "state.patched", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:36:33.829976+00:00", "payload": {"patient_name": "Paciente 96", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:37:13.829976+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 96 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:37:16.829976+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0096", "ts": "2026-09-19T06:37:18.829976+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:28:03.913601+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:28:03.963601+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:28:04.571601+00:00", "payload": {"ms": 658}}
+{"kind": "state.patched", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:28:23.913601+00:00", "payload": {"patient_name": "Paciente 97", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:30:45.913601+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 97 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:30:48.913601+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0097", "ts": "2026-09-19T11:30:50.913601+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:55:05.116656+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:55:05.166656+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:55:06.271656+00:00", "payload": {"ms": 1155}}
+{"kind": "state.patched", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:55:25.116656+00:00", "payload": {"patient_name": "Paciente 98", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:57:56.116656+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 98 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:57:59.116656+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0098", "ts": "2026-09-19T07:58:01.116656+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:19:17.557002+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:19:17.607002+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:19:18.594002+00:00", "payload": {"ms": 1037}}
+{"kind": "state.patched", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:19:37.557002+00:00", "payload": {"patient_name": "Paciente 99", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:21:20.557002+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 99 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:21:23.557002+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0099", "ts": "2026-09-19T12:21:25.557002+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:04:01.240356+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:04:01.290356+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:04:02.452356+00:00", "payload": {"ms": 1212}}
+{"kind": "state.patched", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:04:21.240356+00:00", "payload": {"patient_name": "Paciente 100", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:07:53.240356+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 100 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:07:56.240356+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0100", "ts": "2026-09-19T11:07:58.240356+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:04:38.664697+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:04:38.714697+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:04:39.272697+00:00", "payload": {"ms": 608}}
+{"kind": "state.patched", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:04:58.664697+00:00", "payload": {"patient_name": "Paciente 101", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:07:22.664697+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 101 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:07:25.664697+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0101", "ts": "2026-09-19T12:07:27.664697+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:17:01.039957+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:17:01.089957+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:17:02.598957+00:00", "payload": {"ms": 1559}}
+{"kind": "state.patched", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:17:21.039957+00:00", "payload": {"patient_name": "Paciente 102", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:18:42.039957+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 102 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:18:45.039957+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0102", "ts": "2026-09-19T11:18:47.039957+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:49:16.996073+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:49:17.046073+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:49:18.432073+00:00", "payload": {"ms": 1436}}
+{"kind": "state.patched", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:49:36.996073+00:00", "payload": {"patient_name": "Paciente 103", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:50:31.996073+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 103 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:50:34.996073+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0103", "ts": "2026-09-19T11:50:36.996073+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:14:11.443485+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:14:11.493485+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:14:12.730485+00:00", "payload": {"ms": 1287}}
+{"kind": "state.patched", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:14:31.443485+00:00", "payload": {"patient_name": "Paciente 104", "pending_action": "ESCALATE"}}
+{"kind": "action.queued", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:15:45.443485+00:00", "payload": {"action": "ESCALATE", "seq": 1, "reason": null, "summary": "Paciente 104 · ESCALATE"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:15:48.443485+00:00", "payload": {"action": "ESCALATE", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0104", "ts": "2026-09-19T13:15:50.443485+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:49:56.232754+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:49:56.282754+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:49:57.964754+00:00", "payload": {"ms": 1732}}
+{"kind": "state.patched", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:50:16.232754+00:00", "payload": {"patient_name": "Paciente 105", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:55:03.232754+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 105 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:55:06.232754+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0105", "ts": "2026-09-19T09:55:08.232754+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:05:27.201085+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:05:27.251085+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:05:28.261085+00:00", "payload": {"ms": 1060}}
+{"kind": "state.patched", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:05:47.201085+00:00", "payload": {"patient_name": "Paciente 106", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:08:24.201085+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 106 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:08:27.201085+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0106", "ts": "2026-09-19T10:08:29.201085+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0107", "ts": "2026-09-19T09:58:01.407366+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0107", "ts": "2026-09-19T09:58:01.457366+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0107", "ts": "2026-09-19T09:58:02.974366+00:00", "payload": {"ms": 1567}}
+{"kind": "state.patched", "call_id": "CA-seed-0107", "ts": "2026-09-19T09:58:21.407366+00:00", "payload": {"patient_name": "Paciente 107", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0107", "ts": "2026-09-19T10:02:38.407366+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 107 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0107", "ts": "2026-09-19T10:02:41.407366+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0107", "ts": "2026-09-19T10:02:43.407366+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:20:59.630035+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:20:59.680035+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:21:00.402035+00:00", "payload": {"ms": 772}}
+{"kind": "state.patched", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:21:19.630035+00:00", "payload": {"patient_name": "Paciente 108", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:24:25.630035+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 108 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:24:28.630035+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0108", "ts": "2026-09-19T10:24:30.630035+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0109", "ts": "2026-09-19T08:59:41.934551+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0109", "ts": "2026-09-19T08:59:41.984551+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0109", "ts": "2026-09-19T08:59:43.472551+00:00", "payload": {"ms": 1538}}
+{"kind": "state.patched", "call_id": "CA-seed-0109", "ts": "2026-09-19T09:00:01.934551+00:00", "payload": {"patient_name": "Paciente 109", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0109", "ts": "2026-09-19T09:02:42.934551+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 109 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0109", "ts": "2026-09-19T09:02:45.934551+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0109", "ts": "2026-09-19T09:02:47.934551+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:20:11.965359+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:20:12.015359+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:20:13.502359+00:00", "payload": {"ms": 1537}}
+{"kind": "state.patched", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:20:31.965359+00:00", "payload": {"patient_name": "Paciente 110", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:25:01.965359+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 110 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:25:04.965359+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0110", "ts": "2026-09-19T12:25:06.965359+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:19:09.219895+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:19:09.269895+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:19:09.809895+00:00", "payload": {"ms": 590}}
+{"kind": "state.patched", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:19:29.219895+00:00", "payload": {"patient_name": "Paciente 111", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:19:57.219895+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 111 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:20:00.219895+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0111", "ts": "2026-09-19T10:20:02.219895+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:41:40.607035+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:41:40.657035+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:41:41.976035+00:00", "payload": {"ms": 1369}}
+{"kind": "state.patched", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:42:00.607035+00:00", "payload": {"patient_name": "Paciente 112", "pending_action": "REGISTER"}}
+{"kind": "action.queued", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:45:28.607035+00:00", "payload": {"action": "REGISTER", "seq": 1, "reason": null, "summary": "Paciente 112 · REGISTER"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:45:31.607035+00:00", "payload": {"action": "REGISTER", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0112", "ts": "2026-09-19T08:45:33.607035+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:33:51.234635+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:33:51.284635+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:33:52.354635+00:00", "payload": {"ms": 1120}}
+{"kind": "state.patched", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:34:11.234635+00:00", "payload": {"patient_name": "Paciente 113", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:37:20.234635+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 113 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:37:23.234635+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0113", "ts": "2026-09-19T12:37:25.234635+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:01:43.445148+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:01:43.495148+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:01:44.491148+00:00", "payload": {"ms": 1046}}
+{"kind": "state.patched", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:02:03.445148+00:00", "payload": {"patient_name": "Paciente 114", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:04:01.445148+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 114 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:04:04.445148+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0114", "ts": "2026-09-19T08:04:06.445148+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:04:24.381395+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:04:24.431395+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:04:25.224395+00:00", "payload": {"ms": 843}}
+{"kind": "state.patched", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:04:44.381395+00:00", "payload": {"patient_name": "Paciente 115", "pending_action": "NO_ACTION"}}
+{"kind": "action.queued", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:06:42.381395+00:00", "payload": {"action": "NO_ACTION", "seq": 1, "reason": "out_of_scope", "summary": "Paciente 115 · NO_ACTION"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:06:45.381395+00:00", "payload": {"action": "NO_ACTION", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0115", "ts": "2026-09-19T12:06:47.381395+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:35:38.910485+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:35:38.960485+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:35:40.532485+00:00", "payload": {"ms": 1622}}
+{"kind": "state.patched", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:35:58.910485+00:00", "payload": {"patient_name": "Paciente 116", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:40:46.910485+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 116 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:40:49.910485+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0116", "ts": "2026-09-19T14:40:51.910485+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:36:25.087956+00:00", "payload": {"transport": "eval", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:36:25.137956+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:36:25.854956+00:00", "payload": {"ms": 767}}
+{"kind": "state.patched", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:36:45.087956+00:00", "payload": {"patient_name": "Paciente 117", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:40:09.087956+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 117 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:40:12.087956+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0117", "ts": "2026-09-19T08:40:14.087956+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:24:01.937407+00:00", "payload": {"transport": "twilio", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:24:01.987407+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:24:03.470407+00:00", "payload": {"ms": 1533}}
+{"kind": "state.patched", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:24:21.937407+00:00", "payload": {"patient_name": "Paciente 118", "pending_action": "BOOK"}}
+{"kind": "action.queued", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:25:08.937407+00:00", "payload": {"action": "BOOK", "seq": 1, "reason": null, "summary": "Paciente 118 · BOOK"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:25:11.937407+00:00", "payload": {"action": "BOOK", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0118", "ts": "2026-09-19T06:25:13.937407+00:00", "payload": {}}
+{"kind": "call.started", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:37:28.456129+00:00", "payload": {"transport": "webrtc", "from_number": null}}
+{"kind": "node.entered", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:37:28.506129+00:00", "payload": {"from": null, "to": "reception"}}
+{"kind": "metrics.first_word", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:37:28.881129+00:00", "payload": {"ms": 425}}
+{"kind": "state.patched", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:37:48.456129+00:00", "payload": {"patient_name": "Paciente 119", "pending_action": "CANCEL"}}
+{"kind": "action.queued", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:39:00.456129+00:00", "payload": {"action": "CANCEL", "seq": 1, "reason": null, "summary": "Paciente 119 · CANCEL"}}
+{"kind": "submit.posted", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:39:03.456129+00:00", "payload": {"action": "CANCEL", "http_status": 200, "ok": true, "error": null}}
+{"kind": "call.ended", "call_id": "CA-seed-0119", "ts": "2026-09-19T12:39:05.456129+00:00", "payload": {}}

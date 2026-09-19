@@ -1,0 +1,40 @@
+# Fixture: Nuria Bel Aparici — cancel + book on one call (rich conversation view).
+# Replay via POST /observability/fixtures/nuria_cancel_book/load
+{"kind":"call.started","call_id":"CA9723d3","ts":"2026-09-19T08:12:00+00:00","payload":{"transport":"twilio","from_number":"+34620884156"}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:00.100+00:00","payload":{"from":null,"to":"reception"}}
+{"kind":"metrics.first_word","call_id":"CA9723d3","ts":"2026-09-19T08:12:00.780+00:00","payload":{"ms":780}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:01+00:00","payload":{"text":"Clínica Arenal, ¿en qué puedo ayudarte?","final":true}}
+{"kind":"transcript.user","call_id":"CA9723d3","ts":"2026-09-19T08:12:08+00:00","payload":{"text":"Hola, soy Nuria Bel Aparici. Quiero cancelar mi cita del jueves y pedir otra con el Dr. Vilar.","final":true}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:09+00:00","payload":{"name":"route_request","args":{"intent":"cancel"},"node":"reception"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:09.100+00:00","payload":{"name":"route_request","status":"routed","next_node":"identify","justification":"route_request returned routed","from_node":"reception","reason_codes":["capture_intent"]}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:09.150+00:00","payload":{"from":"reception","to":"identify"}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:11+00:00","payload":{"text":"Claro, Nuria. ¿Me das tu DNI para localizarte?","final":true}}
+{"kind":"transcript.user","call_id":"CA9723d3","ts":"2026-09-19T08:12:18+00:00","payload":{"text":"Es el 48192736K.","final":true}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:19+00:00","payload":{"name":"search_patient","args":{"stated_name":"Nuria Bel Aparici","id_type":"national_id","id_value":"•••••••6K"},"node":"identify"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:19.400+00:00","payload":{"name":"search_patient","status":"found","next_node":"appointments","justification":"Exact national id match on one directory row.","from_node":"identify","reason_codes":["FR-identify","CL-exact-exclude"]}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:19.450+00:00","payload":{"from":"identify","to":"appointments"}}
+{"kind":"state.patched","call_id":"CA9723d3","ts":"2026-09-19T08:12:19.500+00:00","payload":{"patient_name":"Nuria Bel Aparici","patient_id":"pat_nuria"}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:21+00:00","payload":{"text":"Te tengo. Tienes con el Dr. Vilar el jueves a las diez y cuarenta y cinco. ¿Cancelamos esa?","final":true}}
+{"kind":"transcript.user","call_id":"CA9723d3","ts":"2026-09-19T08:12:28+00:00","payload":{"text":"Sí, cancélala.","final":true}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:29+00:00","payload":{"name":"confirm_cancellation","args":{},"node":"cancel_confirm"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:29.200+00:00","payload":{"name":"confirm_cancellation","status":"accepted","next_node":"request_complete","justification":"Caller confirmed cancel of upcoming visit.","from_node":"cancel_confirm","reason_codes":[]}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:29.250+00:00","payload":{"from":"cancel_confirm","to":"request_complete"}}
+{"kind":"action.queued","call_id":"CA9723d3","ts":"2026-09-19T08:12:29.300+00:00","payload":{"action":"CANCEL","seq":1,"summary":"Nuria · Dr. Vilar · jue 24 10:45","payload":{"action":"CANCEL","appointment_id":"appt_vilar_thu"}}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:31+00:00","payload":{"text":"Hecha. ¿Quieres la nueva cita con el Dr. Vilar?","final":true}}
+{"kind":"transcript.user","call_id":"CA9723d3","ts":"2026-09-19T08:12:36+00:00","payload":{"text":"Sí, la semana que viene por la mañana.","final":true}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:37+00:00","payload":{"name":"route_request","args":{"intent":"book"},"node":"request_complete"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:37.100+00:00","payload":{"name":"route_request","status":"routed","next_node":"find_slot","justification":"Second intent: book with known patient.","from_node":"request_complete"}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:37.150+00:00","payload":{"from":"request_complete","to":"find_slot"}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:38+00:00","payload":{"name":"get_earliest_slot","args":{"specialty":"general_medicine","provider_name":"Vilar"},"node":"find_slot"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:38.800+00:00","payload":{"name":"get_earliest_slot","status":"offer","next_node":"confirm","justification":"Earliest morning slot with Dr. Vilar next week.","from_node":"find_slot"}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:38.850+00:00","payload":{"from":"find_slot","to":"confirm"}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:40+00:00","payload":{"text":"Tengo el lunes a las nueve y media con el Dr. Vilar en Arenal Centro. ¿Te viene bien?","final":true}}
+{"kind":"transcript.user","call_id":"CA9723d3","ts":"2026-09-19T08:12:46+00:00","payload":{"text":"Perfecto.","final":true}}
+{"kind":"tool.called","call_id":"CA9723d3","ts":"2026-09-19T08:12:47+00:00","payload":{"name":"confirm_offer","args":{"offer_id":"offer-vilar"},"node":"confirm"}}
+{"kind":"tool.returned","call_id":"CA9723d3","ts":"2026-09-19T08:12:47.100+00:00","payload":{"name":"confirm_offer","status":"accepted","next_node":"goodbye","justification":"Caller accepted BOOK offer.","from_node":"confirm"}}
+{"kind":"node.entered","call_id":"CA9723d3","ts":"2026-09-19T08:12:47.150+00:00","payload":{"from":"confirm","to":"goodbye"}}
+{"kind":"action.queued","call_id":"CA9723d3","ts":"2026-09-19T08:12:47.200+00:00","payload":{"action":"BOOK","seq":2,"summary":"Nuria · Dr. Vilar · lun 29 09:30","payload":{"action":"BOOK","provider_id":"prov_vilar","slot":"2026-09-29T09:30:00+02:00"}}}
+{"kind":"transcript.bot","call_id":"CA9723d3","ts":"2026-09-19T08:12:49+00:00","payload":{"text":"Queda anotada. Hasta luego.","final":true}}
+{"kind":"submit.posted","call_id":"CA9723d3","ts":"2026-09-19T08:12:50+00:00","payload":{"action":"CANCEL","http_status":200,"ok":true}}
+{"kind":"submit.posted","call_id":"CA9723d3","ts":"2026-09-19T08:12:50.200+00:00","payload":{"action":"BOOK","http_status":200,"ok":true}}
+{"kind":"call.ended","call_id":"CA9723d3","ts":"2026-09-19T08:12:51+00:00","payload":{}}
