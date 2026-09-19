@@ -1,0 +1,32 @@
+# PR-04 case the_new_patient-ec8a02146ecd — Sergio Martínez Ramírez (not on file -> REGISTER,
+# never BOOK; homonym trap, same shape as Natalia). Verified live: a name-only /directory
+# search returns an existing P01988 Sergio Martínez Ramírez (DOB 1969-06-01), but the caller's
+# exact national_id (31426012P, DOB 2005-08-10, a 16-year-old) matches nobody.
+# GAP: same missing registration flow as the_new_patient_joaquin.yaml, and the same
+# FR-register-homonym check as the_new_patient_natalia.yaml.
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: the_new_patient_sergio
+turns:
+  - user: "Hi, new patient here, Sergio Martínez Ramírez, DNI 31426012P."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+        eval: "the bot says it cannot find a matching record for that DNI and offers to register a new patient — it does not book an existing appointment for the older Sergio Martínez Ramírez already on file, since that is a different person"
+  - user: "Yes. Born the 10th of August 2005, phone 792 919 982, email sergio_martinez77@gmail.com, insured with Mapfre Salud."
+    expect:
+      - event: function_call
+        calls:
+          - name: register_patient
+            args:
+              given_name: Sergio
+              first_surname: Martínez
+              second_surname: Ramírez
+              national_id: 31426012P
+              insurer: mapfre
+      - event: response
+        eval: "the bot confirms the registration and does not offer or book any appointment"

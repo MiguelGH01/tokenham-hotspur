@@ -19,18 +19,29 @@ RETRY_DELAY_SECS = 1.0
 
 
 class ClinicClient:
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 5.0):
-        self._base_url = (base_url or os.environ["CLINIC_API_BASE_URL"]).rstrip("/")
-        self._headers = {"X-Api-Key": api_key or os.environ["CLINIC_API_KEY"]}
-        self._timeout = timeout
+    def __init__(
+        self,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        timeout: float = 5.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
+        # One connection per call, reused across its lookups: a fresh client per request paid a
+        # TLS handshake each time, on the path where the caller is listening to silence.
+        self._http = httpx.AsyncClient(
+            base_url=(base_url or os.environ["CLINIC_API_BASE_URL"]).rstrip("/"),
+            headers={"X-Api-Key": api_key or os.environ["CLINIC_API_KEY"]},
+            timeout=timeout,
+            transport=transport,
+        )
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         for attempt in range(1, ATTEMPTS + 1):
             try:
-                async with httpx.AsyncClient(
-                    base_url=self._base_url, headers=self._headers, timeout=self._timeout
-                ) as client:
-                    response = await client.request(method, path, **kwargs)
+                response = await self._http.request(method, path, **kwargs)
                 if response.status_code == 409:
                     logger.info("{} {} -> 409 (already accepted)", method, path)
                     return response.json()

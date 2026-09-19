@@ -1,0 +1,37 @@
+# PR-06 case the_rules-fe23fca4aeb7 — Gloria González Blanco (asks for Dra. Iglesias for
+# eczema; Iglesias refuses DKV, but Gloria holds a derm referral and DKV covers dermatology
+# elsewhere -> redirect silently to Dr. Vilar, do not refuse). Verified live: P00057 DOB
+# 1999-06-15, DKV, referrals=[dermatology]. clinic.json lists Dra. Iglesias' refused_insurers
+# as DKV; /availability for dermatology at norte returns PR12 Vilar slots, earliest
+# 2026-09-21T10:15:00+02:00.
+# GAP: same missing provider-filter as the doctor_and_site cases (to even target "Dra.
+# Iglesias" specifically), plus the redirect-on-plan-mismatch rule itself: nothing in
+# server/booking.py or handlers.py checks a named provider against accepted_insurers before
+# picking a slot, so there's no "this doctor doesn't take your plan, try this one instead"
+# fallback yet. The wrong outcome to watch for is submitting provider_not_in_network instead
+# of quietly booking Vilar.
+# Expected BOOK: P00057 / PR12 / norte / dermatology_review / 2026-09-21T10:15:00+02:00 / dkv
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: the_rules_gloria_plan_redirect
+turns:
+  - user: "Hello, Gloria González Blanco, DNI 15750638P. I've got an eczema flare-up, could I see Dra. Iglesias?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: dermatology }
+      - event: response
+        eval: "the response says Dra. Iglesias does not take her plan and offers instead an appointment with Dr. Vilar in dermatology, rather than refusing the booking outright"
+  - user: "That's fine, book Dr. Vilar."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response
