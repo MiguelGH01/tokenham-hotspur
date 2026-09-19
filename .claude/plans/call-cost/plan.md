@@ -153,6 +153,16 @@ Append-only. Tomadas por Adolfo el 19-sep-2026.
   de lista a fecha X, no factura real". OpenAI priority y Helmcode quedan sin precio
   (`UNPRICED`, D4) hasta que alguien confirme la cifra a mano.
 
+- **D9 — Helmcode / `deepseek-v4-flash` se valora amortizado** (Adolfo, 19-sep: "mejor
+  pones el coste de helmcode"; corrige la parte de D8 que lo dejaba `UNPRICED`). Tarifa
+  plana del plan Starter repartida sobre su cupo: 399 EUR ÷ 5.000 M tokens = 0,0798 EUR
+  por 1M, igual para entrada, salida y caché (el cupo no distingue). Es un **suelo**: solo
+  es el coste real si se consume el cupo entero. El informe marca esas llamadas con `*` y
+  lo explica al pie. Alternativa descartada: el precio por token de la API de DeepSeek —
+  es el precio de otra empresa, no lo que paga el equipo, y no se ha consultado.
+  **Supuesto sin confirmar:** que el plan contratado es Starter; con Growth (1.299 / 15B)
+  o Scale (3.199 / 35B) la tarifa sería 0,0866 o 0,0914 EUR por 1M.
+
 ## Context
 
 **Leer antes de implementar**
