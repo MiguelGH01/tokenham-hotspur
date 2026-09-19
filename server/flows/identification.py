@@ -42,8 +42,23 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     try:
         matches = [m for m in await state["client"].search_directory(**query) if exact(m)]
     except Exception as exc:
+        # The clinic's own API failing is not the caller failing to be found. The
+        # two must not look alike to the model: told only "could not find them",
+        # it reads a correctly-spelled name back as absent from the records and
+        # asks the caller to repeat an identifier they already gave, and the call
+        # is lost with nobody identified — observed as /v1/directory 502 then
+        # ReadTimeout on 19 Sep, twice in fifteen local calls.
         logger.error("directory lookup failed: {}", type(exc).__name__)
-        return {"status": "lookup_failed"}, None
+        return {
+            "status": "lookup_failed",
+            "instruction": (
+                "The clinic's records could not be reached. This is a fault on our side, "
+                "not a missing patient. Do not tell the caller they are not in the "
+                "system and do not ask them to repeat an identifier they gave "
+                "correctly. Apologise for the delay in one short sentence and call "
+                "search_patient again with exactly the same name and identifier."
+            ),
+        }, None
 
     if len(matches) != 1:
         return failed("not_found")
@@ -99,7 +114,10 @@ def create_identify_node() -> NodeConfig:
                     "identifier, call search_patient immediately — do not ask for a second "
                     "identifier or a date of birth, and do not read details back first. Never "
                     "search by name alone. If the caller says they are new, call start_registration. If the result is misheard_id or not_found, say you could not find them "
-                    "and ask them to repeat the identifier slowly, digit by digit. When the caller "
+                    "and ask them to repeat the identifier slowly, digit by digit. A "
+                    "lookup_failed result is a fault in the clinic's records, not a missing "
+                    "patient: apologise for the delay and call search_patient again with the "
+                    "same details, and never tell the caller they are not in the system. When the caller "
                     "repeats or corrects the identifier, always call search_patient again with what "
                     "you heard — never give up on your own; the flow decides when attempts are exhausted."
                 ),

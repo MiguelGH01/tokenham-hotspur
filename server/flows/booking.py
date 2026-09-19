@@ -247,8 +247,20 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             insurer=[plan["id"]] if plan else None,
         )
     except Exception as exc:
+        # Same distinction as the directory lookup: the clinic's API being down is
+        # not the same as "nothing is free". Told "no slots" the agent would name
+        # a rule it never read; told nothing it stalls. Name the fault and ask
+        # again.
         logger.error("availability lookup failed: {}", type(exc).__name__)
-        return {"status": "lookup_failed"}, None
+        return {
+            "status": "lookup_failed",
+            "instruction": (
+                "The clinic's diary could not be reached. This is a fault on our side, "
+                "not an answer about availability: do not say that nothing is free and "
+                "do not offer a rule. Apologise for the delay in one short sentence and "
+                "call get_earliest_slot again with exactly the same request."
+            ),
+        }, None
 
     restrictions = [
         b.get("restriction")

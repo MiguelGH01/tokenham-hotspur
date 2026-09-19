@@ -16,6 +16,14 @@ SUBMIT_ROUTES = {
 }
 
 ATTEMPTS = max(1, int(os.getenv("CLINIC_API_ATTEMPTS", "2")))
+#: Reads get their own budget, and it is larger. A lookup that gives up loses the
+#: case outright — the patient is never identified, or no slot is ever offered —
+#: while a write that gives up is retried by ``submission._deliver`` on top of
+#: this loop, so more attempts here would only multiply the same POST. Under a
+#: scored run the platform answers ``502`` and then times out on the very same
+#: lookup (observed twice in fifteen local calls on 19 Sep), so the second try
+#: is the one that matters.
+READ_ATTEMPTS = max(ATTEMPTS, int(os.getenv("CLINIC_API_READ_ATTEMPTS", "3")))
 RETRY_DELAY_SECS = max(0.0, float(os.getenv("CLINIC_API_RETRY_DELAY_SECS", "1.0")))
 MAX_LOGGED_BODY = 500
 
@@ -51,8 +59,9 @@ class ClinicClient:
         self._headers = {"X-Api-Key": api_key or os.environ["CLINIC_API_KEY"]}
         self._timeout = timeout
 
-    async def _request(self, method: str, path: str, **kwargs) -> dict:
-        for attempt in range(1, ATTEMPTS + 1):
+    async def _request(self, method: str, path: str, *, read: bool = False, **kwargs) -> dict:
+        attempts = READ_ATTEMPTS if read else ATTEMPTS
+        for attempt in range(1, attempts + 1):
             try:
                 async with httpx.AsyncClient(
                     base_url=self._base_url, headers=self._headers, timeout=self._timeout
@@ -71,8 +80,8 @@ class ClinicClient:
                 return response.json()
             except ClinicApiError as exc:
                 retryable = exc.status >= 500 or exc.status in RETRYABLE_STATUSES
-                if attempt == ATTEMPTS or not retryable:
-                    logger.error("{} (attempt {}/{})", exc, attempt, ATTEMPTS)
+                if attempt == attempts or not retryable:
+                    logger.error("{} (attempt {}/{})", exc, attempt, attempts)
                     raise
                 logger.warning(
                     "{} {} failed (attempt {}): HTTP {}",
@@ -83,12 +92,12 @@ class ClinicClient:
                 )
                 await asyncio.sleep(RETRY_DELAY_SECS)
             except (httpx.TransportError, ValueError) as exc:
-                if attempt == ATTEMPTS:
+                if attempt == attempts:
                     logger.error(
                         "{} {} failed after {} attempts: {}",
                         method,
                         path,
-                        ATTEMPTS,
+                        attempts,
                         type(exc).__name__,
                     )
                     raise
@@ -100,7 +109,7 @@ class ClinicClient:
 
     async def search_directory(self, **params) -> list[dict]:
         query = {k: v for k, v in params.items() if v is not None}
-        data = await self._request("GET", "/v1/directory", params=query)
+        data = await self._request("GET", "/v1/directory", params=query, read=True)
         return data["matches"]
 
     async def availability(
@@ -129,7 +138,7 @@ class ClinicClient:
             query["location_id"] = location_id
         if insurer:
             query["insurer"] = list(insurer)
-        return await self._request("GET", "/v1/availability", params=query)
+        return await self._request("GET", "/v1/availability", params=query, read=True)
 
     async def appointments(self, patient_id: str, when: str = "upcoming") -> list[dict]:
         """The patient's diary. ``when`` is ``upcoming``, ``past`` or ``all``.
@@ -143,6 +152,7 @@ class ClinicClient:
             "GET",
             f"/v1/patients/{quote(patient_id, safe='')}/appointments",
             params={"when": when},
+            read=True,
         )
         return data["appointments"]
 
