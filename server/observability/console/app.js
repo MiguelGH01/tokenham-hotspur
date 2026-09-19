@@ -135,6 +135,21 @@ const API = {
     if (!r.ok) throw new Error("calendar " + r.status);
     return r.json();
   },
+  async inbox() {
+    const r = await fetch("/auth/me/inbox");
+    if (!r.ok) throw new Error("inbox " + r.status);
+    return r.json();
+  },
+  async inboxRead(id) {
+    const r = await fetch("/auth/me/inbox/" + encodeURIComponent(id) + "/read", { method: "POST" });
+    if (!r.ok) throw new Error("inbox read " + r.status);
+    return r.json();
+  },
+  async inboxReadAll() {
+    const r = await fetch("/auth/me/inbox/read-all", { method: "POST" });
+    if (!r.ok) throw new Error("inbox read-all " + r.status);
+    return r.json();
+  },
 };
 
 /* ------------------------------------------------- call object projection */
@@ -1569,7 +1584,12 @@ function showOnly(which) {
   document.title = which === "admin" ? "Arenal Centralita"
     : which === "doctor" ? "Mi horario · Clínica Arenal"
     : "Clínica Arenal";
-  if (which !== "doctor") stopCalPoll();
+  if (which !== "doctor") {
+    stopCalPoll();
+    inboxOpen = false;
+    const panel = $("#inboxPanel");
+    if (panel) panel.hidden = true;
+  }
 }
 
 function insurerName(ref) {
@@ -1619,7 +1639,7 @@ function blockKey(date, b) {
 }
 
 function isCitaBlock(b) {
-  return b.kind === "booked";
+  return b.kind === "booked" || b.kind === "emergency";
 }
 
 function calSignature(data) {
@@ -1638,7 +1658,115 @@ function startCalPoll() {
   calPollTimer = setInterval(() => {
     if ($("#shellDoctor").hidden) return;
     loadDoctorCalendar(calWeekStart, { silent: true });
+    loadDoctorInbox({ silent: true });
   }, CAL_POLL_MS);
+}
+
+/* ----------------------------------------------------------------- inbox */
+let inboxOpen = false;
+let inboxLastSig = "";
+let inboxKnownIds = new Set();
+let inboxBootstrapped = false;
+
+function doctorToast(kind, title, body) {
+  const t = el("div", "toast " + (kind === "emergency" ? "urgency" : "quiet"));
+  t.appendChild(el("i", "lamp " + (kind === "emergency" ? "live ring" : "")));
+  const mid = el("div");
+  mid.appendChild(el("div", "t1", kind === "emergency" ? "urgencia" : "aviso"));
+  mid.appendChild(el("div", "t2", title));
+  if (body) mid.appendChild(el("div", "t3", body));
+  t.appendChild(mid);
+  const b = el("button", "btn", "Buzón");
+  b.addEventListener("click", () => { openInbox(true); kill(); });
+  t.appendChild(b);
+  $("#toasts").appendChild(t);
+  const kill = () => { if (!t.parentNode) return; t.classList.add("out"); later(() => t.remove(), 320); };
+  later(kill, kind === "emergency" ? 7000 : 4500);
+}
+
+function setInboxBadge(n) {
+  const badge = $("#inboxBadge");
+  if (!badge) return;
+  if (n > 0) {
+    badge.hidden = false;
+    badge.textContent = n > 99 ? "99+" : String(n);
+  } else {
+    badge.hidden = true;
+    badge.textContent = "0";
+  }
+}
+
+function renderInboxList(notes) {
+  const list = $("#inboxList");
+  if (!list) return;
+  list.textContent = "";
+  if (!notes || !notes.length) {
+    list.appendChild(el("div", "inbox-idle", "Sin avisos."));
+    return;
+  }
+  notes.forEach((n) => {
+    const item = el("button", "inbox-item kind-" + (n.kind || "cancel") + (n.unread ? " unread" : ""));
+    item.type = "button";
+    item.appendChild(el("div", "ik", n.kind === "emergency" ? "Urgencia" : "Cancelación"));
+    item.appendChild(el("div", "it", n.title || "Aviso"));
+    item.appendChild(el("div", "ib", n.body || ""));
+    const when = n.created_at ? new Date(n.created_at).toLocaleString("es-ES", {
+      day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit"
+    }) : "";
+    item.appendChild(el("div", "iw", when));
+    item.addEventListener("click", async () => {
+      if (n.unread) {
+        try {
+          const res = await API.inboxRead(n.id);
+          setInboxBadge(res.unread || 0);
+          n.unread = false;
+          item.classList.remove("unread");
+        } catch (err) { console.error(err); }
+      }
+    });
+    list.appendChild(item);
+  });
+}
+
+function openInbox(forceOpen) {
+  const panel = $("#inboxPanel");
+  const btn = $("#btnInbox");
+  if (!panel || !btn) return;
+  if (forceOpen === true) inboxOpen = true;
+  else if (forceOpen === false) inboxOpen = false;
+  else inboxOpen = !inboxOpen;
+  panel.hidden = !inboxOpen;
+  btn.setAttribute("aria-expanded", String(inboxOpen));
+  if (inboxOpen) loadDoctorInbox({ silent: false });
+}
+
+async function loadDoctorInbox(opts) {
+  const silent = !!(opts && opts.silent);
+  try {
+    const data = await API.inbox();
+    const notes = data.notifications || [];
+    const sig = JSON.stringify(notes.map((n) => [n.id, n.unread, n.kind]));
+    if (silent && sig === inboxLastSig) return;
+    inboxLastSig = sig;
+    setInboxBadge(data.unread || 0);
+    if (inboxOpen || !silent) renderInboxList(notes);
+
+    const ids = new Set(notes.map((n) => n.id));
+    if (inboxBootstrapped) {
+      notes.forEach((n) => {
+        if (inboxKnownIds.has(n.id)) return;
+        if (n.kind === "emergency") {
+          doctorToast("emergency", n.title || "Urgencia", n.body);
+        } else if (n.kind === "cancel") {
+          doctorToast("cancel", n.title || "Cita cancelada", n.body);
+        }
+      });
+    }
+    inboxKnownIds = ids;
+    inboxBootstrapped = true;
+  } catch (err) {
+    console.error(err);
+  }
 }
 
 function makeCalBlock(b, calStart, calEnd, px, animateIn) {
@@ -1746,7 +1874,7 @@ function patchCalColumns(root, days, calStart, calEnd, px) {
 
     existing.forEach((node, key) => {
       if (next.has(key)) return;
-      const wasCita = node.classList.contains("booked");
+      const wasCita = node.classList.contains("booked") || node.classList.contains("emergency");
       if (wasCita && !REDUCED) {
         node.classList.add("is-leave");
         later(() => { if (node.parentNode) node.parentNode.removeChild(node); }, 380);
@@ -1892,8 +2020,15 @@ async function enterSession(session) {
     calProviderId = session.provider.id;
     calLastSig = "";
     calBuiltWeek = null;
+    inboxLastSig = "";
+    inboxKnownIds = new Set();
+    inboxBootstrapped = false;
+    inboxOpen = false;
+    const panel = $("#inboxPanel");
+    if (panel) panel.hidden = true;
     renderDoctorSchedule(session.provider);
     await loadDoctorCalendar(calWeekStart);
+    await loadDoctorInbox({ silent: false });
     startCalPoll();
     return;
   }
@@ -1937,6 +2072,25 @@ $("#btnFollow").addEventListener("click", (e) => {
 });
 $("#btnLogoutAdmin").addEventListener("click", () => doLogout());
 $("#btnLogoutDoctor").addEventListener("click", () => doLogout());
+$("#btnInbox").addEventListener("click", (e) => {
+  e.stopPropagation();
+  openInbox();
+});
+$("#btnInboxClose").addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  openInbox(false);
+});
+$("#btnInboxReadAll").addEventListener("click", async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    const res = await API.inboxReadAll();
+    setInboxBadge(res.unread || 0);
+    inboxLastSig = "";
+    await loadDoctorInbox({ silent: false });
+  } catch (err) { console.error(err); }
+});
 $("#calPrev").addEventListener("click", () => {
   const base = calWeekStart || mondayOf(new Date().toISOString().slice(0, 10));
   calLastSig = "";
