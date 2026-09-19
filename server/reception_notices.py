@@ -34,7 +34,9 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from collections.abc import Callable
+
+from fastapi import Depends, FastAPI, HTTPException, Request
 from loguru import logger
 
 import audit
@@ -389,12 +391,15 @@ def record_active_notices(call_id: str) -> None:
         )
 
 
-def mount_notices_routes(app: FastAPI) -> None:
+def mount_notices_routes(app: FastAPI, write_guard: Callable | None = None) -> None:
     """GET/PUT ``/notices``: the file, for the console to show and edit.
 
-    Unauthenticated by decision (19 Sep): fine on localhost, a standing risk
-    while the port is tunnelled. Revisit before demoing with the tunnel open.
+    ``write_guard`` is the console's ``require_admin``. It is a parameter rather
+    than an import so this module stays free of the console's auth — and so a
+    test can mount the routes without a session. The caller that mounts this on
+    the tunnelled port is the one that must pass it.
     """
+    guard = [Depends(write_guard)] if write_guard else []
 
     @app.get("/notices")
     async def get_notices():
@@ -420,7 +425,7 @@ def mount_notices_routes(app: FastAPI) -> None:
         stored = _read(notices_path())
         return {"errors": [] if stored is None else validate_notices(stored)[1]}
 
-    @app.put("/notices")
+    @app.put("/notices", dependencies=guard)
     async def put_notices(request: Request):
         raw = await request.body()
         if len(raw) > MAX_BODY_BYTES:

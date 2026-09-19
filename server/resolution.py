@@ -78,7 +78,7 @@ def prepared_action(state) -> dict | None:
     intent = state.get("intent")
     appointment = state.get("appointment") or {}
     if intent == "cancel" and appointment:
-        return cancel_action(appointment["appointment_id"])
+        return cancel_action(appointment["appointment_id"], appointment=appointment)
     held = live_offer(state)
     if intent == "reschedule" and appointment and held:
         return reschedule_action(appointment["appointment_id"], held[1])

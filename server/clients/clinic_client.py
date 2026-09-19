@@ -175,7 +175,16 @@ class ClinicClient:
         verb = action["action"]
         if verb not in SUBMIT_ROUTES:
             raise ValueError(f"unknown submission verb: {verb}")
-        body = {k: v for k, v in action.items() if k != "action"}
+        # CANCEL's clinic body is only appointment_id (+ call_id stamped upstream).
+        # Extra provider/slot fields are for the doctor calendar observability emit.
+        if verb == "CANCEL":
+            body = {
+                k: action[k]
+                for k in ("call_id", "appointment_id")
+                if k in action and action[k] is not None
+            }
+        else:
+            body = {k: v for k, v in action.items() if k != "action"}
         return await self._request("POST", SUBMIT_ROUTES[verb], json=body)
 
 
