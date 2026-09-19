@@ -65,6 +65,65 @@ _REFUSALS: list[tuple[int, str]] = [
 ]
 
 
+# What is said either side of each tool. The caller speaks, the tool runs on
+# what it heard, and the receptionist answers with what came back — so the
+# transcript and the trace tell the same story at the same timestamps.
+_TALK: dict[str, tuple[str, str]] = {
+    "search_patient": (
+        "¿Me dice su nombre completo y su DNI, con la letra?",
+        "{name}, DNI {nid}.",
+    ),
+    "get_earliest_slot": (
+        "¿Para qué especialidad, y cuándo le viene bien?",
+        "{specialty}, lo antes posible por la mañana.",
+    ),
+    "confirm_offer": (
+        "Tengo el {day} a las {time} con {doctor}, en {site}. ¿Le sirve?",
+        "Sí, perfecto.",
+    ),
+    "lookup_appointments": (
+        "Veo su próxima cita en la agenda. ¿Qué quiere hacer con ella?",
+        "Quería cancelarla, no voy a poder ir.",
+    ),
+    "confirm_cancellation": (
+        "Entonces le cancelo la cita. ¿Correcto?",
+        "Correcto, gracias.",
+    ),
+    "prepare_registration": (
+        "No me consta con ese DNI. ¿Quiere que le demos de alta?",
+        "Sí, por favor.",
+    ),
+    "confirm_registration": (
+        "Necesito sus dos apellidos, fecha de nacimiento, teléfono y seguro.",
+        "{name}. Nacido el 14 de marzo del 82. Tengo Mapfre Salud.",
+    ),
+    "finish_call": ("Queda anotado. Gracias por llamar, hasta luego.", ""),
+}
+_OPENINGS = [
+    ("Clínica Arenal, buenos días. ¿En qué puedo ayudarle?", "Hola, quería pedir cita."),
+    ("Clínica Arenal, dígame.", "Buenas, llamaba para una consulta."),
+    ("Clínica Arenal, ¿en qué puedo ayudarle?", "Hola, buenos días. Necesito una cita."),
+]
+# How a refusal is explained on the phone, by the code that caused it.
+_REFUSAL_LINES: dict[str, str] = {
+    "patient_not_found": "No me consta nadie con ese DNI. Sin eso no puedo darle cita.",
+    "out_of_scope": "Eso no se lo puedo facilitar por teléfono, lo siento.",
+    "no_availability": "No me queda nada libre en esas fechas, lo siento.",
+    "provider_not_in_network": "Ese doctor no trabaja con su seguro.",
+    "referral_required": "Para esa especialidad necesita un volante de su médico de cabecera.",
+    "not_eligible_age": "Por edad le corresponde otra especialidad, no esa.",
+    "location_not_covered": "Su póliza no cubre ese centro.",
+    "specialty_not_covered": "Su seguro no cubre esa especialidad.",
+    "provider_not_found": "No tengo a ningún doctor con ese nombre.",
+    "medical_emergency": "Eso necesita atención urgente ahora mismo. Cuelgue y llame al 112.",
+}
+_SPECIALTIES = ["Medicina general", "Pediatría", "Dermatología", "Traumatología", "Ginecología"]
+_DOCTORS = ["la doctora Ortiz", "el doctor Sáez", "la doctora Benítez", "el doctor Vilar"]
+_SITES = ["Arenal Centro", "Arenal Norte", "Arenal Sur"]
+_DAYS = ["lunes 21", "martes 22", "miércoles 23", "jueves 24"]
+_TIMES = ["nueve y cuarto", "diez y media", "once cuarenta", "cinco de la tarde"]
+
+
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
@@ -80,7 +139,6 @@ def build_shift_events(
     # Shift window 08:00–16:52 Europe/Madrid ≈ 06:00–14:52 UTC in September.
     start = day.replace(hour=6, minute=0)
     events: list[ObsEvent] = []
-    rich_ids = {0, n_calls // 3, n_calls // 2}  # a few with full traces
 
     for i in range(n_calls):
         hour_offset = rng.uniform(0, 8.8)  # ~08:00–16:52 local
@@ -120,10 +178,45 @@ def build_shift_events(
             stop, reason = _REFUSALS[rng.randrange(len(_REFUSALS))]
             walk = _PATHS["BOOK"][:stop] + [("no_booking", "finish_call")]
 
+        patient = f"Paciente {i}"
+        fill = {
+            "name": patient,
+            "nid": f"{rng.randrange(10_000_000, 99_999_999)}{rng.choice('TRWAGMYFPD')}",
+            "specialty": rng.choice(_SPECIALTIES),
+            "doctor": rng.choice(_DOCTORS),
+            "site": rng.choice(_SITES),
+            "day": rng.choice(_DAYS),
+            "time": rng.choice(_TIMES),
+        }
+        greet_bot, greet_user = _OPENINGS[i % len(_OPENINGS)]
+        events.append({
+            "kind": "transcript.bot", "call_id": call_id,
+            "ts": _iso(call_start + timedelta(milliseconds=first_word_ms + 200)),
+            "payload": {"text": greet_bot, "final": True},
+        })
+        events.append({
+            "kind": "transcript.user", "call_id": call_id,
+            "ts": _iso(call_start + timedelta(seconds=2)),
+            "payload": {"text": greet_user, "final": True},
+        })
+
         node_from = "reception"
         identified = False
         for step, (node_to, tool) in enumerate(walk, start=1):
             at = call_start + timedelta(seconds=4 * step)
+            bot_line, user_line = _TALK.get(tool, ("", ""))
+            if bot_line:
+                events.append({
+                    "kind": "transcript.bot", "call_id": call_id,
+                    "ts": _iso(at - timedelta(seconds=3)),
+                    "payload": {"text": bot_line.format(**fill), "final": True},
+                })
+            if user_line:
+                events.append({
+                    "kind": "transcript.user", "call_id": call_id,
+                    "ts": _iso(at - timedelta(seconds=1)),
+                    "payload": {"text": user_line.format(**fill), "final": True},
+                })
             events.append({
                 "kind": "tool.called", "call_id": call_id, "ts": _iso(at),
                 "payload": {"name": tool, "args": {"node": node_from}},
@@ -150,6 +243,12 @@ def build_shift_events(
                     "ts": _iso(at + timedelta(seconds=1, milliseconds=200)),
                     "payload": {"patient_id": f"PA-{i:04d}"},
                 })
+            if node_to in {"no_booking", "refused"} and reason:
+                events.append({
+                    "kind": "transcript.bot", "call_id": call_id,
+                    "ts": _iso(at + timedelta(seconds=2)),
+                    "payload": {"text": _REFUSAL_LINES.get(reason, ""), "final": True},
+                })
             node_from = node_to
         events.append(
             {
@@ -159,54 +258,6 @@ def build_shift_events(
                 "payload": {"ms": first_word_ms},
             }
         )
-
-        if i in rich_ids:
-            events.append(
-                {
-                    "kind": "transcript.bot",
-                    "call_id": call_id,
-                    "ts": _iso(call_start + timedelta(seconds=1)),
-                    "payload": {"text": "Clínica Arenal, ¿en qué puedo ayudarte?", "final": True},
-                }
-            )
-            events.append(
-                {
-                    "kind": "transcript.user",
-                    "call_id": call_id,
-                    "ts": _iso(call_start + timedelta(seconds=8)),
-                    "payload": {"text": "Necesito una cita, por favor.", "final": True},
-                }
-            )
-            events.append(
-                {
-                    "kind": "tool.called",
-                    "call_id": call_id,
-                    "ts": _iso(call_start + timedelta(seconds=9)),
-                    "payload": {"name": "route_request", "args": {"intent": "book"}},
-                }
-            )
-            events.append(
-                {
-                    "kind": "tool.returned",
-                    "call_id": call_id,
-                    "ts": _iso(call_start + timedelta(seconds=9, milliseconds=100)),
-                    "payload": {
-                        "name": "route_request",
-                        "status": "routed",
-                        "next_node": "identify",
-                        "justification": "Caller asked to book.",
-                        "reason_codes": ["capture_intent"],
-                    },
-                }
-            )
-            events.append(
-                {
-                    "kind": "node.entered",
-                    "call_id": call_id,
-                    "ts": _iso(call_start + timedelta(seconds=9, milliseconds=150)),
-                    "payload": {"from": "reception", "to": "identify"},
-                }
-            )
 
         events.append(
             {
