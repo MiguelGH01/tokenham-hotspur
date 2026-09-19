@@ -8,6 +8,7 @@ from pipecat.flows import FlowsFunctionSchema, NodeConfig
 from clinic_catalog import load_catalog
 from flows.common import gated_confirmation
 from national_id import is_valid_national_id, normalize_national_id
+from observability.emit import emit_state_patch, trace_tool
 
 FIELDS = (
     "given_name",
@@ -50,6 +51,7 @@ def validate_registration(values, now):
     return patient, sorted(set(errors))
 
 
+@trace_tool()
 async def prepare_registration(args, flow_manager):
     state = flow_manager.state
     from flows.requests import prepare_proposal, revise_request
@@ -89,6 +91,7 @@ async def prepare_registration(args, flow_manager):
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
+@trace_tool()
 async def confirm_registration(args, flow_manager):
     state = flow_manager.state
     if args.get("confirmed") is not True or "registration_draft" not in state:
@@ -98,6 +101,11 @@ async def confirm_registration(args, flow_manager):
     from flows.requests import proposal_status
     from submission import register_action
 
+    draft = state["registration_draft"]
+    await emit_state_patch(
+        flow_manager,
+        patient_name=f"{draft['given_name']} {draft['first_surname']}",
+    )
     if submission.delivery_attempted:
         # A retry of the record the frozen plan already carries is safe; a
         # different one cannot become this call's record any more.

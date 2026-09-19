@@ -1,0 +1,144 @@
+"""Observability store + hub: shift KPIs and conversation detail."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+
+from observability.hub import reset_hub
+from observability.seed_shift import build_shift_events
+from observability.store import (
+    project_decision_trail,
+    project_timeline,
+    reset_store,
+    shift_start_iso,
+)
+
+FIXTURES = Path(__file__).resolve().parents[1] / "observability" / "fixtures"
+
+
+def _load_jsonl(name: str) -> list[dict]:
+    path = FIXTURES / f"{name}.jsonl"
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        events.append(json.loads(line))
+    return events
+
+
+async def _hub(tmp_path):
+    db = tmp_path / "centralita.sqlite"
+    store = await reset_store(db)
+    h = reset_hub(store)
+    await h.ensure_ready()
+    return h, store
+
+
+def test_nuria_fixture_detail_and_actions(tmp_path):
+    async def run():
+        hub, store = await _hub(tmp_path)
+        events = _load_jsonl("nuria_cancel_book")
+        count = await hub.load_fixture_events(events, clear=True)
+        assert count == len(events)
+
+        detail = await store.get_call("CA9723d3")
+        assert detail is not None
+        call = detail["call"]
+        assert call["patient_name"] == "Nuria Bel Aparici"
+        assert call["status"] == "ended"
+        assert call["primary_action"] == "CANCEL"
+        assert call["submitted"] is True
+        assert call["first_word_ms"] == 780
+
+        actions = detail["actions"]
+        assert len(actions) == 2
+        assert [a["verb"] for a in actions] == ["CANCEL", "BOOK"]
+        assert all(a["status"] == "posted" for a in actions)
+        assert all(a["http_status"] == 200 for a in actions)
+
+        timeline = detail["timeline"]
+        types = [t["type"] for t in timeline]
+        assert "utterance" in types
+        assert "tool" in types
+        assert "action" in types
+        assert "submit" in types
+
+        trail = detail["decision_trail"]
+        assert trail
+        assert trail[0]["node"] == "reception"
+        nodes = [s["node"] for s in trail]
+        assert "identify" in nodes
+        await store.close()
+
+    asyncio.run(run())
+
+
+def test_simple_booking_primary_book(tmp_path):
+    async def run():
+        hub, store = await _hub(tmp_path)
+        events = _load_jsonl("simple_booking")
+        await hub.load_fixture_events(events, clear=True)
+        detail = await store.get_call("CA-fixture-amelia")
+        assert detail is not None
+        assert detail["call"]["primary_action"] == "BOOK"
+        assert detail["call"]["submitted"] is True
+        await store.close()
+
+    asyncio.run(run())
+
+
+def test_shift_summary_mix_and_percentiles(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHIFT_START_HOUR", "0")
+
+    async def run():
+        hub, store = await _hub(tmp_path)
+        events = build_shift_events(n_calls=80, seed=7)
+        await hub.load_fixture_events(events, clear=True)
+        since = min(e["ts"] for e in events if e["kind"] == "call.started")
+        summary = await store.shift_summary(since=since)
+
+        assert summary["calls"] == 80
+        assert summary["live_calls"] == 0
+        assert summary["actions"]["posted"] + summary["actions"]["failed"] == 80
+        assert summary["submit"]["posted_calls"] >= 70
+        assert summary["duration"]["median_ms"] is not None
+        assert summary["duration"]["p95_ms"] is not None
+        assert summary["first_word"]["p50_ms"] is not None
+        assert summary["hourly"]
+        assert summary["busiest_hour"] is not None
+
+        mix_actions = {m["action"] for m in summary["mix"]}
+        assert "BOOK" in mix_actions
+        assert sum(m["count"] for m in summary["mix"]) == 80
+        await store.close()
+
+    asyncio.run(run())
+
+
+def test_live_call_counted(tmp_path):
+    async def run():
+        hub, store = await _hub(tmp_path)
+        await hub.start_call("CA-live-1", transport="webrtc")
+        summary = await store.shift_summary(since=shift_start_iso())
+        assert summary["live_calls"] >= 1
+        calls = await store.list_calls(since=None)
+        assert any(c["call_id"] == "CA-live-1" and c["status"] == "live" for c in calls)
+
+        await hub.end_call("CA-live-1")
+        detail = await store.get_call("CA-live-1")
+        assert detail is not None
+        assert detail["call"]["status"] == "ended"
+        await store.close()
+
+    asyncio.run(run())
+
+
+def test_timeline_and_trail_projection():
+    events = _load_jsonl("nuria_cancel_book")
+    timeline = project_timeline(events)  # type: ignore[arg-type]
+    assert any(t["type"] == "submit" and t["verb"] == "BOOK" for t in timeline)
+    trail = project_decision_trail(events)  # type: ignore[arg-type]
+    assert any("FR-identify" in (s.get("reason_codes") or []) for s in trail)

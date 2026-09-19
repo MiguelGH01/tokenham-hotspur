@@ -7,6 +7,7 @@ dependencies = [
     "pipecat-ai[anthropic,deepgram,elevenlabs,evals,google,openai,rnnoise,runner,silero,soniox,webrtc,websocket]>=1.11.0",
     "pipecat-ai[daily]>=1.11.0; sys_platform != 'win32'",
     "httpx",
+    "aiosqlite",
     "tzdata",
 ]
 

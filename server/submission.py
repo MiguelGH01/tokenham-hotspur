@@ -36,7 +36,59 @@ from copy import deepcopy
 from loguru import logger
 
 import audit
+from observability.events import safe_action_payload
 
+
+def _schedule(factory) -> None:
+    """Fire-and-forget an observability emit from a sync setter.
+
+    ``factory`` is a zero-arg callable that returns the awaitable, so we do not
+    construct a coroutine when there is no running loop.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    async def _safe():
+        try:
+            await factory()
+        except Exception:
+            logger.debug("observability emit skipped")
+
+    loop.create_task(_safe())
+
+
+async def _emit_queued(call_id: str, action: dict, *, seq: int) -> None:
+    from observability.emit import emit_action_queued
+
+    await emit_action_queued(
+        call_id,
+        action=str(action.get("action")),
+        reason=action.get("reason"),
+        seq=seq,
+        payload=safe_action_payload(action),
+    )
+
+
+async def _emit_posted(
+    call_id: str,
+    action: dict,
+    *,
+    http_status: int | None,
+    ok: bool,
+    error: str | None = None,
+) -> None:
+    from observability.emit import emit_submit_posted
+
+    await emit_submit_posted(
+        call_id,
+        action=str(action.get("action")),
+        http_status=http_status,
+        ok=ok,
+        reason=action.get("reason"),
+        error=error,
+    )
 #: What a call that never decided anything still has to submit. Silence is
 #: never cheaper than a stated answer, so the fallback is the broadest
 #: non-rule ending in the closed vocabulary.
@@ -167,6 +219,7 @@ class CallSubmission:
             reason=action.get("reason"),
             provisional=provisional,
         )
+        _schedule(lambda: _emit_queued(self.call_id, action, seq=1))
 
     def decide(self) -> None:
         """The conversation can no longer change its mind, so the plan is final.
@@ -183,6 +236,7 @@ class CallSubmission:
         self._reject_write_after_decision()
         self._actions.append(deepcopy(action))
         self._provisional.append(False)
+        _schedule(lambda: _emit_queued(self.call_id, action, seq=len(self._actions)))
 
     def set_offer(self, offer: dict) -> None:
         """Remember a slot that was spoken but not yet confirmed.
@@ -380,6 +434,13 @@ class CallSubmission:
                             failure["status"] = status
                         audit.audit(self.call_id, "submission_result", **failure)
                         if attempt == attempts:
+                            await _emit_posted(
+                                self.call_id,
+                                action,
+                                http_status=status,
+                                ok=False,
+                                error=type(exc).__name__,
+                            )
                             return False
                         await asyncio.sleep(backoff * attempt)
                     else:
@@ -390,6 +451,12 @@ class CallSubmission:
                     self.call_id,
                     "submission_result",
                     verb=action.get("action"),
+                    ok=True,
+                )
+                await _emit_posted(
+                    self.call_id,
+                    action,
+                    http_status=200,
                     ok=True,
                 )
             return True

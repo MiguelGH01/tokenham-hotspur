@@ -7,6 +7,14 @@ NGROK_DOMAIN ?= grooving-april-subzero.ngrok-free.dev
 # bot.py honours it on the eval transport only, never on a real call.
 EVAL_CLOCK ?= 2026-09-18T10:00:00+02:00
 
+# Observability console (make console). It rides on the same process as the
+# WebRTC bot, so the page, the API and the /api/offer endpoint share an origin.
+# CONSOLE_DB keeps demo and test traffic out of whatever the bot has been
+# writing all day; point it at data/centralita.sqlite to read the real thing.
+CONSOLE_PORT ?= 7860
+CONSOLE_DB ?= data/console.sqlite
+CONSOLE_URL := http://localhost:$(CONSOLE_PORT)/console/
+
 # Eval harness settings (make eval-one S=simple_booking_amelia)
 EVAL_PORT ?= 7861
 EVAL_BOT_URL := ws://localhost:$(EVAL_PORT)
@@ -28,13 +36,17 @@ CLOCK ?=
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
 
-.PHONY: help run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+.PHONY: help console console-seed console-reset run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
 CONCURRENCY_PORT ?= 7862
 
 help:
+	@echo "make console      - run the bot and open the oversight console ($(CONSOLE_URL))"
+	@echo "                    CONSOLE_DB=data/centralita.sqlite to read the live database"
+	@echo "make console-seed - fill the console database with a synthetic shift to look at"
+	@echo "make console-reset - delete the console database and start the shift empty"
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
 	@echo "make run-eval     - run the bot as a headless eval server (ws://localhost:7860), for running one scenario yourself"
@@ -59,6 +71,32 @@ help:
 	@echo "                    add CLOCK=<iso> to pin the clinic clock for date-sensitive scenarios"
 	@echo "                    (starts a headless bot on port $(EVAL_PORT), runs, then stops it)"
 	@echo "make eval-bot-stop - kill any leftover eval bot on port $(EVAL_PORT)"
+
+# Foreground on purpose, so Ctrl-C stops the bot. The browser is opened from a
+# subshell once the port answers, so the page never loads before the server does.
+console:
+	@echo ">> console  $(CONSOLE_URL)"
+	@echo ">> database $(SERVER_DIR)/$(CONSOLE_DB)"
+	@( for i in $$(seq 1 40); do \
+		if nc -z localhost $(CONSOLE_PORT) 2>/dev/null; then \
+			if command -v open >/dev/null 2>&1; then open "$(CONSOLE_URL)"; \
+			elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$(CONSOLE_URL)"; \
+			else echo ">> open $(CONSOLE_URL)"; fi; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done ) &
+	@cd $(SERVER_DIR) && OBSERVABILITY_DB=$(CONSOLE_DB) uv run bot.py -t webrtc --port $(CONSOLE_PORT)
+
+# ~120 calls of synthetic traffic, so the Overview has something to show
+# without waiting for a real shift to happen.
+console-seed:
+	cd $(SERVER_DIR) && OBSERVABILITY_DB=$(CONSOLE_DB) \
+		uv run python -m observability.seed_shift -n 120 --load --db $(CONSOLE_DB)
+
+console-reset:
+	@rm -f $(SERVER_DIR)/$(CONSOLE_DB) $(SERVER_DIR)/$(CONSOLE_DB)-wal $(SERVER_DIR)/$(CONSOLE_DB)-shm
+	@echo ">> removed $(SERVER_DIR)/$(CONSOLE_DB)"
 
 run-webrtc:
 	cd $(SERVER_DIR) && uv run bot.py -t webrtc

@@ -5,6 +5,7 @@ from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 
 from flows.common import ROLE_MESSAGE, create_giveup_node
 from national_id import is_valid_national_id, normalize_national_id
+from observability.emit import emit_state_patch, trace_tool
 
 MAX_IDENTIFY_ATTEMPTS = 3
 
@@ -13,6 +14,7 @@ def _phone_digits(value: str) -> str:
     return "".join(ch for ch in value if ch.isdigit())[-9:]
 
 
+@trace_tool()
 async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     from flows.booking import create_slot_node
 
@@ -68,13 +70,28 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
 
     revise_request(flow_manager)
     state["patient"] = patient
+    await emit_state_patch(
+        flow_manager,
+        patient_name=f"{patient['given_name']} {patient['first_surname']}",
+        patient_id=patient["patient_id"],
+    )
     visited = "a returning patient" if patient["has_visited_before"] else "a first-time patient"
     summary = f"Found {patient['given_name']} {patient['first_surname']}, {visited}."
     if state.get("intent") in ("cancel", "reschedule"):
         from flows.appointments import create_appointments_node, load_appointments
         result, node = await load_appointments(flow_manager)
-        return result, node or create_appointments_node()
-    return {"status": "found", "patient_summary": summary}, create_slot_node(flow_manager)
+        return {
+            **result,
+            "patient_summary": summary,
+            "reason_codes": ["FR-identify"],
+            "justification": "Exact national id or phone match on one directory row.",
+        }, node or create_appointments_node()
+    return {
+        "status": "found",
+        "patient_summary": summary,
+        "reason_codes": ["FR-identify"],
+        "justification": "Exact national id or phone match on one directory row.",
+    }, create_slot_node(flow_manager)
 
 
 def _search_patient_schema() -> FlowsFunctionSchema:

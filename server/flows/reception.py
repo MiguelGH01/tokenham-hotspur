@@ -5,8 +5,10 @@ from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 from flows.common import ROLE_MESSAGE
 from flows.identification import create_identify_node
 from flows.requests import begin_request
+from observability.emit import trace_tool
 
 
+@trace_tool()
 async def route_request(args, flow_manager):
     intent = args["intent"]
     if intent not in ("book", "register", "cancel", "reschedule"):
