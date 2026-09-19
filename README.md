@@ -66,7 +66,7 @@ Run all of them, with a fresh bot before each one so no conversation state leaks
 scenarios:
 
 ```bash
-make evals              # from the repo root; logs in server/eval-runs/
+make evals              # from the repo root; logs in server/eval-runs/<timestamp>/
 ```
 
 `make evals` starts its own bot on port 7860, so stop `make run-twilio` / `make run-webrtc`

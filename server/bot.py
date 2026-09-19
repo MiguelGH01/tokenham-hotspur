@@ -8,8 +8,10 @@ Run the bot using::
 
 import asyncio
 import os
+import sys
 import threading
 import uuid
+import wave
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -24,6 +26,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
@@ -61,6 +64,31 @@ REPROMPT_AFTER_SILENCE_SECS = 10.0
 # Harness wall-clock is 180s (SC-three-minutes) and is a fail even with a good record.
 # Commit and hang up before that.
 WALL_CLOCK_COMMIT_SECS = 150.0
+
+# pipecat.runner.run.main() defaults the stderr sink to DEBUG (TRACE with -v), which logs
+# every live STT transcription and TTS utterance — i.e. patient name/DNI/phone/health reason
+# in plaintext. Real calls default to INFO; opt into DEBUG explicitly when triaging locally.
+# The eval Makefile targets set LOG_LEVEL=DEBUG themselves since eval personas are synthetic.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Opt-in: recording a live call is a compliance decision, not just a debugging convenience,
+# so it defaults off. Recordings are call audio only (post-STT/TTS raw PCM), never touched by
+# the LOG_LEVEL redaction above or below — treat this directory like patient data at rest.
+RECORD_CALLS = os.getenv("RECORD_CALLS", "").strip().lower() in {"1", "true", "yes"}
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "run-logs/recordings")
+
+
+def _save_call_recording(call_id: str, audio: bytes, sample_rate: int, num_channels: int) -> None:
+    if not audio:
+        return
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    path = os.path.join(RECORDINGS_DIR, f"{call_id}.wav")
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(num_channels)
+        wf.setsampwidth(2)  # pipecat audio frames are 16-bit PCM
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio)
+    logger.info("Call {}: saved recording to {}", call_id, path)
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -120,10 +148,23 @@ def build_llm():
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
+    # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
+    # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
+    logger.remove()
+    logger.add(sys.stderr, level=LOG_LEVEL)
+
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
     if str(call_id).startswith("local-"):
         logger.error("Call has no start.callSid; submissions will 404")
+
+    audio_recorder = None
+    if RECORD_CALLS:
+        audio_recorder = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
+
+        @audio_recorder.event_handler("on_audio_data")
+        async def on_audio_data(processor, audio, sample_rate, num_channels):
+            await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
     tts = DeepgramTTSService(
@@ -169,6 +210,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             llm,
             tts,
             transport.output(),
+            *([audio_recorder] if audio_recorder is not None else []),
             context_aggregator.assistant(),
         ]
     )

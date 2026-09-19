@@ -220,4 +220,8 @@ __marimo__/
 *.debug.log
 server/eval-runs/
 
+# Call/eval audio recordings (may contain real patient audio — never commit)
+*.wav
+server/run-logs/
+
 # Node.js (client/)
