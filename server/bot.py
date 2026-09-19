@@ -8,7 +8,9 @@ Run the bot using::
 
 import asyncio
 import os
+import sys
 import uuid
+import wave
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -26,6 +28,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -34,12 +37,16 @@ from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
 from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
 from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
+
+try:
+    from pipecat.transports.daily.transport import DailyParams
+except ImportError:  # daily-python has no Windows wheels
+    DailyParams = None
 
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
@@ -57,7 +64,35 @@ from ws_probes import quiet_empty_websocket_probes
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
 quiet_empty_websocket_probes()
-ensure_filter_model()
+try:
+    ensure_filter_model()
+except Exception as exc:
+    logger.warning("Krisp VIVA model unavailable ({}). Continuing without it.", exc)
+
+# pipecat.runner.run.main() defaults the stderr sink to DEBUG (TRACE with -v), which logs
+# every live STT transcription and TTS utterance — i.e. patient name/DNI/phone/health reason
+# in plaintext. Real calls default to INFO; opt into DEBUG explicitly when triaging locally.
+# The eval Makefile targets set LOG_LEVEL=DEBUG themselves since eval personas are synthetic.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+# Opt-in: recording a live call is a compliance decision, not just a debugging convenience,
+# so it defaults off. Recordings are call audio only (post-STT/TTS raw PCM), never touched by
+# the LOG_LEVEL redaction above or below — treat this directory like patient data at rest.
+RECORD_CALLS = os.getenv("RECORD_CALLS", "").strip().lower() in {"1", "true", "yes"}
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "run-logs/recordings")
+
+
+def _save_call_recording(call_id: str, audio: bytes, sample_rate: int, num_channels: int) -> None:
+    if not audio:
+        return
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    path = os.path.join(RECORDINGS_DIR, f"{call_id}.wav")
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(num_channels)
+        wf.setsampwidth(2)  # pipecat audio frames are 16-bit PCM
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio)
+    logger.info("Call {}: saved recording to {}", call_id, path)
 
 
 def _audio_in_filter() -> BaseAudioFilter | None:
@@ -294,9 +329,22 @@ def _stt_settings() -> DeepgramSTTService.Settings:
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
+    # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
+    # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
+    logger.remove()
+    logger.add(sys.stderr, level=LOG_LEVEL)
+
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
     telephony = _is_twilio_session(runner_args)
+
+    audio_recorder = None
+    if RECORD_CALLS:
+        audio_recorder = AudioBufferProcessor(num_channels=2, auto_start_recording=True)
+
+        @audio_recorder.event_handler("on_audio_data")
+        async def on_audio_data(processor, audio, sample_rate, num_channels):
+            await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
 
     stt = DeepgramSTTService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
@@ -372,6 +420,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             llm,
             tts,
             transport.output(),
+            *([audio_recorder] if audio_recorder is not None else []),
             assistant_aggregator,
         ]
     )
@@ -547,11 +596,12 @@ async def _twilio_transport(runner_args: WebSocketRunnerArguments):
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
     transport_params = {
-        "daily": lambda: DailyParams(**_audio_kwargs()),
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
         "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
     }
+    if DailyParams is not None:
+        transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
     if isinstance(runner_args, WebSocketRunnerArguments) and runner_args.transport_type != "websocket":
         transport = await _twilio_transport(runner_args)
     else:

@@ -24,8 +24,9 @@ CLOCK ?=
 # live .env (load_dotenv uses override=True, so .env always wins otherwise).
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
+JOBS ?= 4
 
-.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop evals-parallel dashboard
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -33,7 +34,12 @@ CONCURRENCY_PORT ?= 7862
 
 help:
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
+	@echo "                    (full log written to server/run-logs/webrtc-<timestamp>/bot.log;"
+	@echo "                    defaults to LOG_LEVEL=INFO so live transcripts stay off disk)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
+	@echo "                    (full log written to server/run-logs/twilio-<timestamp>/bot.log;"
+	@echo "                    set RECORD_CALLS=1 to also save each call as a .wav under"
+	@echo "                    server/run-logs/recordings/)"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
 	@echo "make oracle       - offline scoring: where the 196 points are and what each problem expects"
@@ -49,11 +55,38 @@ help:
 	@echo "make eval-spec    - run the spec scenarios in $(EVALS_DIR)/spec/ (capabilities not built yet)"
 	@echo "make eval-one S=<scenario> - run one scenario from $(EVALS_DIR)/, e.g. S=pr06_age_redirect"
 	@echo "                    add CLOCK=<iso> to pin the clinic clock for date-sensitive scenarios"
-	@echo "                    (starts a headless bot on port $(EVAL_PORT), runs, then stops it)"
+	@echo "                    (starts a headless bot on port $(EVAL_PORT), runs, then stops it;"
+	@echo "                    logs under server/eval-runs/<run-timestamp>/)"
+	@echo "make evals-parallel - same GREEN scenarios, split across JOBS concurrent bots (default 4)"
+	@echo "make dashboard    - local live-reading dashboard over server/eval-runs/ and server/run-logs/"
+	@echo "                    (http://localhost:8787; PORT=N to change)"
 	@echo "make eval-bot-stop - kill any leftover eval bot on port $(EVAL_PORT)"
 
 test:
 	cd $(SERVER_DIR) && uv run pytest tests/
+
+ifndef EVAL_RUN_DIR
+EVAL_RUN_DIR := eval-runs/$(shell date +%Y%m%d-%H%M%S)
+endif
+
+run-webrtc:
+	@run_dir="run-logs/webrtc-$$(date +%Y%m%d-%H%M%S)"; \
+	mkdir -p "$(SERVER_DIR)/$$run_dir"; \
+	cd $(SERVER_DIR) && uv run bot.py -t webrtc 2>&1 | tee "$$run_dir/bot.log"; \
+	echo "log: file://$$PWD/$$run_dir/bot.log"
+
+run-twilio:
+	@run_dir="run-logs/twilio-$$(date +%Y%m%d-%H%M%S)"; \
+	mkdir -p "$(SERVER_DIR)/$$run_dir"; \
+	cd $(SERVER_DIR) && uv run bot.py -t twilio 2>&1 | tee "$$run_dir/bot.log"; \
+	echo "log: file://$$PWD/$$run_dir/bot.log"
+
+evals-parallel:
+	@bash scripts/eval_parallel.sh $(JOBS)
+
+PORT ?= 8787
+dashboard:
+	cd $(SERVER_DIR)/scripts/dashboard && uv run --project ../.. python serve.py --port $(PORT)
 
 # A scored run dials the endpoint ten calls at a time and scores each call's
 # record, so restarting the bot (or re-opening the tunnel) mid-run kills cases
@@ -120,10 +153,11 @@ eval-one:
 	[ -f $$scenario ] || scenario=$(EVAL_SPEC_DIR)/$(S).yaml; \
 	[ -f $$scenario ] || { echo "no such scenario: $(S)"; exit 2; }; \
 	$(MAKE) --no-print-directory eval-bot-stop; \
-	echo ">> starting eval bot on port $(EVAL_PORT) (logs: /tmp/pipecat-eval-$(S).log)"; \
+	mkdir -p "$(SERVER_DIR)/$(EVAL_RUN_DIR)"; \
+	echo ">> starting eval bot on port $(EVAL_PORT) (logs: $(SERVER_DIR)/$(EVAL_RUN_DIR)/$(S).bot.log)"; \
 	clock=$$(cat $$scenario.clock 2>/dev/null || echo "$(CLOCK)"); \
 	[ -n "$$clock" ] && echo ">> pinned clinic clock: $$clock"; \
-	( cd $(SERVER_DIR) && DOTENV_PATH="$(DOTENV)" CALL_CLOCK_OVERRIDE="$$clock" uv run bot.py -t eval --port $(EVAL_PORT) > /tmp/pipecat-eval-$(S).log 2>&1 & ); \
+	( cd $(SERVER_DIR) && DOTENV_PATH="$(DOTENV)" LOG_LEVEL=DEBUG CALL_CLOCK_OVERRIDE="$$clock" uv run bot.py -t eval --port $(EVAL_PORT) > "$(EVAL_RUN_DIR)/$(S).bot.log" 2>&1 & ); \
 	ok=0; \
 	for i in $$(seq 1 $(EVAL_BOOT_TIMEOUT)); do \
 		nc -z localhost $(EVAL_PORT) 2>/dev/null && { ok=1; break; }; \
@@ -131,12 +165,14 @@ eval-one:
 	done; \
 	if [ $$ok -ne 1 ]; then \
 		echo ">> eval bot failed to listen on $(EVAL_PORT) after $(EVAL_BOOT_TIMEOUT)s"; \
-		tail -20 /tmp/pipecat-eval-$(S).log; \
+		tail -20 "$(SERVER_DIR)/$(EVAL_RUN_DIR)/$(S).bot.log"; \
 		$(MAKE) --no-print-directory eval-bot-stop; \
 		exit 1; \
 	fi; \
-	( cd $(SERVER_DIR) && PYTHONPATH=. uv run pipecat eval run "$${scenario#$(SERVER_DIR)/}" -v --bot-url $(EVAL_BOT_URL) ); \
+	( cd $(SERVER_DIR) && PYTHONPATH=. uv run pipecat eval run "$${scenario#$(SERVER_DIR)/}" -v -d --logs-dir $(EVAL_RUN_DIR) --bot-url $(EVAL_BOT_URL) ); \
 	status=$$?; \
+	echo "  bot log:   $(SERVER_DIR)/$(EVAL_RUN_DIR)/$(S).bot.log"; \
+	echo "  eval log:  $(SERVER_DIR)/$(EVAL_RUN_DIR)/$(S).eval.log"; \
 	pkill -f "bot.py -t eval --port $(EVAL_PORT)" 2>/dev/null || true; \
 	exit $$status
 
