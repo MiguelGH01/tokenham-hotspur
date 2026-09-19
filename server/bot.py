@@ -114,6 +114,21 @@ def build_llm():
     )
 
 
+def build_eval_judge_llm(config: dict | None = None):
+    """Factory for the eval harness judge (`judge.eval.factory:` in a scenario).
+
+    Reuses the bot's LLM service so the judge does not depend on a local Ollama,
+    but pins the judge model to ``EVAL_JUDGE_MODEL`` (default ``gpt-5.1``): the
+    bot judging its own replies makes verdicts drift with every bot-model swap.
+    A scenario's ``model`` key still wins.
+    """
+    llm = build_llm()
+    override = (config or {}).get("model") or os.getenv("EVAL_JUDGE_MODEL", "gpt-5.1")
+    if override and hasattr(llm, "settings"):
+        llm.settings.model = override
+    return llm
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
