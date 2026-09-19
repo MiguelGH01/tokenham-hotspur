@@ -69,7 +69,9 @@ def _call_id(runner_args: RunnerArguments) -> str:
     call_data = getattr(runner_args, "call_data", None)
     if call_data and call_data.call_id:
         return call_data.call_id
-    return f"local-{uuid.uuid4().hex[:12]}"
+    # The submit API's CallId type requires a well-formed UUID; a non-UUID placeholder
+    # (e.g. a "local-" prefixed hex string) makes every POST for this call 422.
+    return str(uuid.uuid4())
 
 
 def _connected_at() -> datetime:
@@ -239,7 +241,11 @@ async def bot(runner_args: RunnerArguments):
         return {
             "audio_in_enabled": True,
             "audio_out_enabled": True,
-            "audio_in_filter": RNNoiseFilter(),
+            # RNNoiseFilter disabled: pinned pyrnnoise~=0.4.3 calls audiolab's Graph(rate=...),
+            # but the resolved audiolab (and, transitively, av) no longer accept that kwarg —
+            # it crashes the audio input task on connect and silently kills STT for the whole
+            # call. Re-enable once pipecat-ai's `rnnoise` extra pins a compatible audiolab/av.
+            # "audio_in_filter": RNNoiseFilter(),
         }
 
     transport_params = {

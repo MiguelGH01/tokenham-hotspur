@@ -1,4 +1,7 @@
 # PR-01 case simple_booking-14a8720daa02 — Josefa Domínguez Navarro (DNI, returning, GP, earliest)
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
+# Pinned: text_contains asserts the specific earliest doctor (Ortiz Vidal), which only holds
+# for this clock — the real wall clock has since moved past the date this fixture assumed.
 # Expected BOOK: P00001 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / mapfre
 # The exact offer is logged by the bot as "Offer offer-1: {...}" — grep the bot log after the run.
 judge:

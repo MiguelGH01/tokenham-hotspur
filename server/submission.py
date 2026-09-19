@@ -15,6 +15,9 @@ class CallSubmission:
     def set_book(self, offer: dict) -> None:
         self.pending = {"action": "BOOK", **offer}
 
+    def set_register(self, fields: dict) -> None:
+        self.pending = {"action": "REGISTER", **fields}
+
     def set_no_action(self, reason: str) -> None:
         self.pending = {"action": "NO_ACTION", "reason": reason}
 

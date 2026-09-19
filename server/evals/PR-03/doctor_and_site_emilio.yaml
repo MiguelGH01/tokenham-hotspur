@@ -1,5 +1,6 @@
 # PR-03 case doctor_and_site-057078bb5b44 — Emilio Rubio Jiménez (Dr. Sáez the GP, not Dra. Sáenz
 # the paediatrician — a near-miss surname pair)
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
 # Same GAP as doctor_and_site_joaquin: get_earliest_slot needs a provider filter to pin the
 # specific doctor once the name is disambiguated. This case also needs the disambiguation

@@ -1,4 +1,5 @@
 # PR-03 case doctor_and_site-2fe62ca2872f — Joaquín Ramírez Delgado (Dra. Ortiz Vidal at Centro)
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
 # GAP: get_earliest_slot has no provider argument, so a named-doctor ask cannot be filtered
 # server-side yet. The live /availability endpoint already accepts provider_id (verified), so

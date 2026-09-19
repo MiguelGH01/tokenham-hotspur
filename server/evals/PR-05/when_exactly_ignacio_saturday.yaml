@@ -1,4 +1,5 @@
 # PR-05 case when_exactly-0ae0c03a3e6d — Ignacio Vázquez Moreno (GP "on Saturday morning")
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00. Only Centro opens Saturdays, so no
 # site needs to be asked for or passed — the caller's intent (GP, not his usual ortho) wins.
 # Expected BOOK: P00005 / PR01 / centro / review / 2026-09-19T11:00:00+02:00 / cigna

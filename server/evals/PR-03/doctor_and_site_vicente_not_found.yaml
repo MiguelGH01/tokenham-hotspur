@@ -1,5 +1,6 @@
 # PR-03 case doctor_and_site-570e40a3f718 — Vicente Álvarez Castro (asks for "Dr. Fuentes,
 # orthopaedic surgeon" — no such doctor in the catalogue, and the caller refuses anyone else)
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
 # GAP: there is no tool today that checks a named provider against the catalogue before
 # booking, so the bot has no way to recognise Fuentes doesn't exist versus just calling

@@ -1,6 +1,7 @@
 # PR-03 case doctor_and_site-d5b4f04886c5 — Andrés Rubio Vázquez (Dr. Requena at Arenal Norte
 # is on sick leave through 30 Sep -> fall back to the earliest same-specialty doctor at the
 # SAME site, not just anyone)
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
 # GAP: same provider-filter gap as the other doctor_and_site cases, plus the leave-fallback
 # rule itself (drop the named provider, keep specialty+site) is not implemented in

@@ -61,6 +61,7 @@ class ClinicClient:
         specialty_id: str,
         patient_id: str,
         location_id: str | None = None,
+        provider_id: str | None = None,
     ) -> dict:
         query = {
             "date_from": date_from,
@@ -70,6 +71,8 @@ class ClinicClient:
         }
         if location_id:
             query["location_id"] = location_id
+        if provider_id:
+            query["provider_id"] = provider_id
         return await self._request("GET", "/v1/availability", params=query)
 
     async def post_submission(self, action: dict) -> dict:

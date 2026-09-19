@@ -1,6 +1,7 @@
 # PR-03 case doctor_and_site-9904a6d96cdd — Mario Gómez Blanco (Dr. Sáez at Arenal Centro on a
 # Monday — Sáez only holds Centro hours on Fridays -> keep provider+site, take his earliest day
 # there instead of switching doctor or site). Never seen before -> first_visit.
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
 # GAP: same provider-filter gap, plus "ignore the named weekday, keep provider+site" is the
 # opposite of what booking.pick_offer does today (it filters TO the requested weekday and

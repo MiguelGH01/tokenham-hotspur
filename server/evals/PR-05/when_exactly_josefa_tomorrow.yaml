@@ -1,4 +1,5 @@
 # PR-05 case when_exactly-7d2467212026 — Josefa Domínguez Navarro (GP "tomorrow")
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
 # Runs against the default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00 (Friday).
 # "Tomorrow" here coincides with plain earliest (Saturday, the day after the call), so
 # this should call get_earliest_slot exactly like simple_booking_josefa — no extra args.

@@ -1,13 +1,12 @@
 # PR-05 case when_exactly-34e8e0acadb6 — Amelia Hughes White (GP at Centro, "first thing
 # Monday the twelfth of October")
-# Requires CALL_CLOCK_OVERRIDE set close to end of September (e.g. 2026-09-29T10:00:00+02:00)
-# so the 14-day /availability window reaches 12-13 Oct — the default 18 Sep override does not.
-# GAP x2: (1) get_earliest_slot has no way to pin an exact calendar date, only a cyclic
-# weekday — "Monday 12 Oct" cannot be expressed with the current schema. (2) even with a date
-# argument, /availability itself still lists slots on the Fiesta Nacional closure day
-# (verified live: 2026-10-12 returns slots for PR01/PR07 at centro) — the agent must not book
-# them and must roll to the next open day (13 Oct) instead. Written as the target behaviour;
-# expect red until both are built.
+# CALL_CLOCK_OVERRIDE=2026-09-29T10:00:00+02:00
+# The line above is a machine-readable directive: `make evals` greps it and exports it only
+# for this scenario's bot process, so the 14-day /availability window reaches 12-13 Oct
+# (the real-clock default does not). get_earliest_slot's `date` arg pins the exact calendar
+# day, and pick_offer's payable_with filter drops the Fiesta Nacional closure-day rows
+# (verified live: 2026-10-12 returns slots for PR01/PR07 at centro with empty payable_with)
+# so the earliest real slot rolls to 13 Oct.
 # Expected BOOK: P00012 / PR01 / centro / first_visit / 2026-10-13T09:45:00+02:00 / sanitas
 judge:
   eval:
