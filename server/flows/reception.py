@@ -36,7 +36,10 @@ def create_reception_node():
                 "phone or ID in the next step. Clarify only when the need itself is "
                 "genuinely ambiguous, then route immediately. "
                 "Preserve all details already spoken; do not ask them again. "
-                "For cancellation route cancel; for moving an existing appointment route reschedule.",
+                "For cancellation route cancel; for moving an existing appointment route reschedule. "
+                "Cancel two, both, or all upcoming appointments is still intent cancel — route it "
+                "this turn. You have no search or cancel tool on this node: do not ask whose "
+                "appointments they are, do not read an ID back, and do not claim a cancellation.",
             }
         ],
         functions=[

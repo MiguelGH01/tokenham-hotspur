@@ -109,6 +109,14 @@ def test_a_stale_offer_is_not_an_ending():
     }
 
 
+def test_an_unfinished_reschedule_is_not_a_new_booking():
+    state = _state(intent="reschedule", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
+    }
+
+
 def test_cold_booking_uses_the_patients_own_diary_first():
     """One doctor and one site in the history is a habit worth booking against."""
     client = Client(

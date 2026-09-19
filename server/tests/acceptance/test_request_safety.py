@@ -98,6 +98,37 @@ def test_cancel_route_prepares_verified_appointment_and_waits_for_new_yes():
     assert posted == [{'call_id': 'c', 'action': 'CANCEL', 'appointment_id': 'A1'}]
 
 
+def test_cancel_two_posts_both_diary_ids():
+    from flows.appointments import confirm_cancellation, select_appointment
+    from flows.identification import search_patient
+    from flows.reception import route_request
+    posted = []
+    class Client:
+        async def search_directory(self, **kwargs):
+            return [dict(patient_id='P1', national_id='12345678Z', given_name='Ana', first_surname='Test', has_visited_before=True)]
+        async def appointments(self, patient_id):
+            return [
+                dict(appointment_id='A1', patient_id=patient_id, start_time='2026-10-10T10:00:00+02:00', provider_id='PR01', location_id='centro', appointment_type_id='review'),
+                dict(appointment_id='A2', patient_id=patient_id, start_time='2026-10-12T11:00:00+02:00', provider_id='PR02', location_id='norte', appointment_type_id='review'),
+            ]
+        async def post_submission(self, payload):
+            posted.append(payload)
+    messages = [{'role': 'user', 'content': 'cancel both my appointments'}]
+    client = Client()
+    manager = SimpleNamespace(state={'submission': CallSubmission('c', client), 'client': client}, get_current_context=lambda: messages)
+    asyncio.run(route_request({'intent': 'cancel'}, manager))
+    asyncio.run(search_patient(dict(id_type='national_id', id_value='12345678Z', stated_name='Ana Test'), manager))
+    result, node = asyncio.run(select_appointment({'appointment_ids': ['A1', 'A2']}, manager))
+    assert result['status'] == 'needs_confirmation'
+    assert node['name'] == 'cancel_confirm'
+    assert not posted
+    messages.append({'role': 'user', 'content': 'yes, both'})
+    result, node = asyncio.run(confirm_cancellation({}, manager))
+    assert result['status'] == 'accepted'
+    assert [p['appointment_id'] for p in posted] == ['A1', 'A2']
+    assert all(p['action'] == 'CANCEL' for p in posted)
+
+
 def test_reschedule_submission_uses_exact_contract():
     posted = []
     class Client:
