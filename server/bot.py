@@ -72,6 +72,7 @@ from affirmation_watch import AffirmationWatch
 from booking import MADRID
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
+from emergency_watch import EmergencyWatch
 from flows.common import GREETING
 from flows.rails import RAILS
 from flows.reception import create_reception_node
@@ -604,6 +605,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         # model's own confirm turn (see affirmation_watch.py). Triggered by the
         # aggregator's own turn event, wired just below.
         affirmation_watch = AffirmationWatch()
+        # Escalates a red flag the model did not notice (see emergency_watch.py).
+        emergency_watch = EmergencyWatch(call_id)
 
         @user_aggregator.event_handler("on_user_turn_message_added")
         async def on_user_turn_message_added(aggregator, message):
@@ -621,6 +624,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
                     context.set_messages(messages[:-1])
                 return
             affirmation_watch.consider(content)
+            emergency_watch.consider()
 
         @user_aggregator.event_handler("on_user_turn_started")
         async def on_user_turn_started(aggregator, strategy):
@@ -666,6 +670,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             global_functions=RAILS,
         )
         affirmation_watch.bind(flow_manager)
+        emergency_watch.bind(flow_manager, worker)
         client = (
             DryRunSubmit(ClinicClient())
             if isinstance(runner_args, EvalRunnerArguments)
@@ -746,6 +751,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         async def on_client_connected(transport, client):
             nonlocal _start_task
             logger.info("Client connected")
+            emergency_watch.pick_up()
             # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
             # nothing else would ever start the flow and the bot would stay silent until cut off.
             if isinstance(runner_args, WebSocketRunnerArguments):
@@ -759,6 +765,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             nonlocal hung_up
             hung_up = True
             logger.info("Client disconnected")
+            await emergency_watch.aclose()
             await submission.close()
             await runner.cancel()
 
