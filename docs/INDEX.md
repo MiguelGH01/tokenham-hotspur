@@ -11,4 +11,5 @@ Start at [README.md](README.md).
 | Live probe traps | [requirements/10-live-probe-findings.md](requirements/10-live-probe-findings.md) |
 | Agent process map + flow YAML | [agent/](agent/README.md) |
 | Platform API fields | [api/](api/README.md) |
+| Product features backlog (jury + video) | [features.md](features.md) |
 
