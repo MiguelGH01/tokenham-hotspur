@@ -331,8 +331,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     # Placed before the LLM so both frames it emits travel downstream correctly.
     watchdog = SilenceWatchdog(
         silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
-        max_nudges=int(os.getenv("SILENCE_MAX_NUDGES", "2")),
         rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
+        max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "2")),
         is_active=lambda: flow_started,
     )
 
