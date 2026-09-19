@@ -370,3 +370,10 @@ Todas las rutas son relativas a `server/` y los comandos se ejecutan desde ahí.
   100 rpm, 5 requests concurrentes por clave). Proveedor `helmcode` añadido a
   `build_llm()` vía `OpenAILLMService(base_url=...)` y puesto por defecto; `gemini` y
   `openai` siguen disponibles con `LLM_PROVIDER`.
+- 2026-09-19 — Claude vía Cloudflare (default): `LLM_PROVIDER=cloudflare` usa
+  `AnthropicLLMService` contra la API unificada
+  `https://api.cloudflare.com/client/v4/accounts/{id}/ai/v1/messages`, modelo
+  `anthropic/claude-sonnet-4.6`. Requiere `CLOUDFLARE_ACCOUNT_ID` + token con
+  Workers AI Read, y créditos de AI Gateway Unified Billing (Workers Paid no
+  cubre tokens de Claude). `helmcode`, `gemini` y `openai` siguen como
+  alternativas.

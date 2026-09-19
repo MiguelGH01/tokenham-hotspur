@@ -10,7 +10,9 @@ import asyncio
 import os
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 
+from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.filters.base_audio_filter import BaseAudioFilter
@@ -28,6 +30,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
+from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.google.llm import GoogleLLMService
@@ -95,13 +98,82 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
+_CLOUDFLARE_DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
+
+
+def _cloudflare_messages_base_url(account_id: str) -> str:
+    """Anthropic SDK posts to ``{base_url}/v1/messages``.
+
+    Cloudflare's unified Messages endpoint is
+    ``/accounts/{account_id}/ai/v1/messages``, so the base URL must stop at
+    ``/ai`` — not ``/ai/v1``.
+    """
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai"
+
+
+class _CloudflareMessages:
+    """Pipecat calls ``client.beta.messages.create``, which hits ``/v1/messages?beta=true``.
+
+    Cloudflare's unified endpoint rejects that query string (``unrecognized_keys: query``).
+    Route those calls to the stable Messages API instead.
+    """
+
+    def __init__(self, messages):
+        self._messages = messages
+
+    async def create(self, **kwargs):
+        kwargs.pop("betas", None)
+        return await self._messages.create(**kwargs)
+
+
+def _cloudflare_llm() -> AnthropicLLMService:
+    """Claude (default Sonnet 4.6) via Cloudflare's Anthropic-compatible API.
+
+    Billed with AI Gateway Unified Billing credits — Workers Paid unlocks
+    Workers AI hosted models, not third-party Claude tokens. Token needs
+    Account > Workers AI > Read.
+    """
+    account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+    token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
+    if not account_id or not token:
+        raise RuntimeError(
+            "LLM_PROVIDER=cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN "
+            "(Account > Workers AI > Read). Claude is billed with AI Gateway Unified "
+            "Billing credits, not Workers Paid neurons."
+        )
+    model = os.getenv("CLOUDFLARE_LLM_MODEL", _CLOUDFLARE_DEFAULT_MODEL)
+    headers: dict[str, str] = {}
+    gateway_id = os.getenv("CLOUDFLARE_AI_GATEWAY_ID")
+    if gateway_id:
+        headers["cf-aig-gateway-id"] = gateway_id
+    inner = AsyncAnthropic(
+        auth_token=token,
+        base_url=_cloudflare_messages_base_url(account_id),
+        default_headers=headers or None,
+    )
+    client = SimpleNamespace(beta=SimpleNamespace(messages=_CloudflareMessages(inner.messages)))
+    return AnthropicLLMService(
+        api_key=token,
+        client=client,
+        settings=AnthropicLLMService.Settings(
+            model=model,
+            # Voice: don't wait on extended thinking before the first spoken token.
+            thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
+        ),
+    )
+
+
 def build_llm():
-    provider = os.getenv("LLM_PROVIDER", "helmcode")
+    provider = os.getenv("LLM_PROVIDER", "cloudflare")
+    if provider in {"cloudflare", "claude"}:
+        return _cloudflare_llm()
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return OpenAILLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            settings=OpenAILLMService.Settings(
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")
+            ),
         )
     if provider == "gemini":
         return GoogleLLMService(
@@ -121,7 +193,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
     tts = DeepgramTTSService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=DeepgramTTSService.Settings(voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")),
+        settings=DeepgramTTSService.Settings(
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
+        ),
     )
     llm = build_llm()
 
