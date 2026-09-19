@@ -566,6 +566,48 @@ def test_identification_is_active_extracted_flow():
     assert node["functions"][0].handler is search_patient
 
 
+def test_a_valid_id_with_no_directory_row_starts_registration():
+    """PR-04: nid miss is REGISTER, not three retries and give-up."""
+    from flows.identification import search_patient
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            return [
+                dict(
+                    patient_id="P01239",
+                    national_id="99999999R",
+                    given_name="Natalia",
+                    first_surname="Munoz",
+                    has_visited_before=True,
+                )
+            ]
+
+    manager = SimpleNamespace(
+        state={
+            "identify_attempts": 0,
+            "intent": "book",
+            "client": Client(),
+            "submission": CallSubmission("x", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(
+        search_patient(
+            {
+                "stated_name": "Natalia Munoz Gonzalez",
+                "id_type": "national_id",
+                "id_value": "12345678Z",
+            },
+            manager,
+        )
+    )
+    assert result["status"] == "not_on_file"
+    assert node["name"] == "registration"
+    assert manager.state["intent"] == "register"
+    assert "Do not book" in result["instruction"]
+
+
 def test_spoken_identity_and_booking_cues_reuse_what_was_said():
     from flows.booking import spoken_booking_cues
     from flows.identification import create_identify_node, spoken_identity

@@ -16,7 +16,7 @@ async def route_request(args, flow_manager):
     if intent == "register":
         from flows.registration import create_registration_node
 
-        return {"status": "routed"}, create_registration_node()
+        return {"status": "routed"}, create_registration_node(flow_manager)
     return {"status": "routed"}, create_identify_node(flow_manager)
 
 
@@ -61,7 +61,7 @@ async def start_registration(args, flow_manager):
     from flows.registration import create_registration_node
 
     flow_manager.state["intent"] = "register"
-    return {"status": "routed"}, create_registration_node()
+    return {"status": "routed"}, create_registration_node(flow_manager)
 
 
 def start_registration_schema() -> FlowsFunctionSchema:

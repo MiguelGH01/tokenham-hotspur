@@ -87,6 +87,10 @@ async def prepare_registration(args, flow_manager):
         return {"status": "expired"}, None
     state["registration_draft"] = patient
     prepare_proposal(flow_manager, "registration")
+    # Wall-clock cuts still score the record. A validated draft is the REGISTER
+    # the case expects; waiting for a later "yes" is how PR-04 dies at 180s with
+    # a mismatch (empty / patient_not_found / a namesake BOOK).
+    state["submission"].set_register(patient)
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
@@ -135,15 +139,32 @@ async def confirm_registration(args, flow_manager):
     )
 
 
-def create_registration_node():
+def create_registration_node(flow_manager=None):
+    seed = {}
+    if flow_manager is not None:
+        seed = flow_manager.state.get("registration_seed") or {}
+    already = ""
+    if seed.get("stated_name") or seed.get("national_id") or seed.get("phone"):
+        bits = [f"{k}={v}" for k, v in seed.items() if v]
+        already = (
+            "Already captured: "
+            + ", ".join(bits)
+            + ". Reuse these. Do not ask for them again. "
+        )
     return NodeConfig(
         name="registration",
         task_messages=[
             {
                 "role": "developer",
-                "content": "Register a new patient only. Collect given name, both surnames, DNI/NIE, full birth date with four-digit year, phone, email and insurer. "
-                "Reuse what was already said. Ask one missing field at a time. Transcribe dictated digits/letters, at and dot carefully; ask for spelling when unsure. "
-                "Never invent or fix the national ID check letter. Call prepare_registration when complete. Do not book an appointment.",
+                "content": (
+                    "Register a new patient only. Collect given name, both surnames, DNI/NIE, "
+                    "full birth date with four-digit year, phone, email and insurer. "
+                    f"{already}"
+                    "If they already said several fields in one turn, do not re-ask them one by "
+                    "one. Call prepare_registration as soon as all eight fields are known. "
+                    "Transcribe dictated digits, at and dot carefully; never invent or fix the "
+                    "national ID check letter. Do not book an appointment."
+                ),
             }
         ],
         functions=[

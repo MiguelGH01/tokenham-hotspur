@@ -142,6 +142,29 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
         }, None
 
     if len(matches) != 1:
+        # A valid identifier that matches nobody is a new patient (PR-04), not a
+        # third try then give-up. Name-only homonyms never reach here: the
+        # exact nid/phone filter already dropped them.
+        from flows.registration import create_registration_node
+
+        known_id = id_type == "national_id" and is_valid_national_id(id_value)
+        known_phone = id_type == "phone" and len(wanted) == 9
+        if known_id or known_phone:
+            state["intent"] = "register"
+            state["registration_seed"] = {
+                "stated_name": stated_name,
+                "national_id": wanted if known_id else "",
+                "phone": wanted if known_phone else "",
+            }
+            return {
+                "status": "not_on_file",
+                "instruction": (
+                    "This person is not in the clinic records. Register them now. "
+                    "Do not book anyone with a similar name. Do not ask for the "
+                    "identifier again. Collect any missing demographics in as few "
+                    "turns as possible and call prepare_registration. Do not book."
+                ),
+            }, create_registration_node(flow_manager)
         return failed("not_found")
 
     patient = matches[0]
