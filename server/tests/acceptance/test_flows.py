@@ -59,6 +59,7 @@ def test_a_tool_speaks_a_fixed_line_before_it_runs():
     from pipecat.frames.frames import TTSSpeakFrame
 
     from flows.common import TOOL_PROGRESS, announce
+    from flows.identification import create_identify_node
 
     spoken = []
 
@@ -73,6 +74,10 @@ def test_a_tool_speaks_a_fixed_line_before_it_runs():
     assert asyncio.run(lookup({}, manager)) == "ran"
     assert isinstance(spoken[0], TTSSpeakFrame)
     assert spoken[0].text == TOOL_PROGRESS["search_patient"]
+    assert {fn.name for fn in create_identify_node()["functions"]} >= {
+        "search_patient",
+        "start_registration",
+    }
 
 
 def test_near_names_require_clarification():
@@ -524,6 +529,31 @@ def test_identification_is_active_extracted_flow():
     _, node = asyncio.run(route_request({"intent": "book"}, manager))
     assert node["name"] == create_identify_node()["name"]
     assert node["functions"][0].handler is search_patient
+
+
+def test_spoken_identity_and_booking_cues_reuse_what_was_said():
+    from flows.booking import spoken_booking_cues
+    from flows.identification import create_identify_node, spoken_identity
+
+    ctx = [
+        {
+            "role": "user",
+            "content": (
+                "My name is Josefa Dominguez Navarro, DNI 12345678Z, "
+                "I need the GP at Arenal Sur"
+            ),
+        }
+    ]
+    manager = SimpleNamespace(get_current_context=lambda: ctx)
+    identity = spoken_identity(manager)
+    assert identity["id_value"] == "12345678Z"
+    assert "Josefa" in identity["name"]
+    cues = spoken_booking_cues(manager)
+    assert cues["specialty"] == "general_practice"
+    assert cues["site"] == "sur"
+    prompt = create_identify_node(manager)["task_messages"][0]["content"]
+    assert "12345678Z" in prompt
+    assert "Do not ask for them again" in prompt
 
 
 def test_immutable_payload_after_failed_delivery():

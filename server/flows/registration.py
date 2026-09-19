@@ -6,7 +6,7 @@ from datetime import date
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
 from clinic_catalog import load_catalog
-from flows.common import announce, gated_confirmation
+from flows.common import WAIT_FOR_ANSWER, announce, gated_confirmation, speak_tool
 from national_id import is_valid_national_id, normalize_national_id
 
 FIELDS = (
@@ -90,7 +90,6 @@ async def prepare_registration(args, flow_manager):
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
-@announce("confirm_registration")
 async def confirm_registration(args, flow_manager):
     state = flow_manager.state
     if args.get("confirmed") is not True or "registration_draft" not in state:
@@ -100,6 +99,7 @@ async def confirm_registration(args, flow_manager):
     from flows.requests import proposal_status
     from submission import register_action
 
+    announce_save = False
     if submission.delivery_attempted:
         # A retry of the record the frozen plan already carries is safe; a
         # different one cannot become this call's record any more.
@@ -113,23 +113,22 @@ async def confirm_registration(args, flow_manager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is registered yet: the caller has to accept the readback in "
-                    "a turn of their own. Ask them and call confirm_registration again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_registration",
             flow_manager,
             instruction=(
-                "Clarify the caller's correction, condition or unfinished field before "
-                "registering; do not register with an unconfirmed detail. Only call "
-                "confirm_registration again with an unqualified confirmation."
+                "Clarify only the unfinished field; do not re-read the whole record. "
+                "Call confirm_registration only after an unqualified yes."
             ),
         )
         if blocked is not None:
             return blocked
         submission.set_register(state["registration_draft"])
+        announce_save = True
+    if announce_save:
+        await speak_tool(flow_manager, "confirm_registration")
     accepted = await submission.flush()
     return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, "registration"
@@ -174,9 +173,11 @@ def create_registration_confirm_node():
         task_messages=[
             {
                 "role": "developer",
-                "content": "Read back the supplied demographics for explicit confirmation, spelling the email and national ID character by character. "
-                "These are caller-supplied details, not directory data. Ask if everything is correct. Only then confirm_registration. "
-                "If it returns needs_confirmation, the caller has not accepted the readback in a turn of their own yet: ask them and call it again only once they have. "
+                "content": "Read the supplied demographics back once, in one or two spoken sentences. "
+                "Do not spell email or national ID character by character unless they ask. "
+                "These are caller-supplied details, not directory data. Ask if everything is correct, then stop. "
+                "Do not call confirm_registration in the same turn as the readback. "
+                "If it returns needs_confirmation, stay silent; do not read the details again. "
                 "If it returns qualified_confirmation, clarify the correction, condition or unfinished field first. "
                 "If it returns delivery_conflict, the call's record is already settled: do not claim the registration, apologise and say goodbye. "
                 "For corrections call prepare_registration with the whole corrected record. No booking.",
@@ -185,7 +186,7 @@ def create_registration_confirm_node():
         functions=[
             FlowsFunctionSchema(
                 name="confirm_registration",
-                description="Confirm only after the caller accepts the complete readback.",
+                description="Call only after the caller has accepted the one readback in a later turn.",
                 properties={"confirmed": {"type": "boolean"}},
                 required=["confirmed"],
                 handler=confirm_registration,

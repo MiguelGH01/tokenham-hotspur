@@ -103,7 +103,10 @@ def test_a_stale_offer_is_not_an_ending():
         proposal=None,
         offers={"offer-1": dict(OFFER)},
     )
-    assert asyncio.run(resolution.resolve_fallback(state)) == resolution.UNSCORED_REFUSAL
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
+    }
 
 
 def test_cold_booking_uses_the_patients_own_diary_first():
@@ -157,6 +160,11 @@ def test_cold_booking_that_hangs_leaves_the_stated_refusal(monkeypatch):
     monkeypatch.setattr(resolution, "COLD_BOOKING_TIMEOUT_SECS", 0.01)
     state = _state(client=Client(delay=0.2))
     assert asyncio.run(resolution.resolve_fallback(state)) == resolution.UNSCORED_REFUSAL
+
+
+def test_a_booking_call_that_never_identified_is_not_out_of_scope():
+    action = asyncio.run(resolution.resolve_fallback(_state(patient=None, intent="book")))
+    assert action == {"action": "NO_ACTION", "reason": "patient_not_found"}
 
 
 def test_an_unidentified_call_states_the_unscored_refusal():

@@ -37,6 +37,34 @@ def _decide(**overrides):
     return decide_nudge(**kwargs)
 
 
+def test_wait_acknowledgements_are_backchannels_and_yes_is_not():
+    from liveness import is_backchannel
+
+    assert is_backchannel("Mm, okay… I'll wait.")
+    assert is_backchannel("Okay, I'll wait.")
+    assert is_backchannel("Okay, yeah… no problem.")
+    assert is_backchannel("yes") is False
+    assert is_backchannel("Yes please, book that.") is False
+    assert is_backchannel("I need the soonest General Practice appointment") is False
+
+
+def test_a_filler_ack_does_not_restart_the_watchdog_clock():
+    """The caller answering 'I'll wait' used to reset the 6s timer and speak again."""
+    clock = _Clock()
+    watch, pushed = _watchdog(clock, silence_secs=6.0, rerun_after_secs=18.0)
+
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert _filler_count(pushed) == 1
+
+    ack = TranscriptionFrame(text="Okay, I'll wait.", user_id="caller", timestamp="0")
+    run(watch.process_frame(ack, FrameDirection.DOWNSTREAM))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert _filler_count(pushed) == 1
+
+
 def test_not_armed_never_speaks():
     assert _decide(armed_at=None).nudge is False
 

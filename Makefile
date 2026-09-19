@@ -37,9 +37,11 @@ help:
 	@echo "                    (full log written to server/run-logs/webrtc-<timestamp>/bot.log;"
 	@echo "                    defaults to LOG_LEVEL=INFO so live transcripts stay off disk)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
-	@echo "                    (full log written to server/run-logs/twilio-<timestamp>/bot.log;"
+	@echo "                    (console also tee'd to server/bot.log and"
+	@echo "                    server/run-logs/twilio-<timestamp>/bot.log;"
 	@echo "                    set RECORD_CALLS=1 to also save each call as a .wav under"
 	@echo "                    server/run-logs/recordings/)"
+	@echo "                    on PowerShell from server/: .\\run-twilio.ps1"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
 	@echo "make oracle       - offline scoring: where the 196 points are and what each problem expects"
@@ -72,14 +74,14 @@ endif
 run-webrtc:
 	@run_dir="run-logs/webrtc-$$(date +%Y%m%d-%H%M%S)"; \
 	mkdir -p "$(SERVER_DIR)/$$run_dir"; \
-	cd $(SERVER_DIR) && uv run bot.py -t webrtc 2>&1 | tee "$$run_dir/bot.log"; \
-	echo "log: file://$$PWD/$$run_dir/bot.log"
+	cd $(SERVER_DIR) && PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 uv run python -u bot.py -t webrtc 2>&1 | tee "./bot.log" "$$run_dir/bot.log"; \
+	echo "log: file://$$PWD/bot.log"
 
 run-twilio:
 	@run_dir="run-logs/twilio-$$(date +%Y%m%d-%H%M%S)"; \
 	mkdir -p "$(SERVER_DIR)/$$run_dir"; \
-	cd $(SERVER_DIR) && uv run bot.py -t twilio 2>&1 | tee "$$run_dir/bot.log"; \
-	echo "log: file://$$PWD/$$run_dir/bot.log"
+	cd $(SERVER_DIR) && PYTHONUNBUFFERED=1 PYTHONUTF8=1 PYTHONIOENCODING=utf-8 uv run python -u bot.py -t twilio 2>&1 | tee "./bot.log" "$$run_dir/bot.log"; \
+	echo "log: file://$$PWD/bot.log"
 
 evals-parallel:
 	@bash scripts/eval_parallel.sh $(JOBS)

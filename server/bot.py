@@ -11,6 +11,15 @@ import os
 import sys
 import uuid
 import wave
+
+# Piped logs (PowerShell Tee-Object / cmd redirection) switch stdout to
+# cp1252 on Windows; Pipecat's runner banner then dies on box-drawing glyphs.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -22,7 +31,7 @@ from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnal
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import LLMMessagesAppendFrame
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -62,7 +71,7 @@ from flows.common import GREETING
 from flows.rails import RAILS
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
-from liveness import SilenceWatchdog
+from liveness import SilenceWatchdog, is_backchannel
 from llm_deadline import FirstTokenDeadlineLLM
 from resolution import resolve_fallback
 from submission import CallSubmission
@@ -80,6 +89,31 @@ except Exception as exc:
 # in plaintext. Real calls default to INFO; opt into DEBUG explicitly when triaging locally.
 # The eval Makefile targets set LOG_LEVEL=DEBUG themselves since eval personas are synthetic.
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# Process log files (loguru), independent of PowerShell tee. Same tree as recordings.
+LOG_DIR = os.getenv("LOG_DIR", "run-logs")
+_LOG_FILE: str | None = None
+
+
+def _attach_log_sinks() -> str:
+    """Stderr plus a file under LOG_DIR. Safe to call again after logger.remove()."""
+    global _LOG_FILE
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if _LOG_FILE is None:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        _LOG_FILE = os.path.join(LOG_DIR, f"bot-{stamp}.log")
+    logger.remove()
+    logger.add(sys.stderr, level=LOG_LEVEL)
+    logger.add(_LOG_FILE, level=LOG_LEVEL, encoding="utf-8", enqueue=True)
+    logger.add(
+        os.path.join(LOG_DIR, "bot.log"),
+        level=LOG_LEVEL,
+        encoding="utf-8",
+        enqueue=True,
+        rotation="20 MB",
+        retention=10,
+    )
+    return _LOG_FILE
+
 
 # Opt-in: recording a live call is a compliance decision, not just a debugging convenience,
 # so it defaults off. Recordings are call audio only (post-STT/TTS raw PCM), never touched by
@@ -484,10 +518,10 @@ def build_tts(telephony: bool):
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
     # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
-    logger.remove()
-    logger.add(sys.stderr, level=LOG_LEVEL)
+    log_path = _attach_log_sinks()
 
     call_id = _call_id(runner_args)
+    logger.info("Writing logs to {}", os.path.abspath(log_path))
     logger.info("Starting bot for call {}", call_id)
     telephony = _is_twilio_session(runner_args)
 
@@ -520,7 +554,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     watchdog = SilenceWatchdog(
         silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
         rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
-        max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "2")),
+        max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "0")),
         is_active=lambda: flow_started,
     )
 
@@ -538,7 +572,13 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         processor further down the pipeline never sees the turn a watcher would
         exist for.
         """
-        affirmation_watch.consider(getattr(message, "content", None))
+        content = getattr(message, "content", None)
+        if is_backchannel(content):
+            messages = list(context.get_messages())
+            if messages and messages[-1].get("role") == "user":
+                context.set_messages(messages[:-1])
+            return
+        affirmation_watch.consider(content)
 
     @user_aggregator.event_handler("on_user_turn_started")
     async def on_user_turn_started(aggregator, strategy):
@@ -619,20 +659,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             return
         flow_started = True
         await flow_manager.initialize(create_reception_node())
-        # Greeting is LLM-composed (developer message + run) so it flows through
-        # the normal response path: TTS on voice calls, llm_response on eval.
+        # Fixed audio, not an LLM turn: composing the greeting costs seconds,
+        # gets barged into, and paraphrases the clinic name.
         await worker.queue_frames(
-            [
-                LLMMessagesAppendFrame(
-                    messages=[
-                        {
-                            "role": "developer",
-                            "content": f"Open the call with this greeting, then wait for the caller: {GREETING}",
-                        }
-                    ],
-                    run_llm=True,
-                )
-            ]
+            [TTSSpeakFrame(text=GREETING, append_to_context=True)]
         )
 
     async def start_flow_after_grace():
@@ -749,4 +779,6 @@ async def bot(runner_args: RunnerArguments):
 if __name__ == "__main__":
     from pipecat.runner.run import main
 
+    path = _attach_log_sinks()
+    logger.info("Writing logs to {}", os.path.abspath(path))
     main()

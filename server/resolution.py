@@ -178,5 +178,10 @@ async def resolve_fallback(state) -> dict:
         if offer is not None:
             audit.audit(call_id, "fallback_resolved", branch="cold_booking", **offer)
             return book_action(offer)
+    intent = state.get("intent")
+    if intent in {"book", "register", "cancel", "reschedule"}:
+        reason = "no_availability" if patient else "patient_not_found"
+        audit.audit(call_id, "fallback_resolved", branch="clinic_request_unresolved", reason=reason)
+        return {"action": "NO_ACTION", "reason": reason}
     audit.audit(call_id, "fallback_resolved", branch="unscored_refusal", reason="out_of_scope")
     return dict(UNSCORED_REFUSAL)

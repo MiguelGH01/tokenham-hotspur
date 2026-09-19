@@ -7,7 +7,7 @@ actually agree, hedge and deflect, in the three languages the private pool uses.
 
 import pytest
 
-from confirmation import gate_result, has_unresolved_qualification
+from confirmation import gate_result, has_unresolved_qualification, is_clean_yes
 
 
 @pytest.mark.parametrize(
@@ -61,3 +61,17 @@ def test_missing_or_empty_utterance_never_blocks():
 def test_price_topic_alone_does_not_block():
     """A bare mention of payment is not a price question."""
     assert gate_result("yes, I'll pay with mapfre") is None
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "that works for me",
+        "that's fine",
+        "sounds good",
+        "está bien",
+        "me va bien",
+    ],
+)
+def test_spoken_acceptance_without_yes_is_still_consent(utterance):
+    assert is_clean_yes(utterance)

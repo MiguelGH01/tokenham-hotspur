@@ -103,7 +103,16 @@ def has_unresolved_qualification(text: str) -> bool:
 
 def is_affirmative(text: str) -> bool:
     """Require affirmative evidence, not merely absence of a known objection."""
-    return bool(re.search(r"^(?:yes|yeah|yep|ok(?:ay)?|sure|perfect|go ahead|book it|cancel it|confirm|si|vale|de acuerdo|correcto|perfecto|adelante|confirmo|d'acord|va be|no problem|no worries|no hay problema|cap problema|that's great)\b", _normalize(text).lstrip("¡¿")))
+    return bool(re.search(
+        r"^(?:yes|yeah|yep|ok(?:ay)?|sure|perfect|fine|great|alright|all right|"
+        r"go ahead|book it|cancel it|confirm|"
+        r"si|vale|de acuerdo|correcto|perfecto|adelante|confirmo|d'acord|va be|"
+        r"esta bien|está bien|me (?:va|viene) bien|"
+        r"no problem|no worries|no hay problema|cap problema|"
+        r"that(?:'s| is| would be)? (?:fine|good|great|ok|okay|perfect|works)|"
+        r"that one|that time|that slot|it works|works for me|sounds (?:good|great))\b",
+        _normalize(text).lstrip("¡¿"),
+    ))
 
 
 def is_clean_yes(text: str) -> bool:

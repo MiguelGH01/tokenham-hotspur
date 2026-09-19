@@ -1,16 +1,85 @@
 """Identify the patient independently of the caller and route new patients to registration."""
 
+import re
+
 from loguru import logger
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 
 from flows.common import ROLE_MESSAGE, announce, create_giveup_node
+from llm_messages import chat_role, chat_text
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
+_ID_IN_TEXT = re.compile(r"\b(\d{8}\s*-?\s*[A-Za-z]|[XYZxyz]\s*\d{7}\s*-?\s*[A-Za-z])\b")
+_NAME_INTRO = re.compile(
+    r"(?:my name is|i am|i'm|this is|me llamo|soy)\s+"
+    r"([A-Za-záéíóúñüÁÉÍÓÚÑÜ]+(?:\s+[A-Za-záéíóúñüÁÉÍÓÚÑÜ]+){1,3})",
+    re.I,
+)
+_ID_SPLIT = re.compile(
+    r"\b(?:dni|nie|n\.?i\.?e\.?|national id|phone|tel[eé]fono)\b", re.I
+)
+_NAME_FILLER = {
+    "a", "an", "and", "appointment", "book", "booking", "for", "gp", "hello",
+    "hi", "hola", "i", "need", "please", "see", "the", "to", "want", "with",
+    "yes", "yeah",
+}
 
 
 def _phone_digits(value: str) -> str:
     return "".join(ch for ch in value if ch.isdigit())[-9:]
+
+
+def _user_blob(flow_manager) -> str:
+    getter = getattr(flow_manager, "get_current_context", None)
+    if getter is None:
+        return ""
+    try:
+        return " ".join(
+            chat_text(message) or "" for message in getter() if chat_role(message) == "user"
+        )
+    except Exception:
+        return ""
+
+
+def _name_from_blob(blob: str) -> str | None:
+    if intro := _NAME_INTRO.search(blob):
+        return intro.group(1).strip()
+    parts = _ID_SPLIT.split(blob, maxsplit=1)
+    if len(parts) != 2:
+        return None
+    words = [
+        token
+        for token in re.findall(r"[A-Za-záéíóúñüÁÉÍÓÚÑÜ]+", parts[0])
+        if token.lower() not in _NAME_FILLER
+    ]
+    if 2 <= len(words) <= 5:
+        return " ".join(words[-4:])
+    return None
+
+
+def spoken_identity(flow_manager) -> dict:
+    """Name and identifier already in the caller's turns, if any.
+
+    Asking again for a DNI they just said is how calls burn the clock and then
+    submit nothing. This is only a hint for the prompt and a prefill: the
+    directory lookup still has to match.
+    """
+    blob = _user_blob(flow_manager)
+    found: dict[str, str] = {}
+    for match in _ID_IN_TEXT.finditer(blob):
+        raw = re.sub(r"[\s\-]", "", match.group(1))
+        if is_valid_national_id(raw):
+            found["id_type"] = "national_id"
+            found["id_value"] = normalize_national_id(raw)
+            break
+    digits = re.sub(r"\D", "", blob)
+    if "id_value" not in found and len(digits) >= 9 and digits[-9] in "67":
+        found["id_type"] = "phone"
+        found["id_value"] = digits[-9:]
+    if name := _name_from_blob(blob):
+        found["name"] = name
+    return found
 
 
 @announce("search_patient")
@@ -18,7 +87,18 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
     from flows.booking import create_slot_node
 
     state = flow_manager.state
-    id_type, id_value, stated_name = args["id_type"], args["id_value"], args["stated_name"]
+    known = spoken_identity(flow_manager)
+    id_type = args.get("id_type") or known.get("id_type")
+    id_value = args.get("id_value") or known.get("id_value")
+    stated_name = args.get("stated_name") or known.get("name")
+    if not id_type or not id_value or not stated_name:
+        return {
+            "status": "incomplete",
+            "instruction": (
+                "Use the name and identifier already in the caller's turns. "
+                "Do not ask again for a fact they already gave."
+            ),
+        }, None
 
     def failed(status: str):
         state["identify_attempts"] += 1
@@ -78,7 +158,14 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
         from flows.appointments import create_appointments_node, load_appointments
         result, node = await load_appointments(flow_manager)
         return result, node or create_appointments_node()
-    return {"status": "found", "patient_summary": summary}, create_slot_node(flow_manager)
+    return {
+        "status": "found",
+        "patient_summary": summary,
+        "instruction": (
+            "Do not ask the caller to confirm the name or identifier. "
+            "Go straight to finding the appointment."
+        ),
+    }, create_slot_node(flow_manager)
 
 
 def _search_patient_schema() -> FlowsFunctionSchema:
@@ -107,8 +194,31 @@ def _search_patient_schema() -> FlowsFunctionSchema:
     )
 
 
-def create_identify_node() -> NodeConfig:
-    from flows.reception import start_registration
+def create_identify_node(flow_manager=None) -> NodeConfig:
+    from flows.reception import start_registration_schema
+
+    known = spoken_identity(flow_manager)
+    if known.get("name") and known.get("id_value"):
+        already = (
+            f"The caller already gave the name {known['name']} and "
+            f"{known['id_type']} {known['id_value']}. Call search_patient now with those "
+            "values. Do not ask for them again, do not thank them and wait, and do not "
+            "read the identifier back."
+        )
+    elif known.get("name"):
+        already = (
+            f"You already have the name {known['name']}. Ask only for DNI, NIE or phone. "
+            "Do not ask the name again."
+        )
+    elif known.get("id_value"):
+        already = (
+            f"You already have {known['id_type']} {known['id_value']}. Ask only for the "
+            "full name. Do not ask for the identifier again."
+        )
+    else:
+        already = (
+            "Ask only for what is missing. Never re-ask a name or identifier they already said."
+        )
 
     return NodeConfig(
         name="identify",
@@ -120,24 +230,18 @@ def create_identify_node() -> NodeConfig:
                     "Establish who the appointment is for. Example: 'my son's had a temperature' "
                     "→ the patient is the child, not the caller. If they first gave their own "
                     "details and then said it is for someone else, keep them as the caller and "
-                    "search again for the patient with relationship other than self. Establish the patient's full name "
-                    "and ONE exact identifier: their DNI or NIE "
-                    "including the letter, or their phone number. Ask for whatever is missing, one "
-                    "short question at a time. The moment you hold the full name plus one complete "
-                    "identifier, call search_patient immediately — do not ask for a second "
-                    "identifier or a date of birth, and do not read details back first. Never "
-                    "search by name alone. If the caller says they are new, call start_registration. If the result is misheard_id or not_found, say you could not find them "
-                    "and ask them to repeat the identifier slowly, digit by digit. A "
-                    "lookup_failed result is a fault in the clinic's records, not a missing "
-                    "patient: apologise for the delay and call search_patient again with the "
-                    "same details, and never tell the caller they are not in the system. When the caller "
-                    "repeats or corrects the identifier, always call search_patient again with what "
-                    "you heard — never give up on your own; the flow decides when attempts are exhausted."
+                    "search again for the patient with relationship other than self. "
+                    f"{already} "
+                    "The moment you hold the full name plus one complete identifier, call "
+                    "search_patient immediately. Never search by name alone. If the caller says "
+                    "they are new, call start_registration. If the result is misheard_id or "
+                    "not_found, say you could not find them and ask them to repeat the identifier "
+                    "slowly, digit by digit. A lookup_failed result is a fault in the clinic's "
+                    "records: apologise for the delay and call search_patient again with the same "
+                    "details. When they repeat or correct the identifier, call search_patient again."
                 ),
             }
         ],
-        # The fixed greeting is queued by bot.py after initialize(): as a tts_say pre_action,
-        # a caller barging into it drops Flows' ActionFinishedFrame and the node never loads.
         respond_immediately=True,
-        functions=[_search_patient_schema(), start_registration],
+        functions=[_search_patient_schema(), start_registration_schema()],
     )

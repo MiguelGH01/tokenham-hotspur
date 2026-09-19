@@ -37,6 +37,7 @@ model answering.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -74,6 +75,41 @@ DEFAULT_MAX_RERUNS = 2
 #: Spoken when the pipeline stalls. One sentence: it is filler, not content,
 #: and it must not push the call toward the wall-clock limit.
 DEFAULT_FILLER = "One moment please."
+
+_WAIT_ACK = re.compile(r"[^\w\s']+", re.UNICODE)
+
+
+def is_backchannel(text: str | None) -> bool:
+    """True when the caller is only acknowledging a wait, not answering a question.
+
+    A bare "yes" is a booking confirmation and must not match. "Okay, I'll wait"
+    after our holding line is what this is for.
+    """
+    if not text:
+        return False
+    folded = _WAIT_ACK.sub(" ", str(text).lower())
+    folded = " ".join(folded.split())
+    if not folded or len(folded) > 40:
+        return False
+    if folded in {
+        "ok",
+        "okay",
+        "mm",
+        "mhm",
+        "hm",
+        "uh huh",
+        "um",
+        "ah",
+        "no problem",
+        "no worries",
+        "take your time",
+        "okay no problem",
+        "okay yeah no problem",
+    }:
+        return True
+    if "wait" in folded and len(folded.split()) <= 6:
+        return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -185,14 +221,25 @@ class SilenceWatchdog(FrameProcessor):
                 self._armed_at = None
         elif isinstance(frame, BotStoppedSpeakingFrame):
             self._bot_speaking = False
-        elif isinstance(frame, (UserStoppedSpeakingFrame, TranscriptionFrame)):
-            self._arm()
+        elif isinstance(frame, TranscriptionFrame):
+            if not is_backchannel(getattr(frame, "text", None)):
+                self._arm()
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            if self._armed_at is None:
+                self._arm()
 
         await self.push_frame(frame, direction)
 
     def _arm(self) -> None:
-        """The caller has finished a turn, so the bot owes them a reply."""
+        """The caller has finished a turn, so the bot owes them a reply.
+
+        A second utterance while we are already waiting (a filler acknowledgement,
+        a repeat) must not restart the clock: that is what spoke "One moment"
+        twice and then thanked them for waiting.
+        """
         if self._stopped or not self._is_active():
+            return
+        if self._armed_at is not None:
             return
         self._armed_at = self._clock()
         self._fillers_sent = 0

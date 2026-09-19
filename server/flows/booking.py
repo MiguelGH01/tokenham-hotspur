@@ -1,5 +1,6 @@
 """Booking conversation and catalogue-backed provider selection."""
 
+import re
 import unicodedata
 from datetime import date, datetime
 from difflib import SequenceMatcher
@@ -20,10 +21,12 @@ from clinic_catalog import load_catalog, location_ids, location_name, specialty_
 from flows.common import (
     RULE_WORDS,
     TRIAGE_EXAMPLES,
+    WAIT_FOR_ANSWER,
     create_goodbye_node,
     create_refusal_node,
     gated_confirmation,
     announce,
+    speak_tool,
     spoken_provider_name,
 )
 from rules import (
@@ -80,6 +83,36 @@ def _fold(value):
     return "".join(
         c for c in unicodedata.normalize("NFD", value.lower()) if not unicodedata.combining(c)
     ).replace(".", "")
+
+
+def spoken_booking_cues(flow_manager) -> dict:
+    """Specialty, site or doctor already in the caller's turns."""
+    from flows.identification import _user_blob
+
+    blob = _fold(_user_blob(flow_manager))
+    found: dict[str, str] = {}
+    for spec in load_catalog()["specialties"]:
+        name = _fold(spec["name"])
+        sid = spec["id"].replace("_", " ")
+        if name and name in blob:
+            found["specialty"] = spec["id"]
+        elif re.search(rf"\b{re.escape(sid)}\b", blob):
+            found["specialty"] = spec["id"]
+    if "specialty" not in found and re.search(
+        r"\bgp\b|general practitioner|medico de cabecera", blob
+    ):
+        found["specialty"] = "general_practice"
+    for loc in load_catalog()["locations"]:
+        if re.search(rf"\b{re.escape(loc['id'])}\b", blob) or _fold(loc["name"]) in blob:
+            found["site"] = loc["id"]
+    hits = []
+    for provider in load_catalog()["providers"]:
+        surname = _fold(provider["name"].split()[-1])
+        if len(surname) >= 4 and re.search(rf"\b{re.escape(surname)}\b", blob):
+            hits.append(provider)
+    if len(hits) == 1:
+        found["provider_name"] = hits[0]["name"]
+    return found
 
 
 def _title_and_tokens(value):
@@ -234,7 +267,9 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     today = state["connected_at"].astimezone(MADRID).date()
     catalogue = load_catalog()
 
-    specialty, site = args.get("specialty"), args.get("site")
+    cues = spoken_booking_cues(flow_manager)
+    specialty = args.get("specialty") or cues.get("specialty")
+    site = args.get("site") or cues.get("site")
     near_place = (args.get("near_place") or "").strip()
     site_name = location_name(site) if site else None
 
@@ -242,7 +277,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     # which doctor a spoken name means.
     plan = resolve_plan(catalogue, patient, args.get("policy_name"))
 
-    provider_name = args.get("provider_name")
+    provider_name = args.get("provider_name") or cues.get("provider_name")
     provider_id = None
     if provider_name:
         providers = resolve_provider(
@@ -485,7 +520,6 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     return result, create_confirm_node(flow_manager)
 
 
-@announce("confirm_offer")
 async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     from flows.common import create_completion_node, record_already_settled
     from flows.requests import proposal_status
@@ -505,6 +539,7 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     wanted = (
         reschedule_action(appointment["appointment_id"], offer) if reschedule else book_action(offer)
     )
+    announce_booking = False
     if submission.delivery_attempted:
         # A retry of the action the frozen plan already carries is safe — the
         # first POST may have landed. Anything else cannot become this call's
@@ -523,19 +558,16 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is booked yet: the caller has to answer the readback out "
-                    "loud, in a turn of their own. Ask them and call confirm_offer again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_offer",
             flow_manager,
             instruction=(
                 "The caller's confirmation carries a condition, correction, price question or "
-                "request to check an alternative. Do not treat it as consent. Clarify the "
-                "unfinished part first; only call confirm_offer again with an unqualified "
-                "confirmation."
+                "request to check an alternative. Do not treat it as consent. Clarify only the "
+                "unfinished part; do not re-read the appointment. Call confirm_offer only after "
+                "an unqualified yes."
             ),
         )
         if blocked is not None:
@@ -544,6 +576,9 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
             submission.set_reschedule(appointment["appointment_id"], offer)
         else:
             submission.set_book(offer)
+        announce_booking = True
+    if announce_booking:
+        await speak_tool(flow_manager, "confirm_offer")
     accepted = await submission.flush()
     return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, kind
@@ -638,7 +673,11 @@ def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
     live = [key for key in flow_manager.state["offers"] if key in live_keys(flow_manager)]
     return FlowsFunctionSchema(
         name="confirm_offer",
-        description="The caller accepted the offered appointment.",
+        description=(
+            "Book the offered appointment. Call only after the caller has answered "
+            "the one readback in a later turn. Never call this in the same turn as "
+            "the offer, and never to ask them again."
+        ),
         properties={"offer_id": {"type": "string", "enum": live}},
         required=["offer_id"],
         handler=confirm_offer,
@@ -705,14 +744,24 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
     roster = "; ".join(
         f"{p['name']} ({p['specialty_id']})" for p in load_catalog()["providers"]
     )
+    cues = spoken_booking_cues(flow_manager)
+    if cues:
+        already = (
+            "Already requested: "
+            + ", ".join(f"{key}={value}" for key, value in cues.items())
+            + ". Call get_earliest_slot now with those values. Do not ask for them again. "
+        )
+    else:
+        already = "Do not re-ask a specialty, doctor or site they already named. "
     return NodeConfig(
         name="find_slot",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    f"The patient is {patient['given_name']} {patient['first_surname']}. Find out "
-                    "which specialty or named doctor they need. Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
+                    f"The patient is {patient['given_name']} {patient['first_surname']}. {already}"
+                    "Find out which specialty or named doctor they need if that is still missing. "
+                    "Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
                     f"Roster (matching is done in code, never by you): {roster}. "
                     "When the caller states or confirms a specialty — for example 'the GP' — pass "
                     "specialty. If they only described symptoms, pass the specialty from the "
@@ -757,16 +806,17 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Offer the appointment from the summary the tool returned: doctor, site, day "
-                    "and time, including the address if they asked which site is closest. "
-                    "Ask if that works. Nothing is booked until they say yes. On yes, "
-                    "call confirm_offer. If they want something different, call revise_search. If "
+                    "Say the appointment from the summary once: doctor, site, day and time, "
+                    "including the address if they asked which site is closest. Ask if that "
+                    "works, then stop talking. Do not call confirm_offer in this turn. Nothing "
+                    "is booked until they answer. After they say yes, call confirm_offer. If they "
+                    "want something different, call revise_search. If "
                     "confirm_offer returns CANCELLED, or says the call is still running, the "
                     "booking is not recorded yet: say you are finishing it off and call "
                     "confirm_offer again with the same offer_id. If it returns "
-                    "needs_confirmation, the caller has not answered you in a turn of their own "
-                    "yet: ask them to confirm out loud and call confirm_offer only once they "
-                    "have. If it returns qualified_confirmation, clarify the condition, question "
+                    "needs_confirmation, stay completely silent: you already asked. Do not "
+                    "repeat the appointment. Call confirm_offer only after they answer. "
+                    "If it returns qualified_confirmation, clarify the condition, question "
                     "or correction first. If it returns expired, that offer is no longer on the "
                     "table: call revise_search and offer what it returns. If it returns "
                     "delivery_conflict, the call's record is already settled: do not claim the "

@@ -145,6 +145,10 @@ def test_reschedule_keeps_existing_type_and_requires_later_consent():
     result, _ = asyncio.run(get_earliest_slot({'specialty':'general_practice'}, manager))
     assert manager.state['offers'][result['offer_id']]['appointment_type_id'] == 'review'
     assert asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]['status'] == 'needs_confirmation'
+    premature = asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]
+    assert premature['status'] == 'needs_confirmation'
+    assert 'Ask them' not in premature['instruction']
+    assert 'Stay completely silent' in premature['instruction']
     messages.append({'role':'user','content':'yes'})
     assert asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]['status'] == 'accepted'
     assert posted[0]['action'] == 'RESCHEDULE'

@@ -10,7 +10,7 @@ anything is cancelled or moved.
 
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
-from flows.common import announce, gated_confirmation, record_already_settled
+from flows.common import WAIT_FOR_ANSWER, announce, gated_confirmation, record_already_settled, speak_tool
 from flows.requests import prepare_proposal, proposal_status, revise_request
 from submission import cancel_action
 
@@ -59,13 +59,13 @@ async def select_appointment(args, flow_manager):
     return {"status": "needs_confirmation", "readback": appointment}, create_cancel_node()
 
 
-@announce("confirm_cancellation")
 async def confirm_cancellation(args, flow_manager):
     state = flow_manager.state
     appointment = state.get("appointment")
     if not appointment:
         return {"status": "invalid_appointment"}, None
     submission = state["submission"]
+    announce_cancel = False
     if submission.delivery_attempted:
         # A retry of what the frozen plan already carries is safe; a different
         # action cannot become this call's record any more.
@@ -83,24 +83,23 @@ async def confirm_cancellation(args, flow_manager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is cancelled yet: the caller has to confirm the readback out "
-                    "loud, in a turn of their own. Ask them and call confirm_cancellation "
-                    "again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_cancellation",
             flow_manager,
             instruction=(
                 "The caller's answer carries a condition, correction or question. Do not "
-                "treat it as consent to cancel. Clarify the unfinished part first; only "
-                "call confirm_cancellation again with an unqualified confirmation."
+                "treat it as consent to cancel. Clarify only the unfinished part; do not "
+                "re-read the appointment."
             ),
         )
         if blocked is not None:
             return blocked
         submission.set_cancel(appointment["appointment_id"])
+        announce_cancel = True
+    if announce_cancel:
+        await speak_tool(flow_manager, "confirm_cancellation")
     accepted = await submission.flush()
     from flows.common import create_completion_node
 
@@ -128,10 +127,10 @@ def create_cancel_node() -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Read back the selected appointment: its date, time, doctor and site. Ask "
-                    "the caller to confirm the cancellation. If confirm_cancellation returns "
-                    "needs_confirmation, the caller has not answered the readback in a turn of "
-                    "their own yet: ask them and call it again only once they have. If it "
+                    "Read back the selected appointment once: its date, time, doctor and site. "
+                    "Ask the caller to confirm the cancellation, then stop. Do not call "
+                    "confirm_cancellation in the same turn. Do not read it again. "
+                    "If confirm_cancellation returns needs_confirmation, stay silent. If it "
                     "returns qualified_confirmation, clarify the condition, question or "
                     "correction first. If it returns expired, that appointment is no longer the "
                     "one on offer: select it again. If it returns delivery_conflict, do not "
@@ -147,7 +146,7 @@ def create_cancel_node() -> NodeConfig:
 def _confirm_cancellation_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="confirm_cancellation",
-        description="Cancel the selected appointment after explicit confirmation.",
+        description="Cancel after the caller has accepted the one readback in a later turn.",
         properties={},
         required=[],
         handler=confirm_cancellation,
