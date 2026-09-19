@@ -6,6 +6,7 @@ from datetime import date
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
 from clinic_catalog import load_catalog
+from flows.common import gated_confirmation
 from national_id import is_valid_national_id, normalize_national_id
 
 FIELDS = (
@@ -79,6 +80,18 @@ async def confirm_registration(args, flow_manager):
     if args.get("confirmed") is not True or "registration_draft" not in state:
         return {"status": "not_confirmed"}, create_registration_node()
     submission = state["submission"]
+    blocked = gated_confirmation(
+        "confirm_registration",
+        flow_manager,
+        decided=submission.delivery_started,
+        instruction=(
+            "Clarify the caller's correction, condition or unfinished field before "
+            "registering; do not register with an unconfirmed detail. Only call "
+            "confirm_registration again with an unqualified confirmation."
+        ),
+    )
+    if blocked is not None:
+        return blocked
     if not submission.delivery_started:
         submission.set_register(state["registration_draft"])
     accepted = await submission.flush()

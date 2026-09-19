@@ -2,6 +2,9 @@
 
 from pipecat.flows import NodeConfig
 
+import audit
+import confirmation
+
 GREETING = "Clínica Arenal, how can I help you?"
 ROLE_MESSAGE = (
     "You are the receptionist for Clínica Arenal. Answer in the caller's language. "
@@ -35,6 +38,45 @@ RULE_WORDS = {
     "provider_not_found": "there is no doctor by that name at this clinic",
     "no_availability": "there is nothing free in that window",
 }
+
+
+def gated_confirmation(node: str, flow_manager, *, decided: bool = False, instruction: str | None = None):
+    """Block a confirmed write the caller has not unqualifiedly agreed to.
+
+    A "yes, but..." is not consent: a price question, a correction, a request
+    to check an alternative or a negation all mean the conversation is still
+    deciding. The check is deterministic code (see ``confirmation.py``), not
+    model judgement, because whether the record should be delivered is scored.
+
+    Returns ``None`` when the confirmation may proceed, or a ``(result, None)``
+    tuple for the tool to return so it stays in its node and clarifies instead.
+    Conservative in both directions that matter: a plain "yes" never blocks,
+    and a missing transcript never blocks either.
+    """
+    if decided:
+        return None
+    utterance = ""
+    try:
+        for message in reversed(flow_manager.get_current_context()):
+            if message.get("role") == "user":
+                utterance = str(message.get("content") or "")
+                break
+    except Exception:  # no context, no gate: never block on missing data
+        return None
+    reason = confirmation.gate_result(utterance)
+    if reason is None:
+        return None
+    audit.audit(
+        flow_manager.state.get("call_id", "unknown"),
+        "gate_blocked",
+        node=node,
+        reason_code=reason,
+    )
+    return {
+        "status": "qualified_confirmation",
+        "reason_code": reason,
+        "instruction": instruction,
+    }, None
 
 
 def create_refusal_node(reason: str) -> NodeConfig:

@@ -17,7 +17,7 @@ import dates
 import audit
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
-from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node
+from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node, gated_confirmation
 from rules import check_patient_rules, check_provider_rules, resolve_plan
 
 #: The titles a caller and the roster actually use, and the gender each one
@@ -341,6 +341,19 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
         return {"status": "accepted" if accepted else "delivery_failed"}, create_goodbye_node(
             accepted
         )
+    blocked = gated_confirmation(
+        "confirm_offer",
+        flow_manager,
+        decided=submission.delivery_started,
+        instruction=(
+            "The caller's confirmation carries a condition, correction, price question or "
+            "request to check an alternative. Do not treat it as consent. Clarify the "
+            "unfinished part first; only call confirm_offer again with an unqualified "
+            "confirmation."
+        ),
+    )
+    if blocked is not None:
+        return blocked
     try:
         submission.set_book(offer)
     except RuntimeError as exc:
