@@ -1,0 +1,42 @@
+# PR-05 When Exactly — case when_exactly-7d2467212026
+#
+# The law, not the fixture: "tomorrow" is the next calendar day in Europe/Madrid
+# and it MAY BE A SATURDAY. An agent that skips the weekend answers with Monday
+# and fails every private case of this shape.
+#
+# Clock pinned to the instant the public cases assume (Friday 18 September 2026),
+# so the assertion is about the rule rather than about the day the suite runs.
+#   make eval-one S=pr05_tomorrow_is_saturday CLOCK=2026-09-18T10:00:00+02:00
+#
+# Patient P00001 Josefa Domínguez Navarro, Mapfre, returning. Only Dra. Ortiz
+# (PR01) works Saturdays, so Saturday is the only correct day here.
+name: pr05_tomorrow_is_saturday
+judge:
+  eval:
+    factory: "eval_judge.helmcode_judge"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hello, my hay fever is bad again and I'd like to be seen tomorrow if possible."
+    expect:
+      - event: response
+
+  - user: "Josefa Domínguez Navarro, DNI 48064716Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+
+  - user: "The GP please."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          offers a concrete appointment (a doctor plus a day and time), or says
+          nothing is free. The day offered must be Saturday the nineteenth of
+          September, and it must NOT be Monday the twenty-first or any later day.
+          Naming the weekday "Saturday" or the date "19 September" both pass.

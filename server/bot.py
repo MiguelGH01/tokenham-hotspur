@@ -13,12 +13,9 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from loguru import logger
-from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
-from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -27,14 +24,17 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
-from pipecat.runner.utils import create_transport
+from pipecat.runner.utils import create_transport, parse_telephony_websocket
+from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.google.llm import GoogleLLMService
-from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
+from pipecat.transports.websocket.fastapi import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
 
 try:
     from pipecat.transports.daily.transport import DailyParams
@@ -44,14 +44,21 @@ from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
+from audio_models import CallSileroVADAnalyzer, CallSmartTurnAnalyzer, warm_audio_models
 from booking import MADRID
 from clinic.clinic_client import ClinicClient
-from flow import GREETING, RAILS, create_identify_node
-from submission import CallSubmission
+from flow import FILLER, GREETING, RAILS, create_identify_node
+from gateway_llm import StallGuardedLLMService
+from submission import DEFAULT_PENDING, CallSubmission
 
 load_dotenv(override=True)
 
-FORCED_SUBMIT_AFTER_SECS = 150  # the harness caps calls at 3 minutes
+# The platform cuts a call after ~30-35s without audible agent audio (SC-silence-cut).
+# The idle re-prompt is counted from when the bot STOPS speaking.
+REPROMPT_AFTER_SILENCE_SECS = 10.0
+# Harness wall-clock is 180s (SC-three-minutes) and is a fail even with a good record.
+# Commit and hang up before that.
+WALL_CLOCK_COMMIT_SECS = 150.0
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -73,14 +80,29 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
+def _reprompt(context: LLMContext) -> str:
+    """Repeat the bot's last message so silence never outlasts the platform's window.
+
+    The whole message, not just its closing question: a caller who missed the offer cannot
+    answer a bare "Does that work for you?".
+    """
+    spoken = [
+        m["content"]
+        for m in context.get_messages()
+        if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()
+    ]
+    return f"Sorry, are you still there? {spoken[-1]}" if spoken else GREETING
+
+
 def build_llm():
     provider = os.getenv("LLM_PROVIDER", "helmcode")
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
-        return OpenAILLMService(
+        return StallGuardedLLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
-            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s.
+            settings=StallGuardedLLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
+            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s. This covers
+            # opening the stream; StallGuardedLLMService covers a stream that dies mid-response.
             retry_on_timeout=True,
             retry_timeout_secs=3.0,
         )
@@ -106,14 +128,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
     llm = build_llm()
 
+    @llm.event_handler("on_function_calls_started")
+    async def on_function_calls_started(service, function_calls):
+        # Speak while tools hit the clinic API so the silence window never elapses.
+        await service.push_frame(TTSSpeakFrame(text=FILLER, append_to_context=False))
+
     context = LLMContext()
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
-            filter_incomplete_user_turns=True,
+            vad_analyzer=CallSileroVADAnalyzer(),
+            user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
+            # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
+            # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
             user_turn_strategies=UserTurnStrategies(
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
+                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=CallSmartTurnAnalyzer())]
             ),
         ),
     )
@@ -141,7 +170,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
         observers=[],
     )
-    runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
+    # Do not install SIGINT per session: on Windows each call would overwrite the
+    # process handler, and a burst of 20 would cancel the last runner on Ctrl+C.
+    runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
     await runner.add_workers(worker)
 
     flow_manager = FlowManager(
@@ -166,21 +197,38 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
-    async def forced_submit():
-        await asyncio.sleep(FORCED_SUBMIT_AFTER_SECS)
-        logger.warning("Call {} hit {}s: forcing submission", call_id, FORCED_SUBMIT_AFTER_SECS)
-        await submission.flush()
+    # No forced submit on a short timer that overwrites a later BOOK. At 150s we commit
+    # whatever we have and hang up so the 180s wall-clock does not fire.
 
-    timer: asyncio.Task | None = None
+    async def _commit_before_wall_clock():
+        await asyncio.sleep(WALL_CLOCK_COMMIT_SECS)
+        if submission._flushed:
+            return
+        logger.warning("Call {}: committing before the wall-clock cap", call_id)
+        if submission.pending == DEFAULT_PENDING and submission.offered:
+            submission.set_book(submission.offered)
+        await submission.flush()
+        await worker.queue_frames(
+            [
+                TTSSpeakFrame(text="I've noted that. Thank you, goodbye.", append_to_context=False),
+                EndFrame(),
+            ]
+        )
+
+    @context_aggregator.user().event_handler("on_user_turn_idle")
+    async def on_user_turn_idle(aggregator):
+        text = _reprompt(context)
+        logger.info("Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text)
+        await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
 
     flow_started = False
 
     async def start_flow():
-        nonlocal flow_started, timer
+        nonlocal flow_started
         if flow_started:
             return
         flow_started = True
-        timer = asyncio.create_task(forced_submit())  # 150s from call start, not process start
+        worker.create_task(_commit_before_wall_clock(), name="wall-clock-commit")
         await flow_manager.initialize(create_identify_node())
         await worker.queue_frames([TTSSpeakFrame(text=GREETING, append_to_context=True)])
 
@@ -199,28 +247,45 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        if timer:
-            timer.cancel()
         await submission.flush()
         await runner.cancel()
 
     try:
         await runner.run()
     finally:
-        if timer:
-            timer.cancel()
         await submission.flush()
+
+
+async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) -> BaseTransport:
+    """Twilio-shaped WebSocket transport without Twilio credentials.
+
+    create_transport() builds the serializer with auto_hang_up=True, which raises when
+    TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN are empty. The harness speaks Twilio Media
+    Streams but is not Twilio: it hangs up on its own, so no REST hang-up is needed.
+    """
+    transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    runner_args.transport_type = transport_type
+    runner_args.call_data = call_data
+    params.add_wav_header = False
+    params.serializer = TwilioFrameSerializer(
+        stream_sid=call_data["stream_id"],
+        call_sid=call_data["call_id"],
+        params=TwilioFrameSerializer.InputParams(auto_hang_up=False),
+    )
+    return FastAPIWebsocketTransport(websocket=runner_args.websocket, params=params)
 
 
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
+    # Load ONNX off the event loop so a 10–20 socket burst can greet immediately.
+    await asyncio.to_thread(warm_audio_models)
 
+    # Noise suppression is deliberately off: not needed until the noisy-audio problems
+    # (PR-12). When it is, add `"audio_in_filter": <filter>` here — and test it on a real
+    # call first: RNNoiseFilter with pyrnnoise 0.4.3 + av 17 crashes on the first frame,
+    # which kills audio input and leaves the bot deaf for the whole call.
     def _audio_kwargs() -> dict:
-        return {
-            "audio_in_enabled": True,
-            "audio_out_enabled": True,
-            "audio_in_filter": RNNoiseFilter(),
-        }
+        return {"audio_in_enabled": True, "audio_out_enabled": True}
 
     transport_params = {
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
@@ -229,7 +294,10 @@ async def bot(runner_args: RunnerArguments):
     }
     if DailyParams is not None:
         transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
-    transport = await create_transport(runner_args, transport_params)
+    if isinstance(runner_args, WebSocketRunnerArguments):
+        transport = await _telephony_transport(runner_args, transport_params["twilio"]())
+    else:
+        transport = await create_transport(runner_args, transport_params)
     await run_bot(transport, runner_args)
 
 

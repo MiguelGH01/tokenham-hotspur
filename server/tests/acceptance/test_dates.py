@@ -42,3 +42,16 @@ def test_sunday_rolls_to_monday_at_centro():
 def test_fiesta_rolls_to_tuesday():
     assert is_closed_day(date(2026, 10, 12), "centro")
     assert next_open_day(date(2026, 10, 12), "centro", date(2026, 10, 16)) == date(2026, 10, 13)
+
+
+def test_dni_digits_do_not_become_the_calendar_day():
+    when = parse_when(
+        "Amelia Hughes White, DNI 13309713G, first thing on Monday the twelfth of October",
+        CONNECTED,
+    )
+    assert when.target_date == date(2026, 10, 12)
+
+
+def test_manana_is_tomorrow():
+    when = parse_when("para manana", CONNECTED)
+    assert when.target_date == date(2026, 9, 19)

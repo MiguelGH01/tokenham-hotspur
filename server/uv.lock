@@ -3612,7 +3612,7 @@ wheels = [
 [[package]]
 name = "pipecat-quickstart"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "pipecat-ai", extra = ["daily"], marker = "sys_platform != 'win32'" },

@@ -1,0 +1,26 @@
+name: doctor_site_clarification
+judge:
+  eval:
+    factory: "eval_judge.helmcode_judge"
+turns:
+  - expect:
+      - event: response
+  - user: "I need an appointment. I am Chloe Roberts Smith and my NIE is Z4237244M."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+  - user: "With doctor Saez at Arenal Centro, please."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+  - user: "I mean the GP, Martin Saez. Keep Arenal Centro."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: {specialty: general_practice, site: centro}
+      - event: response

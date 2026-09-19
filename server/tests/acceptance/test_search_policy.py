@@ -65,8 +65,8 @@ class FakeAvail:
         self.payload = payload
         self.calls = []
 
-    async def availability(self, *args, **kwargs):
-        self.calls.append(kwargs)
+    async def availability(self, date_from=None, date_to=None, *args, **kwargs):
+        self.calls.append({"date_from": date_from, "date_to": date_to, **kwargs})
         return self.payload
 
 
@@ -156,3 +156,26 @@ def test_leave_keeps_site_drops_provider():
     assert offer["location_id"] == "norte"
     assert client.calls[0]["provider_id"] is None
     assert client.calls[0]["location_id"] == "norte"
+
+
+def test_named_october_day_slides_availability_window():
+    client = FakeAvail({"providers": [], "appointment_type": {}, "blocked": [], "slots": []})
+    patient = {
+        "patient_id": "P00012",
+        "insurer": "sanitas",
+        "referrals": [],
+        "date_of_birth": "1990-01-01",
+        "has_visited_before": False,
+    }
+    asyncio.run(
+        find_offer(
+            client,
+            patient,
+            CONNECTED,
+            specialty="general_practice",
+            site="centro",
+            when_text="first thing on Monday the twelfth of October",
+        )
+    )
+    assert client.calls[0]["date_from"] == "2026-10-13"
+    assert client.calls[0]["date_to"] >= "2026-10-13"

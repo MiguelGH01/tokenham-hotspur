@@ -1,0 +1,37 @@
+# PR-06 The Rules — case the_rules-04b2b5c51b40 (control)
+#
+# The law, not the fixture: this is the case that catches an agent which learned
+# "always refuse dermatology". Every plan gates dermatology, so a control case
+# with the referral in hand must book normally.
+#
+# Patient P00005 Ignacio Vázquez Moreno, DOB 1939-12-09, Cigna, referrals =
+# dermatology + orthopaedics + physiotherapy.
+name: pr06_control_referral_held
+judge:
+  eval:
+    factory: "eval_judge.helmcode_judge"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hello, I have a rash that keeps coming back and I'd like to see a dermatologist."
+    expect:
+      - event: response
+
+  - user: "Ignacio Vázquez Moreno, DNI 65699248R."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+
+  - user: "The earliest dermatology appointment please."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          offers a concrete dermatology appointment (a doctor plus a day and
+          time), or says nothing is free in that window. It must NOT mention a
+          referral, must not mention insurance coverage, and must not refuse.

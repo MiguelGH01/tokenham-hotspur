@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import threading
 
 import httpx
 from loguru import logger
@@ -16,21 +17,35 @@ SUBMIT_ROUTES = {
 }
 ATTEMPTS = 2
 RETRY_DELAY_SECS = 1.0
+_HTTP_LOCK = threading.Lock()
+_SHARED: dict[tuple, httpx.AsyncClient] = {}
 
 
 class ClinicClient:
-    def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 5.0):
+    def __init__(self, base_url: str | None = None, api_key: str | None = None, timeout: float = 3.0):
         self._base_url = (base_url or os.environ["CLINIC_API_BASE_URL"]).rstrip("/")
         self._headers = {"X-Api-Key": api_key or os.environ["CLINIC_API_KEY"]}
         self._timeout = timeout
 
+    def _http(self) -> httpx.AsyncClient:
+        """One keepalive pool per (base, key, timeout) so 20 sockets do not open 20 TLS sessions."""
+        key = (self._base_url, self._headers.get("X-Api-Key"), self._timeout)
+        with _HTTP_LOCK:
+            client = _SHARED.get(key)
+            if client is None or client.is_closed:
+                _SHARED[key] = client = httpx.AsyncClient(
+                    base_url=self._base_url,
+                    headers=self._headers,
+                    timeout=self._timeout,
+                    limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
+                )
+            return client
+
     async def _request(self, method: str, path: str, **kwargs) -> dict:
+        client = self._http()
         for attempt in range(1, ATTEMPTS + 1):
             try:
-                async with httpx.AsyncClient(
-                    base_url=self._base_url, headers=self._headers, timeout=self._timeout
-                ) as client:
-                    response = await client.request(method, path, **kwargs)
+                response = await client.request(method, path, **kwargs)
                 if response.status_code == 409:
                     logger.info("{} {} -> 409 (already accepted)", method, path)
                     return response.json()

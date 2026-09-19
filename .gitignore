@@ -218,5 +218,6 @@ __marimo__/
 # Pipecat eval artifacts
 *.eval.log
 *.debug.log
+server/eval-runs/
 
 # Node.js (client/)

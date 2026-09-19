@@ -68,11 +68,24 @@ def pick_offer(
         return None
 
     start, _, slot = min(candidates, key=lambda c: (c[0], c[1]))
+    return compile_book(patient, slot, start)
+
+
+def compile_book(patient: dict, slot: dict, start: datetime | None = None) -> dict:
+    """Wire-shape BOOK fields. Slot is Europe/Madrid, minute precision, explicit offset."""
+    from clinic.clinic_catalog import match_plan
+
+    when = (start or datetime.fromisoformat(slot["start_time"])).astimezone(MADRID)
+    when = when.replace(second=0, microsecond=0)
+    raw = patient.get("insurer")
+    if isinstance(raw, dict):
+        raw = raw.get("id") or raw.get("name")
+    policy = match_plan(str(raw or "")) or raw
     return {
         "patient_id": patient["patient_id"],
         "provider_id": slot["provider_id"],
         "location_id": slot["location_id"],
         "appointment_type_id": slot["appointment_type_id"],
-        "slot": start.isoformat(),
-        "policy_id": patient["insurer"],
+        "slot": when.isoformat(),
+        "policy_id": policy,
     }

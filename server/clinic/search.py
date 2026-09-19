@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from booking import MADRID, pick_offer, search_window
 from clinic.clinic_catalog import (
     holds_referral,
+    load_catalog,
     location_ids,
     match_providers,
     next_open_day,
@@ -21,9 +22,22 @@ from clinic.clinic_catalog import (
 from dates import parse_when
 
 
-def _window_dates(connected_at: datetime) -> tuple[date, date]:
-    start, end = search_window(connected_at)
-    return date.fromisoformat(start), date.fromisoformat(end)
+def _calendar_end() -> date:
+    return date.fromisoformat(load_catalog()["calendar"]["ends"])
+
+
+def _span_days() -> int:
+    return int(load_catalog()["calendar"]["max_span_days"]) - 1
+
+
+def _window_dates(connected_at: datetime, around: date | None = None) -> tuple[date, date]:
+    """14-day span the API accepts. Slide it forward when the caller named a later day."""
+    earliest = date.fromisoformat(search_window(connected_at)[0])
+    ends = _calendar_end()
+    start = around if around and around > earliest else earliest
+    if start > ends:
+        start = ends
+    return start, min(start + timedelta(days=_span_days()), ends)
 
 
 def _reason_from_blocked(blocked: list, provider_id: str | None = None) -> str | None:
@@ -68,15 +82,22 @@ async def find_offer(
         return {"status": "invalid", "specialties": specialty_ids(), "sites": location_ids()}, None
 
     specialty = remap_specialty(specialty, patient, connected_at)
-    date_from, date_to = _window_dates(connected_at)
     when = parse_when(when_text, connected_at)
     target = when.target_date
-    weekday = weekday or (None if target else when.weekday)
+    # A named calendar day in what the caller said beats a weekday the model guessed.
+    if target:
+        weekday = None
+    else:
+        weekday = weekday or when.weekday
     part_of_day = part_of_day or when.part_of_day
     if when.first_thing and not part_of_day:
         part_of_day = "morning"
 
     named = match_providers(provider_spoken, specialty) if provider_spoken else []
+    if provider_spoken and not named:
+        named = match_providers(provider_spoken)
+        if len(named) == 1:
+            specialty = remap_specialty(named[0]["specialty_id"], patient, connected_at)
     if provider_spoken and not named:
         if others_ok is False:
             return {"status": "refused", "reason": "provider_not_found"}, None
@@ -97,19 +118,22 @@ async def find_offer(
         keep_provider_site = False
         site = None
 
-    if provider and on_leave_on(provider, date_from):
+    earliest = date.fromisoformat(search_window(connected_at)[0])
+    if provider and on_leave_on(provider, earliest):
         if not site:
             site = provider["schedules"][0]["location_id"]
         provider = None
         keep_provider_site = False
 
     if target:
-        rolled = next_open_day(target, site, date_to)
-        if rolled is None or rolled < date_from:
+        rolled = next_open_day(target, site, min(_calendar_end(), target + timedelta(days=_span_days())))
+        if rolled is None or rolled < earliest:
             return {"status": "no_slots", "blocked": []}, None
         if rolled != target:
             weekday = None
         target = rolled
+
+    date_from, date_to = _window_dates(connected_at, around=target)
 
     try:
         availability = await client.availability(

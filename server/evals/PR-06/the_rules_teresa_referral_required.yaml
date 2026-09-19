@@ -1,0 +1,39 @@
+# PR-06 The Rules — case the_rules-d760519fdfcd
+#
+# The law, not the fixture: a referral-gated specialty refuses without the
+# referral, and the missing referral beats the fact that the plan covers the
+# specialty. The reason submitted must be referral_required, not
+# specialty_not_covered and not not_eligible_age.
+#
+# Patient P00004 Teresa López García, DOB 1996-08-14, ASISA, referrals = physio
+# only. Every plan gates dermatology, so this shape is case-independent.
+name: pr06_referral_required
+judge:
+  eval:
+    factory: "eval_judge.helmcode_judge"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hello, I need to see a dermatologist, I have a mole that looks different."
+    expect:
+      - event: response
+
+  - user: "Teresa López García, DNI 60153984Z."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+
+  - user: "The earliest dermatology appointment you have, please."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          explains that a dermatology appointment needs a referral and that the
+          clinic has none for this patient, and does not offer a dermatology
+          appointment. It must not mention insurance, age, or a missing plan, and
+          it must not offer an appointment in any other specialty.

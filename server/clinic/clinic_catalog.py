@@ -20,6 +20,7 @@ CATALOG_PATH = next(
 
 _TITLE = re.compile(r"\b(dra?|doctora|doctor|don|doña|dona|d)\.?\b", re.IGNORECASE)
 GENERAL_COMPLAINT = frozenset({"general_practice", "paediatrics"})
+CATALOG_PATH = Path(__file__).resolve().parent.parent.parent / "clinic.json"
 
 
 @lru_cache(maxsize=1)

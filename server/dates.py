@@ -9,6 +9,17 @@ from datetime import date, datetime, timedelta
 from booking import MADRID, WEEKDAYS
 
 _WEEKDAY = {name: i for i, name in enumerate(WEEKDAYS)}
+_WEEKDAY.update(
+    {
+        "lunes": 0,
+        "martes": 1,
+        "miercoles": 2,
+        "jueves": 3,
+        "viernes": 4,
+        "sabado": 5,
+        "domingo": 6,
+    }
+)
 _MONTHS = {
     "january": 1,
     "february": 2,
@@ -85,7 +96,7 @@ def _named_calendar_day(text: str, call_day: date) -> date | None:
     year_m = re.search(r"\b(20\d{2})\b", text)
     year = int(year_m.group(1)) if year_m else call_day.year
     day = None
-    day_m = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", text)
+    day_m = re.search(r"(?<!\d)(\d{1,2})(?:st|nd|rd|th)?(?!\d)", text)
     if day_m:
         day = int(day_m.group(1))
     else:
@@ -110,9 +121,16 @@ def parse_when(text: str | None, connected_at: datetime) -> WhenConstraint:
     elif "morning" in raw or first_thing:
         part = "morning"
 
-    if re.search(r"\btomorrow\b", raw) and "day after tomorrow" not in raw:
+    por_la_manana = bool(re.search(r"\bpor la manana\b", raw))
+    if por_la_manana:
+        part = part or "morning"
+    if (
+        (re.search(r"\btomorrow\b", raw) or (re.search(r"\bmanana\b", raw) and not por_la_manana))
+        and "day after tomorrow" not in raw
+        and "pasado manana" not in raw
+    ):
         return WhenConstraint(target_date=call_day + timedelta(days=1), part_of_day=part, first_thing=first_thing)
-    if "day after tomorrow" in raw:
+    if "day after tomorrow" in raw or "pasado manana" in raw:
         return WhenConstraint(target_date=call_day + timedelta(days=2), part_of_day=part, first_thing=first_thing)
     if "fortnight" in raw or "two weeks" in raw:
         return WhenConstraint(target_date=call_day + timedelta(days=14), part_of_day=part, first_thing=first_thing)
@@ -120,7 +138,11 @@ def parse_when(text: str | None, connected_at: datetime) -> WhenConstraint:
         return WhenConstraint(target_date=call_day + timedelta(days=7), part_of_day=part, first_thing=first_thing)
 
     named = _named_calendar_day(raw, call_day)
-    weekday = next((name for name in WEEKDAYS if re.search(rf"\b{name}\b", raw)), None)
+    weekday_key = next(
+        (name for name in _WEEKDAY if re.search(rf"\b{re.escape(name)}\b", raw)),
+        None,
+    )
+    weekday = WEEKDAYS[_WEEKDAY[weekday_key]] if weekday_key else None
 
     if named:
         return WhenConstraint(target_date=named, weekday=None, part_of_day=part, first_thing=first_thing)

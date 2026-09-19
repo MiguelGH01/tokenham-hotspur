@@ -44,6 +44,17 @@ def test_flush_is_idempotent():
     assert len(client.posted) == 1
 
 
+def test_committed_book_does_not_use_later_offer():
+    client = FakeClient()
+    sub = CallSubmission("call-5", client)
+    sub.set_offer(OFFER)
+    sub.set_book(OFFER)
+    asyncio.run(sub.flush())
+    assert client.posted[0]["action"] == "BOOK"
+    asyncio.run(sub.flush())
+    assert len(client.posted) == 1
+
+
 def test_set_register():
     client = FakeClient()
     sub = CallSubmission("call-4", client)

@@ -1,0 +1,51 @@
+from clinic.speech import (
+    greeting_stripped,
+    infer_provider_spoken,
+    infer_site,
+    infer_specialty,
+    parse_register,
+    register_complete,
+    wants_register,
+)
+
+
+def test_infer_site_from_spoken_name():
+    assert infer_site("at Arenal Norte please") == "norte"
+    assert infer_site("Arenal Centro on Monday") == "centro"
+
+
+def test_infer_saez_not_saenz():
+    name = infer_provider_spoken("I'd like to see Dr. Sáez the GP", "general_practice")
+    assert name and "Sáez" in name and "Sáenz" not in name
+
+
+def test_infer_iglesias():
+    name = infer_provider_spoken("could I see Dra. Iglesias?", "dermatology")
+    assert name and "Iglesias" in name
+
+
+def test_fuentes_is_nobody():
+    assert infer_provider_spoken("Dr. Fuentes, the orthopaedic surgeon", "orthopaedics") is None
+
+
+def test_greeting_does_not_eat_saturday_morning():
+    assert "saturday morning" in greeting_stripped("Good morning, could I see a GP on Saturday morning").lower()
+
+
+def test_infer_specialty_from_complaint():
+    assert infer_specialty("I'd like a GP on Saturday morning") == "general_practice"
+    assert infer_specialty("orthopaedics this coming Thursday, hip") == "orthopaedics"
+
+
+def test_parse_register_fills_from_speech():
+    spoken = (
+        "I am a new patient. Joaquín González Ortega, DNI 18921027P, "
+        "born on the twenty-fifth of June 1970. Phone 783869132, "
+        "email joaquingonzalez24@hotmail.com, insured with Cigna."
+    )
+    fields = parse_register({"given_name": "Joaquín", "first_surname": "González", "second_surname": "Ortega"}, spoken)
+    assert fields["national_id"].replace(" ", "").upper() == "18921027P"
+    assert fields["date_of_birth"] == "1970-06-25"
+    assert fields["email"] == "joaquingonzalez24@hotmail.com"
+    assert register_complete(fields)
+    assert wants_register(spoken)
