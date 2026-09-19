@@ -123,9 +123,16 @@ funcionando (el guion de demo).
 - **Reutiliza:** `set_escalate` en [submission.py:231](../server/submission.py#L231)
   existe pero nadie lo llama desde la conversación; fallback en
   [resolution.py:54](../server/resolution.py#L54).
-- **Idea de Adolfo:** usar "typesafeai" / "jev" y su modelo como detector. **Sin
-  verificar: no hay rastro en el repo y la sesión que escribió esto no sabe qué es.**
-  Primer paso del brainstorm: Adolfo explica qué es, API, latencia y coste.
+- **Idea de Adolfo:** usar Jev, de TypeSafe AI, como detector. Mirado el 19-sep en su
+  documentación: no genera texto; se le manda lo que ha dicho el paciente y una lista de
+  preguntas, y devuelve para cada una una probabilidad (`Noul`: sí/no entre 0 y 1;
+  `Score`: nivel 0–3; `choice`: una opción). SDK `typesafe-sdk`, modelo `jev-1.12`, clave
+  en `TYPESAFE_API_KEY`. Anuncian 70–500 ms y $0,042 por millón de tokens de entrada.
+  **Sin comprobar:** que tengamos acceso (está en early access con lista de espera), que
+  entienda español (la documentación no lo dice) y que el SDK tenga cliente asíncrono.
+- **Ampliación propuesta (19-sep):** el caso "pasar a una persona según el tema" del
+  agent builder (feature 4) se hace aquí, como un guardarraíl único: urgencias y temas
+  que recepción quiera derivar son preguntas de la misma lista.
 - **Preguntas abiertas:**
   - ¿Detector externo, reglas propias sobre las 5 frases, o los dos (externo + red de
     seguridad determinista)? El error caro es el falso negativo.
@@ -162,6 +169,24 @@ funcionando (el guion de demo).
   - ¿Qué no se puede tocar nunca? (reglas de seguridad de la feature 3, privacidad)
 - **Demo:** en pantalla se añade "el Dr. X no viene mañana" y se cambia el tono; la
   siguiente llamada lo refleja.
+- **Casos decididos por Adolfo (19-sep, tras `/explore`):**
+  - Entran: médico ausente (el `leave` que `rules.py` ya interpreta); día cerrado
+    (`closure_days`, clínica entera); un médico deja de aceptar un seguro
+    (`refused_insurers`); avisos que el agente dice en voz alta al confirmar (solo si
+    coinciden centro y fecha); tono (una frase añadida al system prompt).
+  - Para todos: cada aviso caduca solo, y cuando influye en una llamada queda apuntado
+    en su `audit-<call_id>.ndjson` (responde "¿por qué dijo eso?").
+  - Fuera: saludo editable.
+  - Guardado para luego: preguntas frecuentes (riesgo: que invente lo que no está escrito).
+  - Sin decidir: pasar a una persona según el tema (se solapa con la feature 3);
+    repartir carga y ausencia de medio día (lógica nueva sobre el camino puntuado).
+  - Los tres primeros cambian el registro enviado: solo activos con el marcador cerrado
+    (`SC-freeze`). Avisos hablados y tono no lo cambian (`SC-conversation-unscored`).
+- **Frontend:** no hay ninguno en el repo ni en ninguna rama remota (comprobado 19-sep;
+  lo único web es el dashboard de evals, solo lectura, en
+  `origin/merge/flows-agentic-improvements`). La pantalla de edición va al final de la
+  cola hasta que se suba; antes se hace el motor (fichero de avisos + que el agente lo
+  respete), que no depende de ella.
 
 ---
 
