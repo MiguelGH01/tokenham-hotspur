@@ -1,0 +1,31 @@
+# PR-03 case doctor_and_site-057078bb5b44 — Emilio Rubio Jiménez (Dr. Sáez the GP, not Dra. Sáenz
+# the paediatrician — a near-miss surname pair)
+# Default CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00.
+# Same GAP as doctor_and_site_joaquin: get_earliest_slot needs a provider filter to pin the
+# specific doctor once the name is disambiguated. This case also needs the disambiguation
+# itself (Sáez GP vs Sáenz paediatrics) to happen before the tool call.
+# Expected BOOK: P01850 / PR03 / sur / review / 2026-09-21T09:00:00+02:00 / mapfre
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: doctor_and_site_emilio
+turns:
+  - user: "Hi, this is Emilio Rubio Jiménez, DNI 50714604H. I'd like to see Dr. Sáez, the GP, at Arenal Sur please."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: sur }
+      - event: response
+        eval: "the response offers an appointment with Dr. Sáez the general practitioner at Arenal Sur, and does not confuse him with Dra. Sáenz the paediatrician"
+  - user: "Yes, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

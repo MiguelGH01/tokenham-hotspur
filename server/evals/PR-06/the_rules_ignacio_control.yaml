@@ -1,0 +1,35 @@
+# PR-06 case the_rules-04b2b5c51b40 — Ignacio Vázquez Moreno (control case: adult WITH the
+# required derm referral books normally — guards against the bot over-generalising "always
+# refuse dermatology" from the other the_rules cases). Verified live: P00005, Cigna,
+# referrals=[dermatology, orthopaedics, physiotherapy]. /availability for dermatology on him
+# (no site given) returns PR12 Vilar norte as the earliest, 2026-09-21T10:15:00+02:00 —
+# same slot Gloria's case redirects to (independent calls, read-only EHR).
+# This one should already pass today: it only needs search_patient + a plain get_earliest_slot,
+# no missing feature. Kept alongside the_rules_* as a regression guard so a future
+# referral/plan-coverage change (built for the other four cases) can't start blocking a patient
+# who is actually covered.
+# Expected BOOK: P00005 / PR12 / norte / dermatology_review / 2026-09-21T10:15:00+02:00 / cigna
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+name: the_rules_ignacio_control
+turns:
+  - user: "Hi, Ignacio Vázquez Moreno, phone 731 169 716. This rash keeps coming back, could I see Dermatology as soon as possible?"
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: phone }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: dermatology }
+      - event: response
+        eval: "the response offers a dermatology appointment and does not refuse or ask for a referral he already has"
+  - user: "Yes, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

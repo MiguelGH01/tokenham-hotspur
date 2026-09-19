@@ -33,18 +33,27 @@ def pick_offer(
     connected_at: datetime,
     weekday: str | None = None,
     part_of_day: str | None = None,
+    closed_days: frozenset[str] | None = None,
 ) -> dict | None:
+    """`closed_days`: ISO dates the clinic is shut. The API still lists slots on them (LIVE-01),
+    payable ones when a patient_id is passed, so only the calendar can rule them out.
+
+    ``None`` (the default) uses the catalogue. Pass an empty frozenset to disable
+    that filter — how the unit tests pin this function's own logic.
+    """
+    if closed_days is None:
+        closed_days = frozenset(load_catalog()["calendar"]["closure_days"])
     call_day = connected_at.astimezone(MADRID).date()
     load = Counter(slot["provider_id"] for slot in availability["slots"])
 
     candidates = []
     for slot in availability["slots"]:
         start = datetime.fromisoformat(slot["start_time"]).astimezone(MADRID)
-        if start.date().isoformat() in load_catalog()["calendar"]["closure_days"]:
-            continue
         if "payable_with" in slot and patient["insurer"] not in slot["payable_with"]:
             continue
         if start.date() <= call_day or not _matches(start, weekday, part_of_day):
+            continue
+        if start.date().isoformat() in closed_days:
             continue
         candidates.append((start, load[slot["provider_id"]], slot))
     if not candidates:

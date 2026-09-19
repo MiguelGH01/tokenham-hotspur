@@ -3,6 +3,9 @@ SERVER_DIR := server
 # dashboard Endpoint stays fixed across restarts (OP-tunnel), then either
 # export NGROK_DOMAIN in your shell or pass it inline: make tunnel NGROK_DOMAIN=...
 NGROK_DOMAIN ?= grooving-april-subzero.ngrok-free.dev
+# The eval scenarios expect slots computed for a call on this date (see their headers).
+# bot.py honours it on the eval transport only, never on a real call.
+EVAL_CLOCK ?= 2026-09-18T10:00:00+02:00
 
 # Eval harness settings (make eval-one S=simple_booking_amelia)
 EVAL_PORT ?= 7861
@@ -25,7 +28,7 @@ CLOCK ?=
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
 
-.PHONY: help run-webrtc run-twilio tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+.PHONY: help run-webrtc run-twilio run-eval evals tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -34,6 +37,10 @@ CONCURRENCY_PORT ?= 7862
 help:
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
+	@echo "make run-eval     - run the bot as a headless eval server (ws://localhost:7860), for running one scenario yourself"
+	@echo "make evals        - run every scenario under server/evals/PR-*, restarting the bot fresh before each"
+	@echo "                    one so Flow/context state never leaks between scenarios"
+	@echo "                    (full logs written to server/eval-runs/<scenario>.eval.log + .debug.log)"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
 	@echo "make oracle       - offline scoring: where the 196 points are and what each problem expects"
@@ -51,6 +58,15 @@ help:
 	@echo "                    add CLOCK=<iso> to pin the clinic clock for date-sensitive scenarios"
 	@echo "                    (starts a headless bot on port $(EVAL_PORT), runs, then stops it)"
 	@echo "make eval-bot-stop - kill any leftover eval bot on port $(EVAL_PORT)"
+
+run-webrtc:
+	cd $(SERVER_DIR) && uv run bot.py -t webrtc
+
+run-twilio:
+	cd $(SERVER_DIR) && uv run bot.py -t twilio
+
+run-eval:
+	cd $(SERVER_DIR) && uv run bot.py -t eval
 
 test:
 	cd $(SERVER_DIR) && uv run pytest tests/
@@ -116,9 +132,8 @@ eval-%: $(EVALS_DIR)/%.yaml
 # session per process, so reuse across scenarios deadlocks the second one.
 eval-one:
 	@test -n "$(S)" || { echo "usage: make eval-one S=<scenario-name>"; exit 2; }
-	@scenario=$(EVALS_DIR)/$(S).yaml; \
-	[ -f $$scenario ] || scenario=$(EVAL_SPEC_DIR)/$(S).yaml; \
-	[ -f $$scenario ] || { echo "no such scenario: $(S)"; exit 2; }; \
+	@scenario="$(firstword $(wildcard $(EVALS_DIR)/$(S).yaml $(EVAL_SPEC_DIR)/$(S).yaml $(EVALS_DIR)/PR-*/$(S).yaml))"; \
+	[ -n "$$scenario" ] || { echo "no such scenario: $(S)"; exit 2; }; \
 	$(MAKE) --no-print-directory eval-bot-stop; \
 	echo ">> starting eval bot on port $(EVAL_PORT) (logs: /tmp/pipecat-eval-$(S).log)"; \
 	clock=$$(cat $$scenario.clock 2>/dev/null || echo "$(CLOCK)"); \
@@ -147,3 +162,23 @@ eval-spec-%: $(EVAL_SPEC_DIR)/%.yaml
 
 eval-bot-stop:
 	@pkill -f "bot.py -t eval --port $(EVAL_PORT)" 2>/dev/null || true
+
+evals:
+	@cd $(SERVER_DIR) && for f in evals/PR-*/*.yaml; do \
+		pkill -f "bot.py -t eval" 2>/dev/null; \
+		sleep 1; \
+		CALL_CLOCK_OVERRIDE=$(EVAL_CLOCK) nohup uv run bot.py -t eval > /tmp/pipecat-eval-server.log 2>&1 & \
+		disown; \
+		for i in $$(seq 1 30); do \
+			lsof -nP -iTCP:7860 -sTCP:LISTEN >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		echo "=================== $$f ==================="; \
+		PYTHONPATH=. uv run pipecat eval run "$$f" -v -d --logs-dir eval-runs || true; \
+		echo; \
+	done; \
+	pkill -f "bot.py -t eval" 2>/dev/null; \
+	true
+
+tunnel:
+	NGROK_DOMAIN=$(NGROK_DOMAIN) bash scripts/tunnel.sh 7860 /ws
