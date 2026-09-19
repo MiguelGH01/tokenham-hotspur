@@ -195,16 +195,16 @@ grep -E "Submitted|forcing submission|ERROR" /tmp/bot.log       # outcome of eve
     ├── gateway_llm.py       # LLM service that survives a stalled stream
     ├── evals/               # scripted scenarios for `pipecat eval`
     ├── tests/               # pytest suite
-    ├── .env.example         # every environment variable the bot reads
-    ├── Dockerfile           # container image for Pipecat Cloud
-    └── pcc-deploy.toml      # Pipecat Cloud deployment config
+    └── .env.example         # every environment variable the bot reads
 ```
 
-## Deploying to Pipecat Cloud
+## Deployment
 
-This project is configured for deployment to Pipecat Cloud. You can learn how to deploy to Pipecat Cloud in the [Pipecat Quickstart Guide](https://docs.pipecat.ai/getting-started/quickstart#step-2-deploy-to-production).
-
-Refer to the [Pipecat Cloud Documentation](https://docs.pipecat.ai/deployment/pipecat-cloud/introduction) to learn more about configuring, deploying, and managing your agents in Pipecat Cloud.
+The bot runs on your machine behind the tunnel (section 5); that is the only path the challenge
+needs. The scaffold's Pipecat Cloud files (`Dockerfile`, `pcc-deploy.toml`) were removed: the
+image could not load `clinic.json`, which lives in the repo root outside the `server/` build
+context. To deploy to the cloud, restore them from git history and move `clinic.json` into
+`server/` first.
 
 ## Building with an AI coding agent
 

@@ -21,5 +21,9 @@ def location_ids() -> list[str]:
     return [loc["id"] for loc in load_catalog()["locations"]]
 
 
+def closure_days() -> frozenset[str]:
+    return frozenset(load_catalog()["calendar"]["closure_days"])
+
+
 def location_name(location_id: str) -> str:
     return next(loc["name"] for loc in load_catalog()["locations"] if loc["id"] == location_id)

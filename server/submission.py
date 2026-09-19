@@ -18,6 +18,9 @@ class CallSubmission:
 
     def set_offer(self, offer: dict) -> None:
         self.offered = offer
+        if self.pending["action"] == "NO_ACTION":
+            # A slot exists after all: an earlier "no_availability" no longer holds.
+            self.pending = dict(DEFAULT_PENDING)
 
     def clear_offer(self) -> None:
         self.offered = None
@@ -28,7 +31,6 @@ class CallSubmission:
     async def flush(self) -> None:
         if self._flushed:
             return
-        self._flushed = True
         pending = self.pending
         if pending == DEFAULT_PENDING and self.offered:
             # The call ended (cut off, hung up) after a real slot was offered and before the
@@ -38,6 +40,9 @@ class CallSubmission:
         action = {"call_id": self.call_id, **pending}
         try:
             result = await self._client.post_submission(action)
+            # Only a POST that landed counts: a failed one stays retryable by the next flush()
+            # (run_bot's finally), inside the 30s submit window. A duplicate is a harmless 409.
+            self._flushed = True
             logger.info("Submitted {} for call {}: {}", action["action"], self.call_id, result)
         except Exception as exc:
             logger.error("Submission failed for call {} ({}): {}", self.call_id, action, exc)

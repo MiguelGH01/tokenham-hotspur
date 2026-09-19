@@ -24,7 +24,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
+from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
@@ -73,9 +73,15 @@ def _call_id(runner_args: RunnerArguments) -> str:
     return f"local-{uuid.uuid4().hex[:12]}"
 
 
-def _connected_at() -> datetime:
+def _connected_at(allow_override: bool) -> datetime:
+    """CALL_CLOCK_OVERRIDE pins the clock for evals only: left exported in a shell, it would
+    make every scored call search from a past date and book the wrong slot."""
     override = os.getenv("CALL_CLOCK_OVERRIDE")
-    return datetime.fromisoformat(override) if override else datetime.now(MADRID)
+    if override and allow_override:
+        return datetime.fromisoformat(override)
+    if override:
+        logger.warning("Ignoring CALL_CLOCK_OVERRIDE={}: not an eval session", override)
+    return datetime.now(MADRID)
 
 
 def _reprompt(context: LLMContext) -> str:
@@ -172,12 +178,13 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context_aggregator=context_aggregator,
         transport=transport,
     )
-    submission = CallSubmission(call_id, ClinicClient())
+    client = ClinicClient()
+    submission = CallSubmission(call_id, client)
     flow_manager.state.update(
         {
             "call_id": call_id,
-            "connected_at": _connected_at(),
-            "client": submission._client,
+            "connected_at": _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments)),
+            "client": client,
             "submission": submission,
             "patient": None,
             "offers": {},
@@ -217,7 +224,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         logger.info("Client connected")
-        if _is_twilio_session(runner_args):
+        # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
+        # nothing else would ever start the flow and the bot would stay silent until cut off.
+        if isinstance(runner_args, WebSocketRunnerArguments):
             await start_flow()
 
     @transport.event_handler("on_client_disconnected")
@@ -230,6 +239,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await runner.run()
     finally:
         await submission.flush()
+        await client.aclose()
 
 
 async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) -> BaseTransport:
@@ -240,6 +250,9 @@ async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) ->
     Streams but is not Twilio: it hangs up on its own, so no REST hang-up is needed.
     """
     transport_type, call_data = await parse_telephony_websocket(runner_args.websocket)
+    if transport_type != "twilio":
+        # Sample rates and the call id both hang off this detection; fail loudly, not silently.
+        logger.error("Telephony handshake detected as {!r}, expected 'twilio': {}", transport_type, call_data)
     runner_args.transport_type = transport_type
     runner_args.call_data = call_data
     params.add_wav_header = False

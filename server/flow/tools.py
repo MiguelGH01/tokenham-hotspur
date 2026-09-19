@@ -12,7 +12,7 @@ from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 from pipecat.frames.frames import TTSSpeakFrame
 
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
-from clinic_catalog import location_ids, location_name, specialty_ids
+from clinic.clinic_catalog import closure_days, location_ids, location_name, specialty_ids
 from flow.prompts import FILLER
 from national_id import is_valid_national_id, normalize_national_id
 
@@ -102,8 +102,15 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         logger.error("availability lookup failed: {}", exc)
         return {"status": "lookup_failed"}, None
 
-    offer = pick_offer(availability, state["patient"], connected_at, weekday, part_of_day)
+    offer = pick_offer(
+        availability, state["patient"], connected_at, weekday, part_of_day, closed_days=closure_days()
+    )
     if offer is None:
+        # If the call ends here this is the truthful reason; a later offer clears it.
+        # `blocked` names the standing restriction that stopped a provider (API-avail-blocked);
+        # its values mirror OutcomeReason one to one.
+        restriction = next((b["restriction"] for b in availability.get("blocked", [])), None)
+        state["submission"].set_no_action(restriction or "no_availability")
         return {"status": "no_slots"}, None
 
     slot = next(

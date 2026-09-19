@@ -3,6 +3,9 @@ SERVER_DIR := server
 # dashboard Endpoint stays fixed across restarts (OP-tunnel), then either
 # export NGROK_DOMAIN in your shell or pass it inline: make tunnel NGROK_DOMAIN=...
 NGROK_DOMAIN ?= grooving-april-subzero.ngrok-free.dev
+# The eval scenarios expect slots computed for a call on this date (see their headers).
+# bot.py honours it on the eval transport only, never on a real call.
+EVAL_CLOCK ?= 2026-09-18T10:00:00+02:00
 
 .PHONY: help run-webrtc run-twilio run-eval evals tunnel
 
@@ -26,7 +29,7 @@ evals:
 	@cd $(SERVER_DIR) && for f in evals/PR-*/*.yaml; do \
 		pkill -f "bot.py -t eval" 2>/dev/null; \
 		sleep 1; \
-		nohup uv run bot.py -t eval > /tmp/pipecat-eval-server.log 2>&1 & \
+		CALL_CLOCK_OVERRIDE=$(EVAL_CLOCK) nohup uv run bot.py -t eval > /tmp/pipecat-eval-server.log 2>&1 & \
 		disown; \
 		for i in $$(seq 1 30); do \
 			lsof -nP -iTCP:7860 -sTCP:LISTEN >/dev/null 2>&1 && break; \
