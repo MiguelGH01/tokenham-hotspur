@@ -4,7 +4,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
-CATALOG_PATH = Path(__file__).resolve().parent.parent / "clinic.json"
+CATALOG_PATH = Path(__file__).resolve().parent.parent.parent / "clinic.json"
 
 
 @lru_cache(maxsize=1)
