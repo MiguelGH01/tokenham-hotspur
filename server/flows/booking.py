@@ -39,6 +39,7 @@ from flows.common import (
 from rules import (
     check_patient_rules,
     check_provider_rules,
+    empty_diary_reason,
     location_from_spoken_place,
     provider_speaks,
     resolve_plan,
@@ -352,11 +353,19 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 )
             provider_id, note = None, verdict.reason
 
-    # 3. The rules that bite before a doctor is chosen.
+    # 3. The rules that bite before a doctor is chosen. Referral is the
+    #    exception: a missing derm/physio referral is a PR-06 refusal only once
+    #    the diary has no slot to offer. Firing it first turns a full calendar
+    #    (PR-07: BOOK or no_availability) into referral_required.
     rules_verdict = check_patient_rules(
         specialty_id=specialty, location_name=site_name, patient=patient, plan=plan, today=today
     )
-    if rules_verdict and not rules_verdict.redirect_to and not rules_verdict.redirect_specialty:
+    if (
+        rules_verdict
+        and not rules_verdict.redirect_to
+        and not rules_verdict.redirect_specialty
+        and rules_verdict.reason != "referral_required"
+    ):
         state["submission"].set_no_action(rules_verdict.reason)
         return {"status": "blocked", "reason": rules_verdict.reason}, create_refusal_node(
             rules_verdict.reason
@@ -405,17 +414,20 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             ),
         }, None
 
-    restrictions = [
-        b.get("restriction")
+    blocked_for_request = [
+        b
         for b in availability.get("blocked", [])
         if not provider_id or b.get("provider_id") == provider_id
     ]
-    # The API names the rule it applied; the catalogue explains the ones it does
-    # not carry. Never default to no_availability while a rule is known to bite.
-    reason = next(
-        (r for r in restrictions if isinstance(r, str)),
-        (rules_verdict.reason if rules_verdict else None) or "no_availability",
+    provider_on_leave = any(
+        b.get("restriction") == "provider_on_leave" for b in blocked_for_request
     )
+
+    def _empty_reason() -> str:
+        return empty_diary_reason(
+            specialty_id=specialty, patient=patient, blocked=blocked_for_request
+        )
+
     language = state.get("language")
     availability = {
         **availability,
@@ -449,7 +461,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         }
         offer = (
             None
-            if reason == "provider_on_leave"
+            if provider_on_leave
             else pick_offer(
                 requested,
                 state["patient"],
@@ -459,7 +471,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 closed_days=closure_days(),
             )
         )
-        if offer is None and reason != "provider_on_leave":
+        if offer is None and not provider_on_leave:
             offer = pick_offer(
                 requested,
                 state["patient"],
@@ -469,6 +481,10 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 closed_days=closure_days(),
             )
         if offer is None and args.get("allow_alternative") is not True:
+            reason = _empty_reason()
+            if reason == "referral_required":
+                state["submission"].set_no_action(reason)
+                return {"status": "blocked", "reason": reason}, create_refusal_node(reason)
             state["submission"].set_no_action(reason)
             result = {
                 "status": "provider_unavailable",
@@ -506,7 +522,10 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             if relaxed is not None:
                 offer, note = relaxed, "negotiated"
     if offer is None:
+        reason = _empty_reason()
         state["submission"].set_no_action(reason)
+        if reason == "referral_required":
+            return {"status": "blocked", "reason": reason}, create_refusal_node(reason)
         result = {"status": "no_slots", "blocked": availability.get("blocked", [])}
         if words := RULE_WORDS.get(reason):
             # The rule is already decided; this is only so the agent can say it

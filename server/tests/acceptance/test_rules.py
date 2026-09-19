@@ -27,6 +27,7 @@ from rules import (
     age_in_months,
     check_patient_rules,
     check_provider_rules,
+    empty_diary_reason,
     fold,
     providers_for,
     resolve_plan,
@@ -344,3 +345,46 @@ def test_today_in_madrid_is_a_plain_date():
     from rules import today_in_madrid
 
     assert today_in_madrid(datetime(2026, 9, 18, 23, 30)) == date(2026, 9, 18)
+
+
+# --- empty diary vs leftover blocked (PR-07) --------------------------------
+
+
+def test_empty_diary_ignores_referral_blocked_on_ungated_specialty():
+    """Gynaecology is not referral-gated; a blocked leftover must not become the reason."""
+    reason = empty_diary_reason(
+        specialty_id="gynaecology",
+        patient=patient(),
+        blocked=[{"provider_id": "PR08", "restriction": "referral_required"}],
+    )
+    assert reason == "no_availability"
+
+
+def test_empty_diary_keeps_referral_on_a_gated_specialty_without_one():
+    reason = empty_diary_reason(
+        specialty_id="dermatology",
+        patient=patient(referrals=[]),
+        blocked=[{"provider_id": "PR05", "restriction": "referral_required"}],
+    )
+    assert reason == "referral_required"
+
+
+def test_empty_diary_with_a_single_real_block_keeps_that_restriction():
+    reason = empty_diary_reason(
+        specialty_id="general_practice",
+        patient=patient(),
+        blocked=[{"provider_id": "PR02", "restriction": "provider_on_leave"}],
+    )
+    assert reason == "provider_on_leave"
+
+
+def test_empty_diary_with_mixed_blocks_is_a_full_calendar():
+    reason = empty_diary_reason(
+        specialty_id="orthopaedics",
+        patient=patient(),
+        blocked=[
+            {"provider_id": "PR03", "restriction": "provider_on_leave"},
+            {"provider_id": "PR04", "restriction": "location_hours"},
+        ],
+    )
+    assert reason == "no_availability"

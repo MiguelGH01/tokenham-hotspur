@@ -327,6 +327,44 @@ def check_patient_rules(
     return None
 
 
+def empty_diary_reason(
+    *,
+    specialty_id: str | None,
+    patient: dict | None,
+    blocked: list | None,
+) -> str:
+    """Why a search that found no slot is a refusal rather than a full diary.
+
+    ``CL-empty-full``: empty ``slots`` with nothing applicable in ``blocked`` is
+    ``no_availability`` — the PR-07 answer. ``API-avail-blocked`` still wins when
+    a standing rule actually applies to *this* request.
+
+    A leftover ``referral_required`` on a specialty the catalogue does not gate
+    (gynaecology, general practice, …) is not such a rule. Taking the first
+    ``blocked[].restriction`` anyway submits a PR-06 reason into a PR-07 case
+    and scores zero (SC-binary).
+    """
+    catalogue = load_catalog()
+    specialty = specialty_by_id(catalogue, specialty_id)
+    if (
+        specialty
+        and specialty.get("referral_required")
+        and patient
+        and not holds_referral(patient, specialty_id)
+    ):
+        return "referral_required"
+
+    restrictions = [
+        b.get("restriction")
+        for b in (blocked or [])
+        if isinstance((b or {}).get("restriction"), str)
+    ]
+    unique = {r for r in restrictions if r != "referral_required"}
+    if len(unique) == 1:
+        return next(iter(unique))
+    return "no_availability"
+
+
 def check_provider_rules(
     *,
     provider_id: str | None,

@@ -738,3 +738,78 @@ def test_immutable_payload_after_failed_delivery():
     sub.pending["patient_id"] = "mutated"
     asyncio.run(sub.flush())
     assert client.posted[0] == client.posted[1]
+
+
+def test_gynae_empty_diary_does_not_submit_a_leftover_referral():
+    """PR-07: a full gynae diary with a stray blocked referral is no_availability."""
+    from handlers import get_earliest_slot
+
+    posted = []
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [],
+                "blocked": [{"provider_id": "PR08", "restriction": "referral_required"}],
+            }
+
+        async def post_submission(self, action):
+            posted.append(action)
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-mercedes", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(get_earliest_slot({"specialty": "gynaecology"}, manager))
+    asyncio.run(manager.state["submission"].close())
+    assert result["status"] == "no_slots" and node is None
+    assert posted[0]["action"] == "NO_ACTION"
+    assert posted[0]["reason"] == "no_availability"
+
+
+def test_derm_without_referral_still_refuses_after_an_empty_diary():
+    """PR-06-S3: deferring the gate until after /availability must not drop the reason."""
+    from handlers import get_earliest_slot
+
+    posted = []
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {"slots": [], "blocked": []}
+
+        async def post_submission(self, action):
+            posted.append(action)
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-teresa", client),
+            "patient": {
+                "patient_id": "P00004",
+                "insurer": "asisa",
+                "date_of_birth": "1980-01-01",
+                "referrals": ["physiotherapy"],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(get_earliest_slot({"specialty": "dermatology"}, manager))
+    asyncio.run(manager.state["submission"].close())
+    assert result["status"] == "blocked" and node["name"] == "refused"
+    assert posted[0]["action"] == "NO_ACTION"
+    assert posted[0]["reason"] == "referral_required"
