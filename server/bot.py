@@ -206,15 +206,7 @@ def _connected_at(allow_override: bool) -> datetime:
 
 
 def _reprompt(context: LLMContext) -> str:
-    """Repeat the bot's last message so silence never outlasts the platform's window.
-
-def _cloudflare_messages_base_url(account_id: str) -> str:
-    """Anthropic SDK posts to ``{base_url}/v1/messages``.
-
-    Cloudflare's unified Messages endpoint is
-    ``/accounts/{account_id}/ai/v1/messages``, so the base URL must stop at
-    ``/ai`` — not ``/ai/v1``.
-    """
+    """Repeat the bot's last message so silence never outlasts the platform's window."""
     spoken = [
         m["content"]
         for m in context.get_messages()

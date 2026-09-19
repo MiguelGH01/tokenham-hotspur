@@ -37,7 +37,8 @@ from loguru import logger
 
 import audit
 from booking import pick_offer, search_window
-from clinic_catalog import closure_days, load_catalog
+from clinic_catalog import load_catalog
+from dates import closure_days
 from submission import book_action, cancel_action, register_action, reschedule_action
 
 #: The whole last-resort search, bounded. A booking nobody sends is worth less
