@@ -23,7 +23,7 @@ from flows.common import (
     create_goodbye_node,
     create_refusal_node,
     gated_confirmation,
-    say_holding_line,
+    announce,
     spoken_provider_name,
 )
 from rules import (
@@ -200,6 +200,7 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     return matches
 
 
+@announce("get_earliest_slot")
 async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     """Find the earliest bookable slot, applying the rules the API cannot.
 
@@ -326,7 +327,6 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         weekday = None
     else:
         date_from, date_to = search_window(connected_at)
-    await say_holding_line(flow_manager)
     try:
         availability = await state["client"].availability(
             date_from,
@@ -485,6 +485,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     return result, create_confirm_node(flow_manager)
 
 
+@announce("confirm_offer")
 async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     from flows.common import create_completion_node, record_already_settled
     from flows.requests import proposal_status
@@ -550,6 +551,7 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
 
 
 @flows_tool_options(cancel_on_interruption=True)
+@announce("revise_search")
 async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
     """The caller wants a different specialty, site, day or time."""
     from flows.requests import revise_request
@@ -644,6 +646,7 @@ def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
     )
 
 
+@announce("resolve_date")
 async def resolve_date(args: FlowArgs, flow_manager: FlowManager):
     """Turn a named calendar date into an ISO day, in code.
 
@@ -776,6 +779,7 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
 
 
 @flows_tool_options(cancel_on_interruption=True)
+@announce("finish_without_booking")
 async def finish_without_booking(flow_manager: FlowManager):
     """The caller declines alternatives or ends without an appointment."""
     submission = flow_manager.state["submission"]

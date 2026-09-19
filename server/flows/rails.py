@@ -3,7 +3,7 @@
 from pipecat.flows import FlowManager, FlowsFunctionSchema, NodeConfig
 
 from clinic_catalog import load_catalog
-from flows.common import flush_submission
+from flows.common import TOOL_PROGRESS, announce, flush_submission
 from flows.requests import revise_request
 from rules import normalize_language
 
@@ -113,6 +113,8 @@ async def answer_clinic_question(args, flow_manager: FlowManager):
 
 
 def _schema(name: str, description: str, handler, properties=None, required=None) -> FlowsFunctionSchema:
+    if name in TOOL_PROGRESS:
+        handler = announce(name)(handler)
     return FlowsFunctionSchema(
         name=name,
         description=description,

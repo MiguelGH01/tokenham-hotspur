@@ -2,11 +2,12 @@
 
 from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 
-from flows.common import ROLE_MESSAGE
+from flows.common import ROLE_MESSAGE, announce
 from flows.identification import create_identify_node
 from flows.requests import begin_request
 
 
+@announce("route_request")
 async def route_request(args, flow_manager):
     intent = args["intent"]
     if intent not in ("book", "register", "cancel", "reschedule"):
@@ -53,6 +54,7 @@ def create_reception_node():
 
 
 @flows_tool_options(cancel_on_interruption=True)
+@announce("start_registration")
 async def start_registration(flow_manager):
     """The caller explicitly says they are new and wants registration, not another lookup."""
     from flows.registration import create_registration_node

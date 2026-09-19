@@ -10,7 +10,7 @@ anything is cancelled or moved.
 
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
-from flows.common import gated_confirmation, record_already_settled
+from flows.common import announce, gated_confirmation, record_already_settled
 from flows.requests import prepare_proposal, proposal_status, revise_request
 from submission import cancel_action
 
@@ -38,6 +38,7 @@ async def load_appointments(manager):
     }, create_appointments_node()
 
 
+@announce("select_appointment")
 async def select_appointment(args, flow_manager):
     """Choose one of the returned appointments, and read it back.
 
@@ -58,6 +59,7 @@ async def select_appointment(args, flow_manager):
     return {"status": "needs_confirmation", "readback": appointment}, create_cancel_node()
 
 
+@announce("confirm_cancellation")
 async def confirm_cancellation(args, flow_manager):
     state = flow_manager.state
     appointment = state.get("appointment")
@@ -180,5 +182,6 @@ def create_appointments_node() -> NodeConfig:
     )
 
 
+@announce("lookup_appointments")
 async def lookup_appointments(args, flow_manager):
     return await load_appointments(flow_manager)

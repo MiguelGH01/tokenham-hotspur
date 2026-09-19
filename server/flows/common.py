@@ -8,7 +8,29 @@ import confirmation
 from llm_messages import chat_role, chat_text
 
 GREETING = "Clínica Arenal, how can I help you?"
-HOLDING_LINE = "One moment please."
+
+#: Spoken by code the moment a tool starts, so the line is never mute while
+#: the clinic API (or local work) runs. Not added to LLM context: the model
+#: still says the result afterwards.
+TOOL_PROGRESS = {
+    "search_patient": "Let me look that up.",
+    "get_earliest_slot": "I'll check the next appointment.",
+    "confirm_offer": "I'm booking that now.",
+    "revise_search": "I'll look again.",
+    "resolve_date": "Let me check that date.",
+    "finish_without_booking": "Alright, I'll wrap this up.",
+    "route_request": "One moment.",
+    "start_registration": "I'll take your details.",
+    "prepare_registration": "Let me note those down.",
+    "confirm_registration": "I'm saving that now.",
+    "lookup_appointments": "I'll pull up the bookings.",
+    "select_appointment": "Let me find that appointment.",
+    "confirm_cancellation": "I'm cancelling that now.",
+    "flag_emergency": "This is urgent.",
+    "decline_out_of_scope": "I can't help with that.",
+    "answer_clinic_question": "Let me check.",
+    "finish_call": "I'll let you go.",
+}
 
 #: TTS cannot read the roster abbreviations; the model will speak whatever we put
 #: in the offer summary, so expand them before that string is built.
@@ -20,13 +42,39 @@ def spoken_provider_name(provider_name: str) -> str:
     return f"{SPOKEN_TITLES[title]} {rest}" if title in SPOKEN_TITLES else provider_name
 
 
-async def say_holding_line(flow_manager) -> None:
-    """Fill the silence while an API lookup runs; spoken by code, not the LLM."""
+def _flow_manager_from(args, kwargs):
+    found = kwargs.get("flow_manager")
+    if found is not None:
+        return found
+    for value in reversed(args):
+        if getattr(value, "state", None) is not None:
+            return value
+    return None
+
+
+async def speak_tool(flow_manager, name: str) -> None:
+    """Queue the fixed progress line for ``name``, if this process has a voice path."""
+    text = TOOL_PROGRESS.get(name)
     worker = getattr(flow_manager, "worker", None)
     queue = getattr(worker, "queue_frames", None)
-    if queue is None:
+    if not text or queue is None:
         return
-    await queue([TTSSpeakFrame(text=HOLDING_LINE, append_to_context=False)])
+    await queue([TTSSpeakFrame(text=text, append_to_context=False)])
+
+
+def announce(name: str):
+    """Run a tool only after its progress line has been queued."""
+
+    def decorator(handler):
+        async def wrapped(*args, **kwargs):
+            await speak_tool(_flow_manager_from(args, kwargs), name)
+            return await handler(*args, **kwargs)
+
+        wrapped.__name__ = getattr(handler, "__name__", name)
+        wrapped.__doc__ = handler.__doc__
+        return wrapped
+
+    return decorator
 
 # Few-shot only. Code does not keyword-match these; the LLM maps them onto tools.
 TRIAGE_EXAMPLES = (
@@ -216,6 +264,7 @@ def create_giveup_node():
     )
 
 
+@announce("finish_call")
 async def finish_call(args, flow_manager):
     return {"status": "finished"}, create_goodbye_node()
 

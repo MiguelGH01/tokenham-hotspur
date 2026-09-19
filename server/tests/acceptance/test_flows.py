@@ -51,8 +51,28 @@ def test_reception_routes_without_losing_state():
 def test_roster_titles_are_spoken_in_full():
     from flows.common import spoken_provider_name
 
-    assert spoken_provider_name("Dra. Elena Iglesias") == "Doctor Elena Iglesias"
+    assert spoken_provider_name("Dra. Elena Iglesias") == "Doctora Elena Iglesias"
     assert spoken_provider_name("D. Álvaro Cid") == "Don Álvaro Cid"
+
+
+def test_a_tool_speaks_a_fixed_line_before_it_runs():
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    from flows.common import TOOL_PROGRESS, announce
+
+    spoken = []
+
+    async def queue_frames(frames):
+        spoken.extend(frames)
+
+    @announce("search_patient")
+    async def lookup(args, flow_manager):
+        return "ran"
+
+    manager = SimpleNamespace(state={}, worker=SimpleNamespace(queue_frames=queue_frames))
+    assert asyncio.run(lookup({}, manager)) == "ran"
+    assert isinstance(spoken[0], TTSSpeakFrame)
+    assert spoken[0].text == TOOL_PROGRESS["search_patient"]
 
 
 def test_near_names_require_clarification():

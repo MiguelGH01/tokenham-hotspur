@@ -6,7 +6,7 @@ from datetime import date
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
 from clinic_catalog import load_catalog
-from flows.common import gated_confirmation
+from flows.common import announce, gated_confirmation
 from national_id import is_valid_national_id, normalize_national_id
 
 FIELDS = (
@@ -50,6 +50,7 @@ def validate_registration(values, now):
     return patient, sorted(set(errors))
 
 
+@announce("prepare_registration")
 async def prepare_registration(args, flow_manager):
     state = flow_manager.state
     from flows.requests import prepare_proposal, revise_request
@@ -89,6 +90,7 @@ async def prepare_registration(args, flow_manager):
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
+@announce("confirm_registration")
 async def confirm_registration(args, flow_manager):
     state = flow_manager.state
     if args.get("confirmed") is not True or "registration_draft" not in state:
