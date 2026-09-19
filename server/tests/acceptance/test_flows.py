@@ -75,6 +75,23 @@ def test_an_adult_patient_removes_the_paediatric_candidate():
     assert [p["id"] for p in resolve_provider("Dr. Saez", patient=adult)] == ["PR03"]
 
 
+def test_extra_words_do_not_hide_a_unique_name():
+    from flows.booking import resolve_provider
+
+    assert [p["id"] for p in resolve_provider("I want Dr Ortiz please")] == ["PR01"]
+    assert [p["id"] for p in resolve_provider("Martin Saez")] == ["PR03"]
+    assert [p["id"] for p in resolve_provider("Elena Iglesias")] == ["PR05"]
+
+
+def test_a_wrong_specialty_does_not_drop_a_unique_name():
+    """The model often guesses the specialty enum. A unique spoken name still wins."""
+    from flows.booking import resolve_provider
+
+    assert [p["id"] for p in resolve_provider("Elena Iglesias", "general_practice")] == [
+        "PR05"
+    ]
+
+
 def test_a_neutral_title_still_leaves_iglesias_ambiguous():
     """Pin the deliberate limit: neither specialty is ruled out here, so the
     clarifying question stays. Nobody should mistake this for a bug later."""

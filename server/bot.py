@@ -416,8 +416,18 @@ def build_stt():
     )
 
 
+_ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
+# Not a model id. The TTS WebSocket accepts it and then emits no audio, which
+# the scorer records as agent silence (and after three empty contexts the
+# service marks itself unusable, so the watchdog filler is mute too).
+_ELEVENLABS_FLASH_ALIASES = {
+    "eleven_flash_v3": "eleven_flash_v2_5",
+    "elevenflash_v3": "eleven_flash_v2_5",
+}
+
+
 def build_tts(telephony: bool):
-    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
+    provider = os.getenv("TTS_PROVIDER", "deepgram")
     sample_rate = int(
         os.getenv(
             "TTS_SAMPLE_RATE",
@@ -430,25 +440,34 @@ def build_tts(telephony: bool):
             raise RuntimeError(
                 "ELEVENLABS_VOICE_ID is required. Pick a voice id from the ElevenLabs library."
             )
-        # There is no ElevenLabs model id `eleven_flash_v3`. Flash realtime is
-        # `eleven_flash_v2_5`; Eleven v3 realtime is `eleven_v3_conversational`.
-        model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
-        if model.startswith("eleven_v3"):
+        model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5").strip()
+        language = os.getenv("ELEVENLABS_LANGUAGE")
+        if model in _ELEVENLABS_FLASH_ALIASES:
+            resolved = _ELEVENLABS_FLASH_ALIASES[model]
+            logger.warning(
+                "ELEVENLABS_MODEL={} is not a real model id (the socket stays mute). Using {}.",
+                model,
+                resolved,
+            )
+            model = resolved
+        settings_kw: dict = {"voice": voice, "model": model}
+        if language:
+            settings_kw["language"] = language
+        if model in _ELEVENLABS_V3_MODELS:
             from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
 
             return ElevenLabsDialogueTTSService(
                 api_key=os.environ["ELEVENLABS_API_KEY"],
                 sample_rate=sample_rate,
-                settings=ElevenLabsDialogueTTSService.Settings(voice=voice, model=model),
+                settings=ElevenLabsDialogueTTSService.Settings(**settings_kw),
             )
+        speed = os.getenv("ELEVENLABS_TTS_SPEED")
+        if speed:
+            settings_kw["speed"] = float(speed)
         return ElevenLabsTTSService(
             api_key=os.environ["ELEVENLABS_API_KEY"],
             sample_rate=sample_rate,
-            settings=ElevenLabsTTSService.Settings(
-                voice=voice,
-                model=model,
-                speed=float(os.getenv("ELEVENLABS_TTS_SPEED", "1.0")),
-            ),
+            settings=ElevenLabsTTSService.Settings(**settings_kw),
         )
     return DeepgramTTSService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),

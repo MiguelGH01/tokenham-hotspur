@@ -45,6 +45,34 @@ TITLE_ALIASES = {
     "doctora": "f",
 }
 
+#: Words that ride along in a spoken request but are not part of a name.
+#: Specialty and site labels are added from the catalogue at match time.
+_FILLER = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "cita",
+        "con",
+        "el",
+        "la",
+        "las",
+        "los",
+        "para",
+        "please",
+        "por",
+        "see",
+        "the",
+        "to",
+        "un",
+        "una",
+        "ver",
+        "want",
+        "with",
+        "y",
+    }
+)
+
 
 def _fold(value):
     return "".join(
@@ -60,15 +88,48 @@ def _title_and_tokens(value):
     front: a surname that happens to look like one stays a surname.
     """
     gender = None
-    seen_title = False
     tokens = []
     for token in _fold(value).split():
-        if not seen_title and token in TITLE_ALIASES:
-            seen_title = True
+        if not tokens and token in TITLE_ALIASES:
             gender = TITLE_ALIASES[token]
             continue
         tokens.append(token)
     return gender, tokens
+
+
+def _match_noise():
+    """Tokens that look like names in speech but come from the rest of the ask."""
+    noise = set(_FILLER)
+    catalogue = load_catalog()
+    for specialty in catalogue["specialties"]:
+        noise.update(_fold(specialty["name"]).replace("_", " ").split())
+        noise.update(_fold(specialty["id"]).replace("_", " ").split())
+    for location in catalogue["locations"]:
+        noise.update(_fold(location["name"]).split())
+        noise.add(_fold(location["id"]))
+    return noise
+
+
+def _name_tokens(value):
+    """Title gender plus the words that can actually identify a roster entry."""
+    gender, tokens = _title_and_tokens(value)
+    noise = _match_noise() | set(TITLE_ALIASES)
+    return gender, [t for t in tokens if t not in noise and len(t) > 1]
+
+
+def _token_hits_word(token, word):
+    if token == word:
+        return True
+    # Iglesia / Iglesias: one is a prefix of the other. Sáez / Sáenz is not.
+    shorter, longer = (token, word) if len(token) <= len(word) else (word, token)
+    if len(shorter) >= 5 and longer.startswith(shorter):
+        return True
+    return SequenceMatcher(None, token, word).ratio() >= 0.85
+
+
+def _name_score(tokens, provider_name):
+    words = _name_tokens(provider_name)[1]
+    return sum(1 for t in tokens if any(_token_hits_word(t, w) for w in words))
 
 
 def _specialty_can_serve(specialty_id, patient, plan, today):
@@ -109,18 +170,25 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     Returns every remaining candidate; the caller decides whether one is an
     answer or two are a question.
     """
-    spoken_gender, tokens = _title_and_tokens(name)
-    matches = []
+    spoken_gender, tokens = _name_tokens(name)
+    if not tokens:
+        return []
+    scored = []
     for provider in load_catalog()["providers"]:
-        if specialty and provider["specialty_id"] != specialty:
-            continue
         if spoken_gender and _title_and_tokens(provider["name"])[0] not in (None, spoken_gender):
             continue
-        words = _fold(provider["name"]).split()
-        if tokens and all(
-            any(SequenceMatcher(None, t, w).ratio() >= 0.85 for w in words) for t in tokens
-        ):
-            matches.append(provider)
+        score = _name_score(tokens, provider["name"])
+        if score:
+            scored.append((score, provider))
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    matches = [provider for score, provider in scored if score == best]
+    # A guessed specialty must not wipe a name that already identified someone.
+    if specialty:
+        in_specialty = [p for p in matches if p["specialty_id"] == specialty]
+        if in_specialty:
+            matches = in_specialty
     if len(matches) > 1 and patient is not None:
         compatible = [
             p for p in matches if _specialty_can_serve(p["specialty_id"], patient, plan, today)
@@ -495,7 +563,10 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
             "specialty": {"type": "string", "enum": specialty_ids()},
             "provider_name": {
                 "type": "string",
-                "description": "Doctor name as spoken; do not invent IDs.",
+                "description": (
+                    "Doctor name as the caller said it. Copy their words; do not invent "
+                    "an ID or pick a nearby roster spelling yourself."
+                ),
             },
             "allow_alternative": {
                 "type": "boolean",
@@ -625,6 +696,9 @@ def _target_day(args: FlowArgs, connected_at: datetime) -> date | None:
 
 def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
     patient = flow_manager.state["patient"]
+    roster = "; ".join(
+        f"{p['name']} ({p['specialty_id']})" for p in load_catalog()["providers"]
+    )
     return NodeConfig(
         name="find_slot",
         task_messages=[
@@ -633,12 +707,14 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                 "content": (
                     f"The patient is {patient['given_name']} {patient['first_surname']}. Find out "
                     "which specialty or named doctor they need. Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
+                    f"Roster (matching is done in code, never by you): {roster}. "
                     "When the caller states or confirms a specialty — for example 'the GP' — pass "
                     "specialty. If they only described symptoms, pass the specialty from the "
                     "triage examples. Pass provider_name whenever the caller names a doctor, and pass "
                     "BOTH when they give both: 'Dr. Sáez, the GP' is specialty=general_practice "
                     "AND provider_name='Sáez'. That pair is what identifies a doctor whose "
                     "surname is ambiguous, so never drop one of the two. "
+                    "Do not rewrite a spoken name to a nearby roster spelling; pass it as heard. "
                     "A named GP, site or doctor the caller said wins over an invented enum value. "
                     "Do not guess a site or doctor from the enum. "
                     "Only pass site, weekday or part_of_day if the caller asked for them. If they "
