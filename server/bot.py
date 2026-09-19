@@ -63,8 +63,10 @@ except ImportError:  # daily-python has no Windows wheels
 
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
+from call_metrics import build_observer, call_ended, call_started
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
+from eval_judge import helmcode_judge
 from flows.common import GREETING
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
@@ -328,7 +330,14 @@ def build_eval_judge_llm(config: dict | None = None):
     does.
 
     A scenario's ``model`` key still wins over ``EVAL_JUDGE_MODEL``.
+
+    Without an ``OPENAI_API_KEY`` the scenarios could not run at all, so the judge
+    falls back to the Helmcode gateway (``eval_judge.helmcode_judge``). Verdicts from
+    the two judges are not comparable; the log line says which one ran.
     """
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("Eval judge: no OPENAI_API_KEY, judging with Helmcode instead of gpt-5.1")
+        return helmcode_judge(config or {})
     override = (config or {}).get("model") or os.getenv("EVAL_JUDGE_MODEL", "gpt-5.1")
     return OpenAIResponsesLLMService(
         api_key=os.environ["OPENAI_API_KEY"],
@@ -598,7 +607,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         pipeline,
         params=PipelineParams(**pipeline_params),
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[TraceObserver(hub, call_id, started_at=connected_at)],
+        observers=[
+            TraceObserver(hub, call_id, started_at=connected_at),
+            build_observer(call_id),
+        ],
     )
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)
@@ -693,6 +705,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_connected(transport, client):
         nonlocal _start_task
         logger.info("Client connected")
+        call_started(call_id)
         # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
         # nothing else would ever start the flow and the bot would stay silent until cut off.
         if isinstance(runner_args, WebSocketRunnerArguments):
@@ -710,6 +723,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
+        call_ended(call_id)  # here, not only in the finally: teardown takes seconds and can be killed
         await submission.close()
         await hub.end_call(call_id)
         await runner.cancel()
@@ -732,6 +746,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     try:
         await runner.run()
     finally:
+        call_ended(call_id)
         if _start_task is not None:
             _start_task.cancel()
         _deliver_task.cancel()
@@ -796,4 +811,7 @@ if __name__ == "__main__":
     from observability import mount_observability_routes
 
     mount_observability_routes(app)
+    # Importing pipecat's runner reloads ./.env with override=True, which silently undid
+    # DOTENV_PATH for every key ./.env also sets. Re-apply ours on top.
+    load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
     main()
