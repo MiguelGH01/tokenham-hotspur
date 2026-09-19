@@ -101,7 +101,7 @@ async def confirm_cancellation(args, flow_manager):
         )
         if blocked is not None:
             return blocked
-        submission.set_cancel(appointment["appointment_id"])
+        submission.set_cancel(appointment["appointment_id"], appointment=appointment)
     accepted = await submission.flush()
     from flows.common import create_completion_node
 
