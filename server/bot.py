@@ -669,6 +669,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
+        call_ended(call_id)  # here, not only in the finally: teardown takes seconds and can be killed
         await submission.close()
         await runner.cancel()
 
@@ -751,4 +752,7 @@ async def bot(runner_args: RunnerArguments):
 if __name__ == "__main__":
     from pipecat.runner.run import main
 
+    # Importing pipecat's runner reloads ./.env with override=True, which silently undid
+    # DOTENV_PATH for every key ./.env also sets. Re-apply ours on top.
+    load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
     main()
