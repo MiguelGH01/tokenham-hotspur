@@ -170,7 +170,15 @@ async def resolve_fallback(state) -> dict:
     # A patient without a plan cannot be booked to a scored ``policy_id``, and a
     # patient the directory never named cannot be booked at all: the cold
     # booking needs both halves, so anything less leaves the refusal.
-    if patient and patient.get("patient_id") and patient.get("insurer"):
+    intent = state.get("intent")
+    # A move or cancel that never confirmed is not a new booking. Cold-booking
+    # those hangs submitted BOOK on PR-08 and failed the case.
+    if (
+        intent not in {"cancel", "reschedule", "register"}
+        and patient
+        and patient.get("patient_id")
+        and patient.get("insurer")
+    ):
         try:
             offer = await asyncio.wait_for(_first_slot(state, patient), COLD_BOOKING_TIMEOUT_SECS)
         except TimeoutError:
@@ -179,7 +187,6 @@ async def resolve_fallback(state) -> dict:
         if offer is not None:
             audit.audit(call_id, "fallback_resolved", branch="cold_booking", **offer)
             return book_action(offer)
-    intent = state.get("intent")
     if intent in {"book", "register", "cancel", "reschedule"}:
         reason = "no_availability" if patient else "patient_not_found"
         audit.audit(call_id, "fallback_resolved", branch="clinic_request_unresolved", reason=reason)

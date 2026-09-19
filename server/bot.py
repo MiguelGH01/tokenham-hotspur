@@ -711,6 +711,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
         flow_started = False
         _start_task: asyncio.Task | None = None
+        _deliver_task: asyncio.Task | None = None
 
         async def start_flow():
             nonlocal flow_started
@@ -756,33 +757,34 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
         @transport.event_handler("on_client_disconnected")
         async def on_client_disconnected(transport, client):
-            nonlocal hung_up
+            nonlocal hung_up, _deliver_task
             hung_up = True
             logger.info("Client disconnected")
             await submission.close()
             await runner.cancel()
 
-            async def deliver_until_accepted():
-                """Keep re-offering a decided plan for as long as the call lives.
+        async def deliver_until_accepted():
+            """Keep re-offering a decided plan for as long as the call lives.
 
-                A call with no accepted record scores nothing, and the platform can
-                refuse a submission transiently. ``flush`` only ever sends actions the
-                call has actually decided, so this cannot freeze a plan prematurely.
-                """
-                interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
-                while True:
-                    await asyncio.sleep(interval)
-                    if submission.needs_delivery:
-                        await submission.flush()
+            A call with no accepted record scores nothing, and the platform can
+            refuse a submission transiently. ``flush`` only ever sends actions the
+            call has actually decided, so this cannot freeze a plan prematurely.
+            """
+            interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
+            while True:
+                await asyncio.sleep(interval)
+                if submission.needs_delivery:
+                    await submission.flush()
 
-            _deliver_task = asyncio.create_task(deliver_until_accepted())
+        _deliver_task = asyncio.create_task(deliver_until_accepted())
 
         try:
             await runner.run()
         finally:
             if _start_task is not None:
                 _start_task.cancel()
-            _deliver_task.cancel()
+            if _deliver_task is not None:
+                _deliver_task.cancel()
             await submission.close()
             inner = getattr(client, "_client", client)
             if hasattr(inner, "aclose"):

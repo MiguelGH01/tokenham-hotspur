@@ -17,7 +17,14 @@ from pipecat.flows import (
 import audit
 import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
-from clinic_catalog import load_catalog, location_ids, location_name, provider_names, specialty_ids
+from clinic_catalog import (
+    closure_days,
+    load_catalog,
+    location_ids,
+    location_name,
+    provider_names,
+    specialty_ids,
+)
 from flows.common import (
     RULE_WORDS,
     TRIAGE_EXAMPLES,
