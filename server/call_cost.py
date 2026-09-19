@@ -47,7 +47,9 @@ LLM_PRICES = {
         "prompt_includes_cache": False,
     },
     # https://helmcode.com/pricing — Helmcode bills a flat fee per key, not per token:
-    # Starter is 399 EUR/month for 5B tokens, input and output alike. This is that fee
+    # Starter is 399 EUR/month for 5B tokens, input and output alike. Every plan lists the
+    # same models, so Starter is the cheapest one that carries this model. The team itself
+    # runs on free hackathon tokens: this is what a clinic would pay, not our bill. It is that fee
     # spread over the full quota, so it is a FLOOR: a key that uses 1% of its quota pays
     # 100x this per token. Reported as amortized, never as a list price (see AMORTIZED).
     "deepseek-v4-flash": {

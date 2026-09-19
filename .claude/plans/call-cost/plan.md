@@ -160,8 +160,12 @@ Append-only. Tomadas por Adolfo el 19-sep-2026.
   es el coste real si se consume el cupo entero. El informe marca esas llamadas con `*` y
   lo explica al pie. Alternativa descartada: el precio por token de la API de DeepSeek —
   es el precio de otra empresa, no lo que paga el equipo, y no se ha consultado.
-  **Supuesto sin confirmar:** que el plan contratado es Starter; con Growth (1.299 / 15B)
-  o Scale (3.199 / 35B) la tarifa sería 0,0866 o 0,0914 EUR por 1M.
+  ~~Supuesto sin confirmar: que el plan contratado es Starter.~~ Resuelto por Adolfo
+  (19-sep): el equipo no tiene plan, usa tokens gratis del hackathon; se pone "el plan que
+  corresponda al modelo que usamos". La página lista los mismos modelos en los tres planes
+  (Starter, Growth 1.299 / 15B, Scale 3.199 / 35B), así que corresponde el más barato que
+  lo incluye: Starter. **Lo que enseña el informe es lo que pagaría una clínica, no la
+  factura del equipo, que es 0 €.** Decirlo así en el vídeo.
 
 ## Context
 
