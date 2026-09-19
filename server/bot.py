@@ -61,6 +61,7 @@ from booking import MADRID
 from call_metrics import build_observer, call_ended, call_started
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
+from eval_judge import helmcode_judge
 from flows.common import GREETING
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
@@ -295,7 +296,14 @@ def build_eval_judge_llm(config: dict | None = None):
     does.
 
     A scenario's ``model`` key still wins over ``EVAL_JUDGE_MODEL``.
+
+    Without an ``OPENAI_API_KEY`` the scenarios could not run at all, so the judge
+    falls back to the Helmcode gateway (``eval_judge.helmcode_judge``). Verdicts from
+    the two judges are not comparable; the log line says which one ran.
     """
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.warning("Eval judge: no OPENAI_API_KEY, judging with Helmcode instead of gpt-5.1")
+        return helmcode_judge(config or {})
     override = (config or {}).get("model") or os.getenv("EVAL_JUDGE_MODEL", "gpt-5.1")
     return OpenAIResponsesLLMService(
         api_key=os.environ["OPENAI_API_KEY"],
