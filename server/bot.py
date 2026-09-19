@@ -29,8 +29,12 @@ from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
+from pipecat.services.soniox.stt import SonioxSTTService
+from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketParams,
@@ -121,15 +125,73 @@ def build_llm():
     )
 
 
+def build_stt():
+    provider = os.getenv("STT_PROVIDER", "soniox")
+    if provider == "deepgram":
+        return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    return SonioxSTTService(
+        api_key=os.environ["SONIOX_API_KEY"],
+        settings=SonioxSTTService.Settings(
+            model=os.getenv("SONIOX_MODEL", "stt-rt-v5"),
+            language_hints=[Language.ES, Language.CA, Language.EN, Language.EU, Language.GL],
+            enable_language_identification=True,
+        ),
+    )
+
+
+_ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
+
+
+def build_tts():
+    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
+    if provider == "deepgram":
+        return DeepgramTTSService(
+            api_key=os.getenv("DEEPGRAM_API_KEY"),
+            settings=DeepgramTTSService.Settings(
+                voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
+            ),
+        )
+    model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    voice = os.environ["ELEVENLABS_VOICE_ID"]
+    language = os.getenv("ELEVENLABS_LANGUAGE", "es")
+    # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are not
+    # a real model: the classic TTS WebSocket accepts the socket then returns no audio.
+    use_dialogue = model in _ELEVENLABS_V3_MODELS or ("v3" in model and "ttv" not in model)
+    if use_dialogue:
+        if model not in _ELEVENLABS_V3_MODELS:
+            logger.warning(
+                "ELEVENLABS_MODEL={} is not a TTS WebSocket model; using "
+                "ElevenLabsDialogueTTSService with eleven_v3_conversational. "
+                "Set eleven_v3 or eleven_v3_conversational explicitly.",
+                model,
+            )
+            model = "eleven_v3_conversational"
+        logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
+        return ElevenLabsDialogueTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            settings=ElevenLabsDialogueTTSService.Settings(
+                voice=voice,
+                model=model,
+                language=language,
+            ),
+        )
+    logger.info("TTS: ElevenLabs WebSocket ({})", model)
+    return ElevenLabsTTSService(
+        api_key=os.environ["ELEVENLABS_API_KEY"],
+        settings=ElevenLabsTTSService.Settings(
+            voice=voice,
+            model=model,
+            language=language,
+        ),
+    )
+
+
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
 
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-    tts = DeepgramTTSService(
-        api_key=os.getenv("DEEPGRAM_API_KEY"),
-        settings=DeepgramTTSService.Settings(voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")),
-    )
+    stt = build_stt()
+    tts = build_tts()
     llm = build_llm()
 
     context = LLMContext()

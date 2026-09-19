@@ -3631,7 +3631,7 @@ dev = [
 requires-dist = [
     { name = "httpx" },
     { name = "pipecat-ai", extras = ["daily"], marker = "sys_platform != 'win32'", specifier = ">=1.11.0" },
-    { name = "pipecat-ai", extras = ["deepgram", "evals", "google", "openai", "rnnoise", "runner", "silero", "webrtc", "websocket"], specifier = ">=1.11.0" },
+    { name = "pipecat-ai", extras = ["deepgram", "elevenlabs", "evals", "google", "openai", "rnnoise", "runner", "silero", "soniox", "webrtc", "websocket"], specifier = ">=1.11.0" },
     { name = "tzdata" },
 ]
 

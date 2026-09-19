@@ -4,7 +4,7 @@ A phone receptionist for the HackSpain "El Turno" challenge, built with
 [Pipecat](https://docs.pipecat.ai/). It answers a call, identifies the patient, finds the
 earliest matching appointment through the clinic API, and submits the booking.
 
-- **Pipeline**: cascade — Deepgram STT → LLM → Deepgram TTS
+- **Pipeline**: cascade — Soniox STT → LLM → ElevenLabs TTS (Deepgram via `STT_PROVIDER` / `TTS_PROVIDER`)
 - **LLM**: `helmcode` gateway by default; `gemini` and `openai` selectable with `LLM_PROVIDER`
 - **Conversation**: Pipecat Flows graph in `server/flow/` (identify → slot → confirm → goodbye)
 - **Transports**: Twilio-shaped WebSocket (what the challenge harness dials), WebRTC for the
@@ -19,7 +19,9 @@ getting the bot running and testing it.
 |---|---|
 | [uv](https://docs.astral.sh/uv/) | `brew install uv`. It installs the right Python (3.12) for you. |
 | Team API key (`pk-…`) and dashboard login | The organisers' desk. One key per team — ask a teammate, don't request a new one: rotating it breaks everyone else. |
-| Deepgram API key | [console.deepgram.com](https://console.deepgram.com/) |
+| Soniox API key | [console.soniox.com](https://console.soniox.com/) (`SONIOX_API_KEY`) |
+| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`). `ELEVENLABS_MODEL=eleven_v3` or `eleven_v3_conversational` uses Text-to-Dialogue; Flash/Turbo use the normal TTS WebSocket. |
+| Deepgram API key | Only if you set `STT_PROVIDER=deepgram` or `TTS_PROVIDER=deepgram` |
 | An LLM key | `HELMCODE_API_KEY` for the default provider, or a Gemini / OpenAI key |
 | [ngrok](https://ngrok.com/) account | Only for real calls from the dashboard. Free tier is enough. |
 
@@ -28,7 +30,7 @@ getting the bot running and testing it.
 ```bash
 cd server
 uv sync
-cp .env.example .env    # then fill in CLINIC_API_KEY, DEEPGRAM_API_KEY and your LLM key
+cp .env.example .env    # then fill in CLINIC_API_KEY, SONIOX_API_KEY, ELEVENLABS_* and your LLM key
 ```
 
 `.env` is git-ignored. Never commit keys.
