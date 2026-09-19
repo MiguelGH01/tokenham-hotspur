@@ -51,7 +51,7 @@ def gated_confirmation(node: str, flow_manager, *, decided: bool = False, instru
     Returns ``None`` when the confirmation may proceed, or a ``(result, None)``
     tuple for the tool to return so it stays in its node and clarifies instead.
     Conservative in both directions that matter: a plain "yes" never blocks,
-    and a missing transcript never blocks either.
+    and missing confirmation evidence fails closed.
     """
     if decided:
         return None
@@ -61,11 +61,14 @@ def gated_confirmation(node: str, flow_manager, *, decided: bool = False, instru
             if message.get("role") == "user":
                 utterance = str(message.get("content") or "")
                 break
-    except Exception:  # no context, no gate: never block on missing data
+    except Exception:
+        utterance = ""
+    if not utterance.strip():
+        reason = "missing_confirmation"
+    elif confirmation.is_clean_yes(utterance):
         return None
-    reason = confirmation.gate_result(utterance)
-    if reason is None:
-        return None
+    else:
+        reason = confirmation.gate_result(utterance) or "missing_confirmation"
     audit.audit(
         flow_manager.state.get("call_id", "unknown"),
         "gate_blocked",
@@ -77,6 +80,27 @@ def gated_confirmation(node: str, flow_manager, *, decided: bool = False, instru
         "reason_code": reason,
         "instruction": instruction,
     }, None
+
+
+def record_already_settled(kind: str):
+    """The call's record is frozen and it is not this write: never claim success.
+
+    A confirmation that arrives after the platform already holds a different
+    action for this call cannot become the record. Telling the caller it went
+    through is a wrong record *and* a lie at once — evidence 1 of
+    ``odd/tasks/pr01-06-record-and-liveness.md`` is exactly that call.
+    """
+    return (
+        {
+            "status": "delivery_conflict",
+            "instruction": (
+                f"The record for this call is already settled and cannot be changed, so the "
+                f"{kind} cannot be recorded. Do not claim it went through. Apologise briefly, "
+                "say a colleague will confirm by phone, and say goodbye."
+            ),
+        },
+        create_goodbye_node(False, kind),
+    )
 
 
 def create_refusal_node(reason: str) -> NodeConfig:
@@ -140,4 +164,25 @@ def create_giveup_node():
             {"type": "function", "handler": flush_submission},
             {"type": "end_conversation"},
         ],
+    )
+
+
+async def finish_call(args, flow_manager):
+    return {"status": "finished"}, create_goodbye_node()
+
+
+def create_completion_node(accepted=True, kind="appointment"):
+    from pipecat.flows import FlowsFunctionSchema
+
+    from flows.reception import create_reception_node
+
+    return NodeConfig(
+        name="request_complete",
+        task_messages=[{"role": "developer", "content": (
+            f"The {kind} request was received. Ask whether the caller needs anything else. "
+            if accepted else "Delivery is uncertain; do not claim success. It will retry with the same details. Ask whether anything else is needed. "
+        ) + "Use route_request for another independent request, or finish_call if the caller is finished."}],
+        functions=[*create_reception_node()["functions"], FlowsFunctionSchema(
+            name="finish_call", description="The caller has no more requests.", properties={}, required=[], handler=finish_call,
+        )],
     )

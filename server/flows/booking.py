@@ -13,12 +13,13 @@ from pipecat.flows import (
     flows_tool_options,
 )
 
-import dates
 import audit
+import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
 from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node, gated_confirmation
 from rules import check_patient_rules, check_provider_rules, resolve_plan
+from submission import book_action, reschedule_action
 
 #: The titles a caller and the roster actually use, and the gender each one
 #: implies. The spelled-out "doctor" is consumed as a title but leaves the
@@ -134,6 +135,18 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
       can serve and a refusal only when nobody can.
     """
     state = flow_manager.state
+    from flows.requests import prepare_proposal, revise_request
+
+    if state["submission"].delivery_attempted:
+        return {
+            "status": "delivery_pending",
+            "instruction": (
+                "This request is already with the clinic and cannot be searched again. "
+                "Retry confirm_offer with the same offer_id, or route a new request."
+            ),
+        }, None
+    revise_request(flow_manager)
+    revision = state["revision"]
     patient = state["patient"]
     today = state["connected_at"].astimezone(MADRID).date()
     catalogue = load_catalog()
@@ -257,6 +270,21 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             and s.get("specialty_id", specialty) == specialty
         ],
     }
+    if state.get("intent") == "reschedule":
+        # A moved appointment stays the appointment it is: the type already on
+        # its diary, never the type the patient's history would pick for a new
+        # one. The reschedule route carries no type for the same reason, so a
+        # slot of another type would be submitted as this appointment.
+        appointment_type = (state.get("appointment") or {}).get("appointment_type_id")
+        if appointment_type:
+            availability = {
+                **availability,
+                "slots": [
+                    s
+                    for s in availability["slots"]
+                    if s.get("appointment_type_id") == appointment_type
+                ],
+            }
     if provider_id:
         requested = {
             **availability,
@@ -295,6 +323,8 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             # in plain words instead of admitting it does not know why.
             result["reason_words"] = words
         return result, None
+    if state.get("revision") != revision or state.get("patient") != patient:
+        return {"status": "expired"}, None
     slot = next(
         s
         for s in availability["slots"]
@@ -302,8 +332,14 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         and datetime.fromisoformat(s["start_time"]).astimezone(MADRID).isoformat() == offer["slot"]
     )
     start = datetime.fromisoformat(offer["slot"])
-    offer_id = f"offer-{len(state['offers']) + 1}"
+    # One offer, one handle, numbered per call: the model refers to what it read
+    # out loud, and two searches in one conversation must not answer to the same
+    # name. Whether a handle still counts is the proposal's business, not the
+    # number's.
+    state["offer_seq"] = state.get("offer_seq", 0) + 1
+    offer_id = f"offer-{state['offer_seq']}"
     state["offers"][offer_id] = offer
+    prepare_proposal(flow_manager, offer_id)
     audit.audit(
         state.get("call_id", "unknown"),
         "offer_prepared",
@@ -329,57 +365,75 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
 
 
 async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
-    offer = flow_manager.state["offers"].get(args["offer_id"])
+    from flows.common import create_completion_node, record_already_settled
+    from flows.requests import proposal_status
+
+    state = flow_manager.state
+    offer = state["offers"].get(args["offer_id"])
     if offer is None:
         return {"status": "expired"}, None
-    submission = flow_manager.state["submission"]
-    if submission.pending == {"action": "BOOK", **offer}:
-        # This booking is already the call's answer, so a second confirmation is
-        # a retry and not a conflict. Retrying keeps the record safe when the
-        # first delivery failed.
-        accepted = await submission.flush()
-        return {"status": "accepted" if accepted else "delivery_failed"}, create_goodbye_node(
-            accepted
-        )
-    blocked = gated_confirmation(
-        "confirm_offer",
-        flow_manager,
-        decided=submission.delivery_started,
-        instruction=(
-            "The caller's confirmation carries a condition, correction, price question or "
-            "request to check an alternative. Do not treat it as consent. Clarify the "
-            "unfinished part first; only call confirm_offer again with an unqualified "
-            "confirmation."
-        ),
+    submission = state["submission"]
+    reschedule = state.get("intent") == "reschedule"
+    appointment = state.get("appointment") or {}
+    if reschedule and (
+        not appointment or appointment["patient_id"] != state["patient"]["patient_id"]
+    ):
+        return {"status": "invalid_appointment"}, None
+    kind = "reschedule" if reschedule else "appointment"
+    wanted = (
+        reschedule_action(appointment["appointment_id"], offer) if reschedule else book_action(offer)
     )
-    if blocked is not None:
-        return blocked
-    try:
-        submission.set_book(offer)
-    except RuntimeError as exc:
-        # The plan is already delivered, so this booking cannot become the
-        # call's record. Saying so is the only honest answer: the alternative is
-        # a caller told an appointment exists while the platform holds a
-        # refusal, which is a wrong record *and* a lie.
-        logger.error("Booking cannot be recorded, the record is settled: {}", exc)
-        return (
-            {
-                "status": "delivery_conflict",
+    if submission.delivery_attempted:
+        # A retry of the action the frozen plan already carries is safe — the
+        # first POST may have landed. Anything else cannot become this call's
+        # record, and saying it did would be a wrong record and a lie at once.
+        if not submission.carries(wanted):
+            return record_already_settled(kind)
+    else:
+        status = proposal_status(flow_manager, args["offer_id"])
+        if status == "stale":
+            # The request moved on after this was read out: it is no longer an
+            # offer, so the answer is a fresh search, not a re-readback.
+            return {
+                "status": "expired",
+                "instruction": "That appointment is no longer on offer. Call revise_search.",
+            }, None
+        if status != "ok":
+            return {
+                "status": "needs_confirmation",
                 "instruction": (
-                    "The record for this call is already settled and cannot be changed. "
-                    "Do not claim the appointment was booked. Apologise briefly and say "
-                    "a colleague will confirm by phone."
+                    "Nothing is booked yet: the caller has to answer the readback out "
+                    "loud, in a turn of their own. Ask them and call confirm_offer again."
                 ),
-            },
-            create_goodbye_node(False, "appointment"),
+            }, None
+        blocked = gated_confirmation(
+            "confirm_offer",
+            flow_manager,
+            instruction=(
+                "The caller's confirmation carries a condition, correction, price question or "
+                "request to check an alternative. Do not treat it as consent. Clarify the "
+                "unfinished part first; only call confirm_offer again with an unqualified "
+                "confirmation."
+            ),
         )
+        if blocked is not None:
+            return blocked
+        if reschedule:
+            submission.set_reschedule(appointment["appointment_id"], offer)
+        else:
+            submission.set_book(offer)
     accepted = await submission.flush()
-    return {"status": "accepted" if accepted else "delivery_failed"}, create_goodbye_node(accepted)
+    return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
+        accepted, kind
+    )
 
 
 @flows_tool_options(cancel_on_interruption=True)
 async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
     """The caller wants a different specialty, site, day or time."""
+    from flows.requests import revise_request
+
+    revise_request(flow_manager)
     return None, create_slot_node(flow_manager)
 
 
@@ -444,10 +498,15 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
 
 
 def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
+    from flows.requests import live_keys
+
+    # Only the handle the current request stands behind: an offer from before a
+    # revision is still in the table for the record, but it is not a choice.
+    live = [key for key in flow_manager.state["offers"] if key in live_keys(flow_manager)]
     return FlowsFunctionSchema(
         name="confirm_offer",
         description="The caller accepted the offered appointment.",
-        properties={"offer_id": {"type": "string", "enum": list(flow_manager.state["offers"])}},
+        properties={"offer_id": {"type": "string", "enum": live}},
         required=["offer_id"],
         handler=confirm_offer,
         cancel_on_interruption=True,
@@ -554,7 +613,14 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
                     "call confirm_offer. If they want something different, call revise_search. If "
                     "confirm_offer returns CANCELLED, or says the call is still running, the "
                     "booking is not recorded yet: say you are finishing it off and call "
-                    "confirm_offer again with the same offer_id."
+                    "confirm_offer again with the same offer_id. If it returns "
+                    "needs_confirmation, the caller has not answered you in a turn of their own "
+                    "yet: ask them to confirm out loud and call confirm_offer only once they "
+                    "have. If it returns qualified_confirmation, clarify the condition, question "
+                    "or correction first. If it returns expired, that offer is no longer on the "
+                    "table: call revise_search and offer what it returns. If it returns "
+                    "delivery_conflict, the call's record is already settled: do not claim the "
+                    "appointment, apologise and say goodbye."
                 ),
             }
         ],

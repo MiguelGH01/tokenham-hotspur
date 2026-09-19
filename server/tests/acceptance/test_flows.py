@@ -98,7 +98,6 @@ def test_a_neutral_title_still_leaves_iglesias_ambiguous():
 def test_a_repeated_confirmation_is_a_retry_not_a_conflict():
     """A caller answering "yes" twice must not hear that the booking failed."""
     from handlers import confirm_offer, get_earliest_slot
-
     class Client:
         async def availability(self, *args, **kwargs):
             return {
@@ -120,6 +119,9 @@ def test_a_repeated_confirmation_is_a_retry_not_a_conflict():
             return {"received": True}
 
     client = Client()
+    # A readback is not consent: the yes has to come in a turn of the caller's
+    # own, after the offer was read out.
+    messages = [{"role": "user", "content": "A review, as soon as you have one."}]
     manager = SimpleNamespace(
         state={
             "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
@@ -127,14 +129,18 @@ def test_a_repeated_confirmation_is_a_retry_not_a_conflict():
             "submission": CallSubmission("call-x", client),
             "patient": {"patient_id": "P1", "insurer": "sanitas"},
             "offers": {},
-        }
+        },
+        get_current_context=lambda: messages,
     )
     result, _ = asyncio.run(get_earliest_slot({"specialty": "general_practice"}, manager))
+    messages.append({"role": "user", "content": "Yes, that one please."})
     first, _ = asyncio.run(confirm_offer({"offer_id": result["offer_id"]}, manager))
     second, node = asyncio.run(confirm_offer({"offer_id": result["offer_id"]}, manager))
     assert first["status"] == "accepted"
     assert second["status"] == "accepted"
-    assert node["name"] == "goodbye"
+    # Another request may now follow in the same call, so the booking ends in the
+    # "anything else?" node; the farewell comes from finish_call.
+    assert node["name"] == "request_complete"
 
 
 def test_concurrent_call_isolation():
@@ -154,13 +160,15 @@ def test_concurrent_call_isolation():
                 posted.append(action)
 
         async def call(i):
+            messages = [{"role": "user", "content": f"I am Caller{i}, a new patient."}]
             manager = SimpleNamespace(
                 state={
                     "connected_at": datetime(2026, 9, 19),
                     "client": Client(),
                     "submission": CallSubmission(str(i), Client()),
                     "offers": {},
-                }
+                },
+                get_current_context=lambda: messages,
             )
             await route_request({"intent": "register"}, manager)
             result, node = await prepare_registration(
@@ -178,6 +186,7 @@ def test_concurrent_call_isolation():
             )
             assert result["status"] == "needs_confirmation"
             assert not posted or all(p["call_id"] != str(i) for p in posted)
+            messages.append({"role": "user", "content": "Yes, those details are correct."})
             await confirm_registration({"confirmed": True}, manager)
             await asyncio.gather(
                 manager.state["submission"].flush(), manager.state["submission"].flush()
@@ -426,6 +435,7 @@ def test_twenty_concurrent_booking_calls_are_isolated():
 
         async def call(i):
             client = Client(i)
+            messages = [{"role": "user", "content": f"I am Caller {i}."}]
             manager = SimpleNamespace(
                 state={
                     "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
@@ -434,7 +444,8 @@ def test_twenty_concurrent_booking_calls_are_isolated():
                     "patient": None,
                     "offers": {},
                     "identify_attempts": 0,
-                }
+                },
+                get_current_context=lambda: messages,
             )
             await route_request({"intent": "book"}, manager)
             result, _ = await search_patient(
@@ -445,6 +456,7 @@ def test_twenty_concurrent_booking_calls_are_isolated():
                 {"specialty": "general_practice", "site": "centro"}, manager
             )
             offer_id = result["offer_id"]
+            messages.append({"role": "user", "content": "Yes, that one please."})
             await confirm_offer({"offer_id": offer_id}, manager)
             await confirm_offer({"offer_id": offer_id}, manager)
             await manager.state["submission"].flush()

@@ -52,7 +52,18 @@ def validate_registration(values, now):
 
 async def prepare_registration(args, flow_manager):
     state = flow_manager.state
-    state.pop("registration_draft", None)
+    from flows.requests import prepare_proposal, revise_request
+
+    if state["submission"].delivery_attempted:
+        return {
+            "status": "delivery_pending",
+            "instruction": (
+                "These details are already with the clinic and cannot be changed. Retry "
+                "confirm_registration, or route a new request."
+            ),
+        }, None
+    revise_request(flow_manager)
+    revision = state["revision"]
     patient, errors = validate_registration(args, state["connected_at"])
     if errors:
         return {
@@ -71,7 +82,10 @@ async def prepare_registration(args, flow_manager):
             "status": "already_registered",
             "instruction": "Do not register again or book automatically.",
         }, None
+    if state.get("revision") != revision:
+        return {"status": "expired"}, None
     state["registration_draft"] = patient
+    prepare_proposal(flow_manager, "registration")
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
@@ -80,24 +94,42 @@ async def confirm_registration(args, flow_manager):
     if args.get("confirmed") is not True or "registration_draft" not in state:
         return {"status": "not_confirmed"}, create_registration_node()
     submission = state["submission"]
-    blocked = gated_confirmation(
-        "confirm_registration",
-        flow_manager,
-        decided=submission.delivery_started,
-        instruction=(
-            "Clarify the caller's correction, condition or unfinished field before "
-            "registering; do not register with an unconfirmed detail. Only call "
-            "confirm_registration again with an unqualified confirmation."
-        ),
-    )
-    if blocked is not None:
-        return blocked
-    if not submission.delivery_started:
+    from flows.common import create_completion_node, record_already_settled
+    from flows.requests import proposal_status
+    from submission import register_action
+
+    if submission.delivery_attempted:
+        # A retry of the record the frozen plan already carries is safe; a
+        # different one cannot become this call's record any more.
+        if not submission.carries(register_action(state["registration_draft"])):
+            return record_already_settled("registration")
+    else:
+        status = proposal_status(flow_manager, "registration")
+        if status == "stale":
+            # The record was revised after the readback: read it back again.
+            return {"status": "not_confirmed"}, create_registration_node()
+        if status != "ok":
+            return {
+                "status": "needs_confirmation",
+                "instruction": (
+                    "Nothing is registered yet: the caller has to accept the readback in "
+                    "a turn of their own. Ask them and call confirm_registration again."
+                ),
+            }, None
+        blocked = gated_confirmation(
+            "confirm_registration",
+            flow_manager,
+            instruction=(
+                "Clarify the caller's correction, condition or unfinished field before "
+                "registering; do not register with an unconfirmed detail. Only call "
+                "confirm_registration again with an unqualified confirmation."
+            ),
+        )
+        if blocked is not None:
+            return blocked
         submission.set_register(state["registration_draft"])
     accepted = await submission.flush()
-    from flows.common import create_goodbye_node
-
-    return {"status": "accepted" if accepted else "delivery_failed"}, create_goodbye_node(
+    return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, "registration"
     )
 
@@ -142,6 +174,9 @@ def create_registration_confirm_node():
                 "role": "developer",
                 "content": "Read back the supplied demographics for explicit confirmation, spelling the email and national ID character by character. "
                 "These are caller-supplied details, not directory data. Ask if everything is correct. Only then confirm_registration. "
+                "If it returns needs_confirmation, the caller has not accepted the readback in a turn of their own yet: ask them and call it again only once they have. "
+                "If it returns qualified_confirmation, clarify the correction, condition or unfinished field first. "
+                "If it returns delivery_conflict, the call's record is already settled: do not claim the registration, apologise and say goodbye. "
                 "For corrections call prepare_registration with the whole corrected record. No booking.",
             }
         ],

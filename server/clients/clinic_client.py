@@ -124,6 +124,17 @@ class ClinicClient:
             query["insurer"] = list(insurer)
         return await self._request("GET", "/v1/availability", params=query)
 
+    async def appointments(self, patient_id: str) -> list[dict]:
+        """The patient's diary: what the caller can still act on (``when=upcoming``)."""
+        from urllib.parse import quote
+
+        data = await self._request(
+            "GET",
+            f"/v1/patients/{quote(patient_id, safe='')}/appointments",
+            params={"when": "upcoming"},
+        )
+        return data["appointments"]
+
     async def post_submission(self, action: dict) -> dict:
         verb = action["action"]
         if verb not in SUBMIT_ROUTES:

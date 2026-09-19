@@ -113,9 +113,8 @@ def build_llm():
     Latency here is not a comfort question. A call is capped at three minutes
     and cut off when the agent produces no audible audio, and both signals are
     attributed to us, so a reasoning model's extra seconds per turn are scored
-    as failure. ``LLM_DISABLE_THINKING`` and ``LLM_REASONING_EFFORT`` exist for
-    exactly that: the reference implementation measured deepseek-v4-flash on
-    this platform and runs it with thinking off and reasoning effort ``none``.
+    as failure. The default is therefore a fast model with thinking off
+    (``LLM_REASONING_EFFORT=none``): the turn has to be short, not thorough.
 
     The OpenAI-backed services are also given ``retry_on_timeout=True`` with
     ``LLM_RETRY_TIMEOUT_SECS``: an unresponsive stream is re-issued instead of
@@ -329,7 +328,6 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         is_active=lambda: flow_started,
     )
 
-
     @user_aggregator.event_handler("on_user_turn_started")
     async def on_user_turn_started(aggregator, strategy):
         logger.warning(
@@ -453,9 +451,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
         while True:
             await asyncio.sleep(interval)
-            if submission.delivery_started:
-                continue
-            if submission.actions:
+            if submission.needs_delivery:
                 await submission.flush()
 
     _deliver_task = asyncio.create_task(deliver_until_accepted())

@@ -71,22 +71,27 @@ def resolve_named(weekday: str, day: int, month: int, year: int | None, call_day
 
     ``year`` defaults to the call's year, and the result is never before the call
     day: a phrase naming a past date in the current year means next year's.
+
+    The spoken weekday is checked against the calendar day the caller named **in
+    its own year**, before the roll: "Monday the fifth of January" said in
+    September names the Monday that January actually held, and the roll to next
+    year is the year being inferred, not the day. A weekday and a date that
+    disagree are a mishearing — resolving them to whichever of the two the model
+    happened to hear first silently books another day, so this raises instead and
+    the model asks the caller to repeat.
     """
     if isinstance(month, str):
         month = MONTHS.index(month.strip().lower()) + 1
-    if year is None:
-        candidate = date(call_day.year, month, day)
-        if candidate < call_day:
-            candidate = date(call_day.year + 1, month, day)
-    else:
-        candidate = date(int(year), month, day)
+    named_year = call_day.year if year is None else int(year)
+    candidate = date(named_year, month, day)
     if weekday:
         expected = WEEKDAYS.index(weekday.strip().lower())
         if candidate.weekday() != expected:
-            # The caller's weekday is the one fact they cannot be wrong about out
-            # loud, so a mismatch means the date was misheard: take the weekday
-            # nearest the named day rather than silently booking another one.
-            return candidate
+            raise ValueError(
+                f"weekday {weekday!r} conflicts with calendar date {candidate.isoformat()}"
+            )
+    if year is None and candidate < call_day:
+        candidate = date(call_day.year + 1, month, day)
     return candidate
 
 

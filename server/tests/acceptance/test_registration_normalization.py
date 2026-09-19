@@ -6,11 +6,12 @@ on a mismatch. Submitting an unforgiven form wastes a scored call, so these
 regressions pin the tolerance the scorer grants.
 """
 
+from datetime import datetime
+
 import pytest
 
 from flows.registration import validate_registration
 from national_id import is_valid_national_id, normalize_national_id
-from datetime import datetime
 
 BASE = {
     "given_name": "Ana",

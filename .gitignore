@@ -234,3 +234,6 @@ server/.krisp-models/
 
 # Pi runtime state inside the bot package
 server/.pi/
+
+# Per-call forensics (audit.py): private, local, never part of the tree
+server/audit-logs/

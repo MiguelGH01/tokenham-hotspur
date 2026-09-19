@@ -49,9 +49,16 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
         return failed("not_found")
 
     patient = matches[0]
+    from flows.requests import revise_request
+
+    revise_request(flow_manager)
     state["patient"] = patient
     visited = "a returning patient" if patient["has_visited_before"] else "a first-time patient"
     summary = f"Found {patient['given_name']} {patient['first_surname']}, {visited}."
+    if state.get("intent") in ("cancel", "reschedule"):
+        from flows.appointments import create_appointments_node, load_appointments
+        result, node = await load_appointments(flow_manager)
+        return result, node or create_appointments_node()
     return {"status": "found", "patient_summary": summary}, create_slot_node(flow_manager)
 
 

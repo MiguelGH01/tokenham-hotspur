@@ -19,7 +19,7 @@ import json
 import os
 import re
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
 from loguru import logger
 
@@ -59,7 +59,7 @@ def audit(call_id: str, event: str, **fields) -> None:
     if directory is None:
         return
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "call_id": call_id,
         "event": event,
         **_truncate(fields),

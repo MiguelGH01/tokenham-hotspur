@@ -1,5 +1,4 @@
 """The call's action list, delivered until the platform accepts it.
-
 One call submits **a list**: ``record.actions: [...]`` is the documented response
 shape, and two problems need more than one verb in a single call (cancel plus
 book, or two intents stacked). The list is ordered and immutable once an action
@@ -15,7 +14,11 @@ Two entry points, and the difference matters:
   retry loop uses it, and it never invents a decision.
 - :meth:`close` is the end of the call. Only here does an undecided call fall
   back to a reasoned refusal, because an empty list scores nothing while a
-  wrong-but-stated refusal at least states something.
+  wrong-but-stated refusal at least states something. That fallback belongs to
+  the **call**, not to each intent: a call that asked three things and decided
+  none of them states one refusal, not three. That fallback belongs to
+  the **call**, not to each intent: a call that asked three things and decided
+  none of them states one refusal, not three.
 
 **A refusal the conversation can still revise is not a decision.** A call that
 says "there is nothing free in that window" and then finds a slot once the
@@ -39,6 +42,35 @@ import audit
 #: non-rule ending in the closed vocabulary.
 DEFAULT_ACTION = {"action": "NO_ACTION", "reason": "out_of_scope"}
 
+#: The offer fields a reschedule carries. The route takes no
+#: ``appointment_type_id``: moving an appointment keeps it.
+RESCHEDULE_FIELDS = ("provider_id", "location_id", "slot", "policy_id")
+
+
+def book_action(offer: dict) -> dict:
+    return {"action": "BOOK", **offer}
+
+
+def reschedule_action(appointment_id: str, offer: dict) -> dict:
+    return {
+        "action": "RESCHEDULE",
+        "appointment_id": appointment_id,
+        **{key: offer[key] for key in RESCHEDULE_FIELDS},
+    }
+
+
+def cancel_action(appointment_id: str) -> dict:
+    return {"action": "CANCEL", "appointment_id": appointment_id}
+
+
+def register_action(patient: dict) -> dict:
+    return {"action": "REGISTER", **patient}
+
+
+#: The confirmed writes, in one place: a retry compares the action the frozen
+#: plan carries against the action being confirmed, and a second copy of each
+#: shape would eventually disagree with the first.
+
 
 class CallSubmission:
     """Ordered actions for one call, delivered in order and retried until taken."""
@@ -50,6 +82,8 @@ class CallSubmission:
         #: Parallel to ``_actions``: True while the action is still revisable.
         self._provisional: list[bool] = []
         self._delivered = 0
+        self._attempted = False
+        self._requests: list[CallSubmission] = []
         self._closed = False
         self._lock = asyncio.Lock()
 
@@ -58,7 +92,7 @@ class CallSubmission:
     @property
     def actions(self) -> list[dict]:
         """The ordered plan, as it would be submitted."""
-        return deepcopy(self._actions)
+        return deepcopy(self._actions) + [action for request in self._requests for action in request.actions]
 
     @property
     def pending(self) -> dict:
@@ -72,15 +106,42 @@ class CallSubmission:
         return deepcopy(self._actions[0]) if self._actions else dict(DEFAULT_ACTION)
 
     @property
-    def delivery_started(self) -> bool:
-        """True once the platform has accepted part of the plan."""
-        return self._delivered > 0
+    def delivery_attempted(self) -> bool:
+        """True once any action was POSTed: the plan can no longer be rewritten.
 
+        Not the same as accepted. A request that returned an error, a timeout or
+        a 5xx may still have been recorded on the platform, so the payload that
+        was sent is frozen and only that payload may be retried.
+        """
+        return self._attempted
+
+    @property
+    def needs_delivery(self) -> bool:
+        """Unaccepted decided actions remain, even after partial acceptance."""
+        return bool(
+            self._outstanding(release_provisional=self._closed, fallback=False)
+        ) or any(request.needs_delivery for request in self._requests)
+
+    def carries(self, action: dict) -> bool:
+        """Whether the plan this call will submit already holds this exact action.
+
+        The question a late confirmation asks: a retry of what is already
+        decided is safe, a different action cannot become the record any more.
+        """
+        return action in self.actions
+
+    def new_request(self):
+        """An independent intent cannot overwrite a previous request's effects."""
+        if self._closed:
+            raise RuntimeError("The call has already ended")
+        request = CallSubmission(self.call_id, self._client)
+        self._requests.append(request)
+        return request
     def _reject_write_after_decision(self) -> None:
         if self._closed:
             raise RuntimeError("The call has already ended")
-        if self.delivery_started:
-            raise RuntimeError("Delivery has already started")
+        if self._attempted:
+            raise RuntimeError("Delivery has already been attempted")
 
     def _set_primary(self, action: dict, *, provisional: bool = False) -> None:
         self._reject_write_after_decision()
@@ -111,16 +172,16 @@ class CallSubmission:
         self._provisional.append(False)
 
     def set_book(self, offer):
-        self._set_primary({"action": "BOOK", **offer})
+        self._set_primary(book_action(offer))
 
     def set_register(self, patient):
-        self._set_primary({"action": "REGISTER", **patient})
+        self._set_primary(register_action(patient))
 
     def set_cancel(self, appointment_id):
-        self._set_primary({"action": "CANCEL", "appointment_id": appointment_id})
+        self._set_primary(cancel_action(appointment_id))
 
     def set_reschedule(self, appointment_id, offer):
-        self._set_primary({"action": "RESCHEDULE", "appointment_id": appointment_id, **offer})
+        self._set_primary(reschedule_action(appointment_id, offer))
 
     def set_no_action(self, reason, *, provisional: bool = True):
         """State a refusal.
@@ -137,37 +198,61 @@ class CallSubmission:
 
     # --- delivery ---------------------------------------------------------
 
-    def _outstanding(self, *, final: bool) -> list[dict]:
+    def _outstanding(self, *, release_provisional: bool, fallback: bool) -> list[dict]:
+        """This plan's unaccepted actions, in order, stopping at a live refusal.
+
+        A provisional refusal is not a decision yet. Delivering it would freeze
+        the record while the conversation is still able to produce a booking,
+        and nothing behind it may overtake it either, so the run stops there
+        rather than skipping ahead.
+
+        ``fallback`` is the refusal a call with *nothing* decided still owes the
+        platform (``SC-no-silence``), and it belongs to the call rather than to
+        one intent: it is offered at most once, and only when the call is over.
+        """
         if self._actions:
             pending: list[dict] = []
             for index, action in enumerate(self._actions):
                 if index < self._delivered:
                     continue
-                # A provisional refusal is not a decision yet. Delivering it
-                # would freeze the record while the conversation is still able
-                # to produce a booking, and nothing behind it may overtake it
-                # either, so the run stops here rather than skipping ahead.
-                if not final and self._provisional[index]:
+                if not release_provisional and self._provisional[index]:
                     break
                 pending.append(action)
             return pending
-        # The fallback refusal is not part of the plan, so it is delivered at
-        # most once: a retry loop must not replay it, and it must not be sent at
-        # all until the call is actually over.
-        if not final or self._delivered:
+        if not fallback or self._delivered:
             return []
-        return [DEFAULT_ACTION]
+        return [dict(DEFAULT_ACTION)]
 
     async def flush(self) -> bool:
         """Deliver what the call has decided so far. Never invents an action."""
-        return await self._deliver(final=False)
+        accepted = await self._deliver(release_provisional=False, fallback=False)
+        for request in self._requests:
+            accepted = await request.flush() and accepted
+        return accepted
 
     async def close(self) -> bool:
-        """End of call: deliver the plan, or a reasoned refusal if there is none."""
+        """End of call: deliver the plan, or the one refusal that covers the call."""
         self._closed = True
-        return await self._deliver(final=True)
+        accepted = await self._deliver(release_provisional=True, fallback=False)
+        for request in self._requests:
+            accepted = await request._close_request() and accepted
+        if not self._actions and not self._delivered_anything():
+            # Silence is never cheaper than a stated answer, but a per-intent
+            # request is not a call: the fallback is stated once, for the call.
+            accepted = await self._deliver(release_provisional=True, fallback=True) and accepted
+        return accepted
 
-    async def _deliver(self, *, final: bool) -> bool:
+    async def _close_request(self) -> bool:
+        """Close one intent of the call, without inventing the call's fallback."""
+        self._closed = True
+        return await self._deliver(release_provisional=True, fallback=False)
+
+    def _delivered_anything(self) -> bool:
+        return self._delivered > 0 or any(
+            request._delivered_anything() for request in self._requests
+        )
+
+    async def _deliver(self, *, release_provisional: bool, fallback: bool) -> bool:
         """Deliver every outstanding action, in order. True when all were taken.
 
         Ordering matters: a cancel that must precede a book cannot be swapped,
@@ -179,15 +264,18 @@ class CallSubmission:
         stamped on here — the one place that owns both the plan and the id.
         """
         async with self._lock:
-            for action in self._outstanding(final=final):
+            for action in self._outstanding(
+                release_provisional=release_provisional, fallback=fallback
+            ):
                 payload = {"call_id": self.call_id, **deepcopy(action)}
                 audit.audit(
                     self.call_id,
                     "submission_attempt",
                     verb=action.get("action"),
                     payload={k: v for k, v in action.items()},
-                    final=final,
+                    final=release_provisional,
                 )
+                self._attempted = True
                 try:
                     await self._client.post_submission(payload)
                 except Exception as exc:

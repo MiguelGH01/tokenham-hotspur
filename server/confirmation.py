@@ -9,16 +9,18 @@ model is told to clarify, and a later plain confirmation passes.
 
 Conservative by design, in the rejecting direction's favour only up to a point:
 a plain "yes" in any of the three languages never blocks, and missing audio or
-missing context never blocks (a false block burns turns; a false pass burns the
-case only when it would also have burned it without the gate).
+missing context is treated as missing consent rather than as consent (a false
+block burns a turn; a false pass loses the case).
 
-Adapted from the reference implementation's ``hasUnresolvedQualification``
-(pablofd/hackspain, ``src/confirmation.ts``), reduced to the qualifier families
-that map onto this flow graph.
+The qualifier families are the ones this flow graph can resolve: a price
+question, a correction, a request to check an alternative, and a negation or
+hold. Each one means the conversation is still deciding something the record
+depends on, so the write waits for the answer.
 """
 
 import re
 import unicodedata
+
 
 def _normalize(text: str) -> str:
     lowered = unicodedata.normalize("NFKD", (text or "").casefold())
@@ -97,3 +99,17 @@ def gate_result(text: str) -> str | None:
 
 def has_unresolved_qualification(text: str) -> bool:
     return gate_result(text) is not None
+
+
+def is_affirmative(text: str) -> bool:
+    """Require affirmative evidence, not merely absence of a known objection."""
+    return bool(re.search(r"^(?:yes|yeah|yep|ok(?:ay)?|sure|perfect|go ahead|book it|cancel it|confirm|si|vale|de acuerdo|correcto|perfecto|adelante|confirmo|d'acord|va be|no problem|no worries|no hay problema|cap problema|that's great)\b", _normalize(text).lstrip("¡¿")))
+
+
+def is_clean_yes(text: str) -> bool:
+    """The caller's consent, in code: affirmative, with no qualification left open.
+
+    One definition for every path that needs it, so the gate cannot drift from
+    itself and lose a case either way.
+    """
+    return is_affirmative(text) and gate_result(text) is None
