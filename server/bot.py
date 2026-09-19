@@ -46,14 +46,17 @@ from booking import MADRID
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
 from flows.common import GREETING
+from flows.rails import RAILS
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
 from liveness import SilenceWatchdog
 from llm_deadline import FirstTokenDeadlineLLM
 from resolution import resolve_fallback
 from submission import CallSubmission
+from ws_probes import quiet_empty_websocket_probes
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
+quiet_empty_websocket_probes()
 ensure_filter_model()
 
 
@@ -392,6 +395,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         llm=llm,
         context_aggregator=context_aggregator,
         transport=transport,
+        global_functions=RAILS,
     )
     affirmation_watch.bind(flow_manager)
     submission = CallSubmission(

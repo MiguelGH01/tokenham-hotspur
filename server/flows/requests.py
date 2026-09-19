@@ -2,10 +2,16 @@
 
 from copy import deepcopy
 
+from llm_messages import chat_fields, chat_role
+
 
 def user_turns(manager):
     try:
-        return [deepcopy(m) for m in manager.get_current_context() if m.get("role") == "user"]
+        return [
+            deepcopy(chat_fields(m))
+            for m in manager.get_current_context()
+            if chat_role(m) == "user"
+        ]
     except Exception:
         return []
 

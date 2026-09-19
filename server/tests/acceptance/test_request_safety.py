@@ -114,6 +114,21 @@ def test_nonaffirmative_transcript_is_not_consent():
     assert gated_confirmation('confirm', manager)[0]['reason_code'] == 'missing_confirmation'
 
 
+def test_gated_confirmation_reads_llm_specific_messages():
+    from pipecat.processors.aggregators.llm_context import LLMSpecificMessage
+
+    manager = SimpleNamespace(
+        state={},
+        get_current_context=lambda: [
+            LLMSpecificMessage(
+                llm="google",
+                message={"role": "user", "content": "Yes, that one please."},
+            )
+        ],
+    )
+    assert gated_confirmation("confirm", manager) is None
+
+
 def test_reschedule_keeps_existing_type_and_requires_later_consent():
     from datetime import datetime
 

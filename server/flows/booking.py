@@ -17,7 +17,13 @@ import audit
 import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
 from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
-from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node, gated_confirmation
+from flows.common import (
+    RULE_WORDS,
+    TRIAGE_EXAMPLES,
+    create_goodbye_node,
+    create_refusal_node,
+    gated_confirmation,
+)
 from rules import check_patient_rules, check_provider_rules, resolve_plan
 from submission import book_action, reschedule_action
 
@@ -589,10 +595,13 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     f"The patient is {patient['given_name']} {patient['first_surname']}. Find out "
                     "which specialty or named doctor they need. Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
                     "When the caller states or confirms a specialty — for example 'the GP' — pass "
-                    "specialty. Pass provider_name whenever the caller names a doctor, and pass "
+                    "specialty. If they only described symptoms, pass the specialty from the "
+                    "triage examples. Pass provider_name whenever the caller names a doctor, and pass "
                     "BOTH when they give both: 'Dr. Sáez, the GP' is specialty=general_practice "
                     "AND provider_name='Sáez'. That pair is what identifies a doctor whose "
                     "surname is ambiguous, so never drop one of the two. "
+                    "A named GP, site or doctor the caller said wins over an invented enum value. "
+                    "Do not guess a site or doctor from the enum. "
                     "Only pass site, weekday or part_of_day if the caller asked for them. Never "
                     "pass policy_name unless the caller named a plan out loud. Then call "
                     "get_earliest_slot. If it returns no_slots, say nothing is available for that "
@@ -605,7 +614,8 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     "apologise and ask them to call back shortly. If a tool result is "
                     "CANCELLED or says the call is still running, you have no appointment to "
                     "describe: say you are just checking and call get_earliest_slot again. "
-                    "Never describe a day, a doctor or a site from memory."
+                    "Never describe a day, a doctor or a site from memory. "
+                    + TRIAGE_EXAMPLES
                 ),
             }
         ],

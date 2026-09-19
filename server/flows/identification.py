@@ -108,7 +108,9 @@ def create_identify_node() -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Establish the patient's full name and ONE exact identifier: their DNI or NIE "
+                    "Establish who the appointment is for. Example: 'my son's had a temperature' "
+                    "→ the patient is the child, not the caller. Establish the patient's full name "
+                    "and ONE exact identifier: their DNI or NIE "
                     "including the letter, or their phone number. Ask for whatever is missing, one "
                     "short question at a time. The moment you hold the full name plus one complete "
                     "identifier, call search_patient immediately — do not ask for a second "
