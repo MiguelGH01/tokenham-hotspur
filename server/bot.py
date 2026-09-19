@@ -28,7 +28,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
+from pipecat.runner.types import (
+    EvalRunnerArguments,
+    RunnerArguments,
+    SmallWebRTCRunnerArguments,
+    WebSocketRunnerArguments,
+)
 from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.anthropic.llm import AnthropicLLMService
@@ -122,6 +127,8 @@ def _call_id(runner_args: RunnerArguments) -> str:
 def _transport_name(runner_args: RunnerArguments) -> str:
     if isinstance(runner_args, EvalRunnerArguments):
         return "eval"
+    if isinstance(runner_args, SmallWebRTCRunnerArguments):
+        return "webrtc"
     if _is_twilio_session(runner_args):
         return "twilio"
     t = getattr(runner_args, "transport_type", None) or getattr(runner_args, "transport", None)
@@ -603,17 +610,13 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         transport=transport,
     )
     affirmation_watch.bind(flow_manager)
-    client = (
-        DryRunSubmit(ClinicClient())
-        if isinstance(runner_args, EvalRunnerArguments)
-        else ClinicClient()
-    )
+    # Eval + browser WebRTC mint their own call_id; the Prosper platform never
+    # dialled them, so a real POST comes back 404 "unknown call". Dry-run the
+    # writes locally; clinic reads still hit the live API.
+    dry_submit = isinstance(runner_args, (EvalRunnerArguments, SmallWebRTCRunnerArguments))
+    client = DryRunSubmit(ClinicClient()) if dry_submit else ClinicClient()
     submission = CallSubmission(
         call_id,
-        # The eval lane is dialled by the harness, not by the platform, so the
-        # platform refuses its minted call_id with a 404 and every booking in the
-        # lane "fails" for a reason that has nothing to do with the bot. Its writes
-        # are answered locally instead; reads still go to the real clinic API.
         client,
         # Only asked when the call ends having decided nothing: the best ending
         # it can still stand behind beats the ``out_of_scope`` that matches no
@@ -665,20 +668,23 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             ]
         )
 
-    async def start_flow_after_grace():
+    async def start_flow_after_grace(delay: float | None = None):
         """Greet anyway if client-ready never arrives.
 
         A call whose greeting is never queued is dead air from the first second,
         and the scorer attributes that silence to the agent. ``start_flow`` is
         idempotent, so the normal path makes this a no-op.
         """
-        await asyncio.sleep(float(os.getenv("FLOW_START_GRACE_SECS", "8")))
+        await asyncio.sleep(
+            delay if delay is not None else float(os.getenv("FLOW_START_GRACE_SECS", "8"))
+        )
         if not flow_started:
             logger.warning("Client-ready never arrived; starting the flow anyway")
             await start_flow()
 
-    # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
-    # interrupts and drops anything queued earlier; telephony has no RTVI client.
+    # RTVI clients (webrtc prebuilt, daily, eval) send client-ready after connecting,
+    # which interrupts and drops anything queued earlier; telephony has no RTVI client.
+    # The console's Place-test-call also has no RTVI — it must not wait the full grace.
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         await start_flow()
@@ -691,6 +697,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         # nothing else would ever start the flow and the bot would stay silent until cut off.
         if isinstance(runner_args, WebSocketRunnerArguments):
             await start_flow()
+            return
+        if isinstance(runner_args, SmallWebRTCRunnerArguments):
+            # Console dial has no RTVI client-ready. The default 8s grace left dead air
+            # and the caller spoke first — so the greeting never landed.
+            webrtc_grace = float(os.getenv("WEBRTC_FLOW_START_GRACE_SECS", "0.5"))
+            _start_task = asyncio.create_task(start_flow_after_grace(webrtc_grace))
             return
         if not flow_started:
             _start_task = asyncio.create_task(start_flow_after_grace())

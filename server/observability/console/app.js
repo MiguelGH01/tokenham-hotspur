@@ -1278,7 +1278,11 @@ function onEvent(ev) {
   applyEvent(c, ev, true);
   if (ev.kind === "call.started") {
     toast(c);
-    if (modal && modal.awaitingCall && c.test) bindTestCall(c.id);
+    /* A test dial sets awaitingCall before /api/offer; any new call that
+       arrives while we wait is the one we placed — bind even if is_test was
+       missing on an older bot build. */
+    if (modal && modal.awaitingCall && (c.test || c.transport === "webrtc" || c.transport === "unknown"))
+      bindTestCall(c.id);
     else if (state.follow && view === "calls") select(c.id);
   }
   if (c.ringing && (ev.kind === "transcript.bot" || ev.kind === "transcript.user")) c.ringing = false;
