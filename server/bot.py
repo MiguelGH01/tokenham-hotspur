@@ -26,7 +26,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
-from pipecat.runner.types import RunnerArguments, WebSocketRunnerArguments
+from pipecat.runner.types import EvalRunnerArguments, RunnerArguments, WebSocketRunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
@@ -43,7 +43,7 @@ from pipecat.workers.runner import WorkerRunner
 
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
-from clients.clinic_client import ClinicClient
+from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
 from flows.common import GREETING
 from flows.reception import create_reception_node
@@ -396,7 +396,13 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     affirmation_watch.bind(flow_manager)
     submission = CallSubmission(
         call_id,
-        ClinicClient(),
+        # The eval lane is dialled by the harness, not by the platform, so the
+        # platform refuses its minted call_id with a 404 and every booking in the
+        # lane "fails" for a reason that has nothing to do with the bot. Its writes
+        # are answered locally instead; reads still go to the real clinic API.
+        DryRunSubmit(ClinicClient())
+        if isinstance(runner_args, EvalRunnerArguments)
+        else ClinicClient(),
         # Only asked when the call ends having decided nothing: the best ending
         # it can still stand behind beats the ``out_of_scope`` that matches no
         # published case. See ``resolution.py``.

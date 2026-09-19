@@ -162,3 +162,37 @@ class ClinicClient:
             raise ValueError(f"unknown submission verb: {verb}")
         body = {k: v for k, v in action.items() if k != "action"}
         return await self._request("POST", SUBMIT_ROUTES[verb], json=body)
+
+
+class DryRunSubmit:
+    """Reads for real, writes nothing: the local eval lane's own delivery.
+
+    The lane is dialled by the harness rather than by the platform, so its
+    ``call_id`` is a UUID we minted and every route answers ``404 unknown call``.
+    The platform is right to refuse it — it never dialled that call — but the bot
+    then tells the caller, honestly, that the booking did not go through, and a
+    lane where every booking fails cannot tell a wrong answer from an
+    undeliverable one. Making that explicit is the point: the read paths still go
+    to the real clinic API (the lane is not a simulation of the clinic), the
+    payload is still written to the audit trail exactly as a real one is, and the
+    offline oracle scores it from there.
+
+    Scored traffic never sees this: it is chosen by the eval transport, not by an
+    environment variable that could travel with the deployed bot.
+    """
+
+    def __init__(self, client: ClinicClient):
+        self._client = client
+
+    def __getattr__(self, name):
+        """Everything the lane did not mean to change is the real client's."""
+        return getattr(self._client, name)
+
+    async def post_submission(self, action: dict) -> dict:
+        logger.info("dry-run submission (eval lane, not sent): {}", action)
+        return {
+            "call_id": action.get("call_id"),
+            "received_at": None,
+            "record": {"actions": [action]},
+            "dry_run": True,
+        }
