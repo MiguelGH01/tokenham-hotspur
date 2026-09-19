@@ -107,6 +107,20 @@
   }
   .lanes{ position:relative; }
   .lane{ position:relative; height:30px; border-top:1px solid var(--border); }
+  /* One segment per lane-body, all driven to the same left:X% by the audio's
+     currentTime -- since lanes are flush against each other (no gaps), the
+     stack of per-lane segments reads as one continuous vertical playhead. */
+  .timeline-playhead{
+    position:absolute; top:0; bottom:0; width:2px; background:var(--accent);
+    pointer-events:none; z-index:4; left:0%; transform:translateX(-50%);
+  }
+  /* Same one-segment-per-lane-body trick as the playhead, but for the tick
+     gridlines -- so markers/bars in every lane always line up against the
+     same 0s/10s/20s/... reference the axis row shows below them. */
+  .timeline-gridline{
+    position:absolute; top:0; bottom:0; width:1px; background:var(--border);
+    pointer-events:none; z-index:1; left:0%;
+  }
   .lane:first-child{ border-top:none; }
   .lane-label{
     position:absolute; left:-2px; top:50%; transform:translateY(-50%);
@@ -167,6 +181,7 @@
   .msg-group .msg.tint-a{ background:var(--tint-a); }
   .msg-group .msg.tint-b{ background:var(--tint-b); }
   .msg-group.role-assistant .msg.role-tool{ border-left:2px solid var(--lane-fn); padding-left:8px; }
+  .msg-group.role-assistant .msg.role-developer{ border-left:2px solid var(--warn); padding-left:8px; }
   .msg-group .msg[data-t]{ cursor:pointer; }
 
   .audio-row{ margin-top:12px; }
@@ -242,16 +257,14 @@
 <script>
 (function(){
   var state = { realData:null, realFilter:'all', realSelectedIdx:null, realSelectedEventIdx:null };
-  var realLaneY = { lifecycle:0, business:1, issues:2 };
-  var realLaneLabels = ['lifecycle','business','issues'];
+  var realLaneY = { lifecycle:0, issues:1, user:2, assistant:3, overlap:4 };
+  var realLaneLabels = ['lifecycle','issues','user','assistant','talking over'];
   var realKindLane = {
     call_start:'lifecycle', connected:'lifecycle', disconnected:'lifecycle',
-    offer:'business', submitted:'business', submit_failed:'business', reprompt:'business',
     error:'issues', warning:'issues'
   };
   var realKindColorVar = {
     call_start:'--lane-turn', connected:'--lane-turn', disconnected:'--text-faint',
-    offer:'--lane-fn', submitted:'--pass', submit_failed:'--fail', reprompt:'--warn',
     error:'--fail', warning:'--warn'
   };
 
@@ -268,8 +281,12 @@
     if (max <= 0) return [0];
     var step = max <= 12 ? 2 : max <= 30 ? 5 : max <= 80 ? 10 : max <= 200 ? 30 : 60;
     var ticks = [];
-    for (var v=0; v<=max; v+=step) ticks.push(v);
-    if (ticks[ticks.length-1] < max) ticks.push(max);
+    for (var v=0; v<max; v+=step) ticks.push(v);
+    // The real duration is always the last tick -- but drop the regular
+    // step tick right before it if they'd land too close together, instead
+    // of showing both jammed into the same spot at the right edge.
+    if (ticks.length && (max - ticks[ticks.length-1]) < max*0.06) ticks.pop();
+    ticks.push(max);
     return ticks;
   }
 
@@ -338,12 +355,12 @@
     var i = 0;
     while (i < entries.length){
       var role = entries[i].role;
-      var groupRole = role === 'user' ? 'user' : role === 'assistant' ? 'assistant' : null;
+      var groupRole = role === 'user' ? 'user' : (role === 'assistant' || role === 'developer') ? 'assistant' : null;
       if (groupRole){
         var group = el('div','msg-group role-'+groupRole);
         group.appendChild(el('div','group-role', groupRole));
         var n = 0;
-        while (i < entries.length && (entries[i].role === groupRole || (groupRole === 'assistant' && entries[i].role === 'tool'))){
+        while (i < entries.length && (entries[i].role === groupRole || (groupRole === 'assistant' && (entries[i].role === 'tool' || entries[i].role === 'developer')))){
           var box = buildMsgBox(entries[i], entries[i].role !== groupRole, onMsgClick);
           box.classList.add(n % 2 === 0 ? 'tint-a' : 'tint-b');
           group.appendChild(box);
@@ -402,10 +419,12 @@
       '<div class="axis-row" id="real-axis"></div>' +
       '<div class="legend">' +
       '<span><i style="background:var(--lane-turn)"></i>lifecycle</span>' +
-      '<span><i style="background:var(--lane-fn)"></i>offer made</span>' +
-      '<span><i style="background:var(--pass)"></i>submitted</span>' +
-      '<span><i style="background:var(--warn)"></i>reprompt / warning</span>' +
-      '<span><i style="background:var(--fail)"></i>error / submit failed</span>' +
+      '<span><i style="background:var(--fail)"></i>error</span>' +
+      '<span><i style="background:var(--warn)"></i>warning</span>' +
+      '<span><i style="background:var(--accent-weak);border:1px solid var(--accent)"></i>user talking</span>' +
+      '<span><i style="background:var(--role-assistant-weak);border:1px solid var(--role-assistant)"></i>assistant talking</span>' +
+      '<span><i style="background:var(--lane-fn)"></i>tool calling</span>' +
+      '<span><i style="background:var(--lane-speech-fill);border:1px solid var(--lane-speech)"></i>talking over</span>' +
       '</div>' +
       '<div class="audio-row" id="real-audio-row"></div>' +
       '</div>' +
@@ -450,7 +469,6 @@
       var row = el('div', 'scenario-row' + (i===state.realSelectedIdx?' selected':''));
       row.appendChild(el('div','pill mode', c.mode));
       row.appendChild(el('div','name', callDisplayName(c)));
-      row.appendChild(el('div','pill ' + c.outcome, c.outcome));
       row.onclick = function(){ state.realSelectedIdx = i; state.realSelectedEventIdx = null; renderRealSidebar(); renderRealCall(); };
       list.appendChild(row);
     });
@@ -487,6 +505,15 @@
       lanesEl.appendChild(lane);
     });
     var laneBodies = lanesEl.querySelectorAll('.lane-body');
+    var ticks = niceTicks(max);
+    laneBodies.forEach(function(body){
+      ticks.forEach(function(v){
+        var g = el('div','timeline-gridline');
+        g.style.left = (v/max*100) + '%';
+        body.appendChild(g);
+      });
+      body.appendChild(el('div','timeline-playhead'));
+    });
 
     c.events.forEach(function(ev, idx){
       var laneName = realKindLane[ev.kind];
@@ -505,9 +532,33 @@
       laneBodies[laneIdx].appendChild(m);
     });
 
+    function renderSpanLane(spans, laneName, label, background, border){
+      (spans || []).forEach(function(sp){
+        var left = sp.start/max*100, width = Math.max((sp.end-sp.start)/max*100, 0.6);
+        var bar = el('div','span-bar');
+        bar.style.left = left + '%';
+        bar.style.width = width + '%';
+        bar.style.background = background;
+        bar.style.borderColor = border;
+        bar.onmouseenter = function(e){ showTip(e, label + ' ' + fmtSec(sp.start) + ' → ' + fmtSec(sp.end) + ' (' + fmtSec(sp.end-sp.start) + ')'); };
+        bar.onmousemove = function(e){ showTip(e, label + ' ' + fmtSec(sp.start) + ' → ' + fmtSec(sp.end)); };
+        bar.onmouseleave = hideTip;
+        bar.onclick = function(){
+          var audio = realAudioEl();
+          if (audio) audio.currentTime = sp.start;
+          lastAudioMatchIdx = highlightRealTranscriptAt(nearestTranscriptIdxAt(c, sp.start));
+        };
+        laneBodies[realLaneY[laneName]].appendChild(bar);
+      });
+    }
+    renderSpanLane(c.user_spans, 'user', 'user talking', 'var(--accent-weak)', 'var(--accent)');
+    renderSpanLane(c.assistant_spans, 'assistant', 'assistant talking', 'var(--role-assistant-weak)', 'var(--role-assistant)');
+    renderSpanLane(c.tool_spans, 'assistant', 'tool calling', 'var(--lane-fn)', 'var(--lane-fn)');
+    renderSpanLane(c.overlap_spans, 'overlap', 'talking over', 'var(--lane-speech-fill)', 'var(--lane-speech)');
+
     var axis = document.getElementById('real-axis');
     axis.innerHTML = '';
-    niceTicks(max).forEach(function(v){
+    ticks.forEach(function(v){
       var t = el('div','tick'); t.style.left = (v/max*100)+'%'; axis.appendChild(t);
       var l = el('div','tick-lbl', v+'s'); l.style.left = (v/max*100)+'%'; axis.appendChild(l);
     });
@@ -613,6 +664,14 @@
   var ICON_PLAY = '<svg class="icon-play" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l10-5.5-10-5.5z"/></svg>';
   var ICON_PAUSE = '<svg class="icon-pause" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>';
 
+  function updateRealPlayhead(t){
+    var c = state.realData.calls[state.realSelectedIdx];
+    if (!c) return;
+    var max = Math.max(c.duration, 1);
+    var pct = Math.max(0, Math.min(100, t/max*100));
+    document.querySelectorAll('#real-lanes .timeline-playhead').forEach(function(seg){ seg.style.left = pct + '%'; });
+  }
+
   function renderRealAudio(c){
     lastAudioMatchIdx = -1;
     var row = document.getElementById('real-audio-row');
@@ -651,9 +710,13 @@
       if (!dragging) seek.value = String(audio.currentTime);
       curTime.textContent = fmtClock(audio.currentTime);
       paintSeekFill();
+      updateRealPlayhead(audio.currentTime);
       syncTranscriptToAudioTime(audio.currentTime);
     };
-    seek.oninput = function(){ dragging = true; curTime.textContent = fmtClock(Number(seek.value)); paintSeekFill(); };
+    seek.oninput = function(){
+      dragging = true; curTime.textContent = fmtClock(Number(seek.value)); paintSeekFill();
+      updateRealPlayhead(Number(seek.value));
+    };
     seek.onchange = function(){ dragging = false; audio.currentTime = Number(seek.value); };
 
     player.appendChild(playBtn);
