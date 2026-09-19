@@ -1,12 +1,32 @@
 """Shared voice guidance and terminal nodes, independent of individual flows."""
 
 from pipecat.flows import NodeConfig
+from pipecat.frames.frames import TTSSpeakFrame
 
 import audit
 import confirmation
 from llm_messages import chat_role, chat_text
 
 GREETING = "Clínica Arenal, how can I help you?"
+HOLDING_LINE = "One moment please."
+
+#: TTS cannot read the roster abbreviations; the model will speak whatever we put
+#: in the offer summary, so expand them before that string is built.
+SPOKEN_TITLES = {"Dra.": "Doctora", "Dr.": "Doctor", "D.": "Don"}
+
+
+def spoken_provider_name(provider_name: str) -> str:
+    title, _, rest = provider_name.partition(" ")
+    return f"{SPOKEN_TITLES[title]} {rest}" if title in SPOKEN_TITLES else provider_name
+
+
+async def say_holding_line(flow_manager) -> None:
+    """Fill the silence while an API lookup runs; spoken by code, not the LLM."""
+    worker = getattr(flow_manager, "worker", None)
+    queue = getattr(worker, "queue_frames", None)
+    if queue is None:
+        return
+    await queue([TTSSpeakFrame(text=HOLDING_LINE, append_to_context=False)])
 
 # Few-shot only. Code does not keyword-match these; the LLM maps them onto tools.
 TRIAGE_EXAMPLES = (

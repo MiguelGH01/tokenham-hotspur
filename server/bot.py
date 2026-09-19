@@ -145,14 +145,6 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
-#: How long an inference may produce nothing before it is abandoned and
-#: re-issued. Pipecat defaults ``retry_on_timeout`` to ``False``, so an
-#: unresponsive stream used to be waited on until the platform cut the call for
-#: silence — a 246 s stall is on record. The re-issue pipecat performs is itself
-#: unbounded, so this bounds the *first* attempt only: dead air, then one fresh
-#: request. The watchdog's deferred re-run is the backstop beyond that.
-LLM_RETRY_TIMEOUT_SECS = float(os.getenv("LLM_RETRY_TIMEOUT_SECS", "8"))
-
 _CLOUDFLARE_DEFAULT_MODEL = "anthropic/claude-sonnet-4.6"
 
 
@@ -182,17 +174,21 @@ class _CloudflareMessages:
 
 
 def _cloudflare_llm() -> AnthropicLLMService:
-    """Claude via Cloudflare's Anthropic-compatible Messages API."""
+    """Claude (default Sonnet 4.6) via Cloudflare's Anthropic-compatible API.
+
+    Billed with AI Gateway Unified Billing credits — Workers Paid unlocks
+    Workers AI hosted models, not third-party Claude tokens. Token needs
+    Account > Workers AI > Read.
+    """
     account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
     token = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
     if not account_id or not token:
         raise RuntimeError(
             "LLM_PROVIDER=cloudflare needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN "
-            "(Account > Workers AI > Read)."
+            "(Account > Workers AI > Read). Claude is billed with AI Gateway Unified "
+            "Billing credits, not Workers Paid neurons."
         )
-    model = os.getenv("CLOUDFLARE_LLM_MODEL") or os.getenv(
-        "ANTHROPIC_MODEL", _CLOUDFLARE_DEFAULT_MODEL
-    )
+    model = os.getenv("CLOUDFLARE_LLM_MODEL", _CLOUDFLARE_DEFAULT_MODEL)
     headers: dict[str, str] = {}
     gateway_id = os.getenv("CLOUDFLARE_AI_GATEWAY_ID")
     if gateway_id:
@@ -206,15 +202,21 @@ def _cloudflare_llm() -> AnthropicLLMService:
     return AnthropicLLMService(
         api_key=token,
         client=client,
-        retry_timeout_secs=LLM_RETRY_TIMEOUT_SECS,
-        retry_on_timeout=True,
         settings=AnthropicLLMService.Settings(
             model=model,
-            temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
-            max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
+            # Voice: don't wait on extended thinking before the first spoken token.
             thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
         ),
     )
+
+
+#: How long an inference may produce nothing before it is abandoned and
+#: re-issued. Pipecat defaults ``retry_on_timeout`` to ``False``, so an
+#: unresponsive stream used to be waited on until the platform cut the call for
+#: silence — a 246 s stall is on record. The re-issue pipecat performs is itself
+#: unbounded, so this bounds the *first* attempt only: dead air, then one fresh
+#: request. The watchdog's deferred re-run is the backstop beyond that.
+LLM_RETRY_TIMEOUT_SECS = float(os.getenv("LLM_RETRY_TIMEOUT_SECS", "8"))
 
 
 def build_llm(call_id: str | None = None):
@@ -235,7 +237,7 @@ def build_llm(call_id: str | None = None):
     (``llm_deadline.py`` has the post-mortem).
     """
     provider = os.getenv("LLM_PROVIDER", "cloudflare")
-    if provider in {"cloudflare", "claude", "anthropic"}:
+    if provider in {"cloudflare", "claude"}:
         return _cloudflare_llm()
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return FirstTokenDeadlineLLM(
@@ -417,13 +419,6 @@ def build_stt():
 
 
 _ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
-# Not a model id. The TTS WebSocket accepts it and then emits no audio, which
-# the scorer records as agent silence (and after three empty contexts the
-# service marks itself unusable, so the watchdog filler is mute too).
-_ELEVENLABS_FLASH_ALIASES = {
-    "eleven_flash_v3": "eleven_flash_v2_5",
-    "elevenflash_v3": "eleven_flash_v2_5",
-}
 
 
 def build_tts(telephony: bool):
@@ -442,20 +437,26 @@ def build_tts(telephony: bool):
             )
         model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5").strip()
         language = os.getenv("ELEVENLABS_LANGUAGE")
-        if model in _ELEVENLABS_FLASH_ALIASES:
-            resolved = _ELEVENLABS_FLASH_ALIASES[model]
+        # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are
+        # not a WebSocket TTS model: that socket accepts them and then emits no
+        # audio. Route any v3 id (except text-to-voice) onto the dialogue service.
+        use_dialogue = model in _ELEVENLABS_V3_MODELS or (
+            "v3" in model.lower() and "ttv" not in model.lower()
+        )
+        if use_dialogue and model not in _ELEVENLABS_V3_MODELS:
             logger.warning(
-                "ELEVENLABS_MODEL={} is not a real model id (the socket stays mute). Using {}.",
+                "ELEVENLABS_MODEL={} is not a TTS WebSocket model; using "
+                "ElevenLabsDialogueTTSService with eleven_v3_conversational.",
                 model,
-                resolved,
             )
-            model = resolved
+            model = "eleven_v3_conversational"
         settings_kw: dict = {"voice": voice, "model": model}
         if language:
             settings_kw["language"] = language
-        if model in _ELEVENLABS_V3_MODELS:
+        if use_dialogue:
             from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
 
+            logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
             return ElevenLabsDialogueTTSService(
                 api_key=os.environ["ELEVENLABS_API_KEY"],
                 sample_rate=sample_rate,
@@ -464,6 +465,7 @@ def build_tts(telephony: bool):
         speed = os.getenv("ELEVENLABS_TTS_SPEED")
         if speed:
             settings_kw["speed"] = float(speed)
+        logger.info("TTS: ElevenLabs WebSocket ({})", model)
         return ElevenLabsTTSService(
             api_key=os.environ["ELEVENLABS_API_KEY"],
             sample_rate=sample_rate,

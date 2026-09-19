@@ -48,6 +48,13 @@ def test_reception_routes_without_losing_state():
     assert manager.state["intent"] == "register"
 
 
+def test_roster_titles_are_spoken_in_full():
+    from flows.common import spoken_provider_name
+
+    assert spoken_provider_name("Dra. Elena Iglesias") == "Doctor Elena Iglesias"
+    assert spoken_provider_name("D. Álvaro Cid") == "Don Álvaro Cid"
+
+
 def test_near_names_require_clarification():
     from flows.booking import resolve_provider
 

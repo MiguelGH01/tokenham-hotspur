@@ -3,7 +3,7 @@
 from loguru import logger
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 
-from flows.common import ROLE_MESSAGE, create_giveup_node
+from flows.common import ROLE_MESSAGE, create_giveup_node, say_holding_line
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
@@ -39,6 +39,7 @@ async def search_patient(args: FlowArgs, flow_manager: FlowManager):
         query = {"name": stated_name, "phone": wanted}
         exact = lambda m: _phone_digits(m["phone"]) == wanted  # noqa: E731
 
+    await say_holding_line(flow_manager)
     try:
         matches = [m for m in await state["client"].search_directory(**query) if exact(m)]
     except Exception as exc:

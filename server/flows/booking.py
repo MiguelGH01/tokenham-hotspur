@@ -23,6 +23,8 @@ from flows.common import (
     create_goodbye_node,
     create_refusal_node,
     gated_confirmation,
+    say_holding_line,
+    spoken_provider_name,
 )
 from rules import (
     check_patient_rules,
@@ -324,6 +326,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         weekday = None
     else:
         date_from, date_to = search_window(connected_at)
+    await say_holding_line(flow_manager)
     try:
         availability = await state["client"].availability(
             date_from,
@@ -464,7 +467,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         policy_id=offer["policy_id"],
     )
     summary = (
-        f"{slot['provider_name']} at {location_name(offer['location_id'])}, "
+        f"{spoken_provider_name(slot['provider_name'])} at {location_name(offer['location_id'])}, "
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
     logger.info("Offer prepared")
