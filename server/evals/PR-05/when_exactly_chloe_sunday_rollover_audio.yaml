@@ -1,0 +1,39 @@
+# Audio sibling of when_exactly_chloe_sunday_rollover.yaml — see
+# simple_booking_josefa_audio.yaml for why this is a separate file. This exact scenario
+# (in text mode) is what first caught the weekday-rollover-jumps-backward bug
+# (docs/agent/EVOLUTION.md item 7) — the closest of these to a genuinely
+# timing-sensitive real call.
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: when_exactly_chloe_sunday_rollover_audio
+turns:
+  - user: "Hi, Chloe Roberts Smith, NIE Z 4 2 3 7 2 4 4 M. I need a repeat prescription, GP at Arenal Centro this coming Sunday please."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice, site: centro, weekday: sunday }
+      - event: response
+        eval: "the response does not offer a Sunday appointment (the clinic is closed Sunday) and instead offers the earliest open day at Arenal Centro, which should be Monday 21 September"
+  - user: "That's fine, book it."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response

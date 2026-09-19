@@ -282,3 +282,75 @@ caught (evals never open a real audio path):
    `idle_retries` resets on `on_user_turn_started`. Verified no regression on
    `simple_booking_amelia`; the idle path itself needs a real call with a deliberate long
    silence to confirm.
+
+## Iteration 4 — closing the text-mode/real-call gap in the eval suite itself
+
+Every bug in iterations 3-6 above was invisible to `make evals` because every scenario ran
+in text mode, which bypasses VAD, turn detection, STT, and TTS entirely — the whole surface
+those bugs live on. Added two kinds of coverage to close that gap, per Pipecat's own
+scripted-scenarios/scenario-configuration docs (looked up rather than guessed, since audio
+mode has real config — `kokoro`/`moonshine` services, `llm_marker` assertions — not
+obvious from first principles):
+
+**`server/evals/regressions/bare_greeting_marker.yaml`** — text mode is enough here, since
+the bug (a bare "Hello." misjudged as an incomplete turn) happens at the LLM/marker layer,
+not the audio layer. Asserts `llm_marker: complete` on a bare greeting, a single word, and
+a bare "Yes." — directly regression-tests the `ROLE_MESSAGE` fix from iteration 6. Fast
+(~10s for all three) and passes cleanly.
+
+**Audio siblings of 5 existing PR-01/03/05/06 scenarios** (`*_audio.yaml`, same turns as
+their text originals): `simple_booking_josefa`, `simple_booking_identify_fail`,
+`doctor_and_site_mario_wrong_weekday`, `when_exactly_chloe_sunday_rollover`,
+`the_rules_sonia_age_boundary` — chosen to exercise turn detection, STT, and TTS on
+representative flows rather than converting all 24 (that would cost real-time audio
+playback on every future `make evals` run for little extra signal). First attempt put
+`text`/`audio` as two `scenarios:` entries in one file (Pipecat's own documented pattern)
+but that shares one bot connection across both, and our flows end at a terminal
+`end_conversation` — the second scenario inherited the first's dead flow state and hung.
+Split into separate sibling files instead, so the Makefile's existing per-file bot restart
+isolates them properly (consistent with why the Makefile restarts per file at all).
+
+Results and what they found — genuinely new information, not just confirmation:
+- `simple_booking_josefa_audio`, `the_rules_sonia_age_boundary_audio`: **pass** end to end
+  through real Kokoro→bot audio→Moonshine transcription.
+- `simple_booking_identify_fail_audio`: fails on turn 3 — the same known LLM-empty-
+  completion flake documented in iteration 3, now confirmed to also hit audio mode.
+- `doctor_and_site_mario_wrong_weekday_audio`, `when_exactly_chloe_sunday_rollover_audio`:
+  first attempt failed because the scenario text wrote the DNI/NIE as a contiguous string
+  ("X2245876H"); Kokoro's TTS reads a contiguous digit run as a number-word ("two million
+  two hundred forty-five thousand..."), which Moonshine then faithfully transcribes back —
+  garbled before it ever reaches the bot. Fixed by spacing digits ("X 2 2 4 5 8 7 6 H"),
+  matching how `simple_booking_identify_fail.yaml` already did this correctly. After that
+  fix, `chloe` still fails: Moonshine mis-hears "NIE Z" as "NIZ" (merging the space), an STT
+  quality limitation of a small local model on adjacent short tokens, not a bot bug.
+  `mario` still fails too, for a different and more interesting reason: turn detection cut
+  the caller off mid-utterance, right after "I'd like to see Doctor..." and before Kokoro
+  said "Sáez" — plausibly because `SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=
+  1.2)` (added in iteration 4 above to fix the opposite problem, a 5s dead-air stall on a
+  too-short utterance) fired on the natural pause before an uncommon name. The bot then
+  never got "Sáez"/"Centro"/"Monday" together in one turn and looped re-asking "which
+  specialty?" three times before timing out. **Not fixed this session** — tightening
+  `user_speech_timeout` fixed one failure mode and this run caught it trading in another,
+  exactly the tradeoff `AGENTS.md` warns about ("lowering the stop threshold... truncates
+  users"). Left as a documented open finding rather than tuning further blind; a real
+  fix likely needs testing several `user_speech_timeout` values against both failure
+  modes together, not adjusting one number and eyeballing it.
+
+Also confirmed (not yet built): `bot.py --port` and `pipecat eval run --url` both accept a
+custom port, so a parallel eval runner (N bot instances on different ports, scenarios
+dispatched concurrently) is feasible without any Pipecat-side blocker — a Makefile/script
+change, not a framework limitation.
+
+Two more scenario drafts (`turn_latency.yaml`, an explicit response-latency assertion on a
+bare "Hello."; `idle_checkin.yaml`, asserting the proactive idle check-in from iteration 6
+fires) did not survive contact with the harness's exact turn-matching semantics for a
+single-turn/first-turn assertion — the bot's own on-connect greeting and the first real
+reply raced, and a `response` expectation matched on a fragment of the greeting rather
+than the intended later text, so both timed out waiting for content that had already
+"matched" too early. Dropped rather than force through blind: fixing this properly needs
+a leading observation-only turn (`- expect: [...]` with no `user:`) to consume the greeting
+first, the pattern Pipecat's own docs show for exactly this case, applied carefully to a
+single-turn scenario — left for a future session rather than guessed at further here. The
+5 PR-*-audio siblings above already give turn-latency coverage in practice (each is a real,
+multi-turn conversation, so the same race doesn't bite); the idle check-in itself
+remains unverified by an eval, only by a real call the way it stands now.

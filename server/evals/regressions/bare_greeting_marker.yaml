@@ -1,0 +1,46 @@
+# Regression for a real-call bug (see docs/agent/EVOLUTION.md items 4/5): a bare
+# "Hello." got misjudged by the LLM's own turn-completion marker as incomplete (a
+# lone `○`), which armed Pipecat's 10s built-in check-in timeout and then made the
+# model reason out loud instead of complying with the re-prompt. Text mode is
+# enough here — the marker misjudgment happens at the LLM/transcript layer, not the
+# audio layer, so no synthesized speech is needed to catch a regression on this.
+name: bare_greeting_marker
+judge:
+  eval:
+    factory: eval_judge.helmcode_judge
+
+scenarios:
+  - name: bare_hello
+    turns:
+      - user: "Hello."
+        expect:
+          - event: llm_marker
+            marker: complete
+            marker_first: true
+            markers: 1
+          - event: response
+            text_excludes: "●"
+
+  - name: single_word_name
+    turns:
+      - user: "Josefa."
+        expect:
+          - event: llm_marker
+            marker: complete
+            marker_first: true
+            markers: 1
+
+  - name: bare_yes
+    turns:
+      - user: "Hi, this is Amelia Hughes White, DNI 13309713G, I need a GP appointment."
+        expect:
+          - event: function_call
+            calls:
+              - name: search_patient
+          - event: response
+      - user: "Yes."
+        expect:
+          - event: llm_marker
+            marker: complete
+            marker_first: true
+            markers: 1

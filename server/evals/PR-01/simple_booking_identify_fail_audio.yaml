@@ -1,0 +1,38 @@
+# Audio sibling of simple_booking_identify_fail.yaml — see that file's comment and
+# simple_booking_josefa_audio.yaml's for why this is a separate file rather than a
+# second `scenarios:` entry. Real STT hearing a spelled-out, deliberately-wrong DNI is
+# closer to how a real misheard-ID call actually goes than typed text (EVOLUTION.md
+# item 3: a real call where a garbled DNI transcription made the bot ramble).
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: simple_booking_identify_fail_audio
+turns:
+  - user: "Hello, I'm Josefa Domínguez Navarro, my DNI is 12345678A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+  - user: "It is 1 2 3 4 5 6 7 8 A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+  - user: "I'm sure, 12345678A."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+        eval: "the bot apologises that it cannot find the caller and ends the call without booking anything"

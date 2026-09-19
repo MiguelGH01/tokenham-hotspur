@@ -1,0 +1,45 @@
+# Audio sibling of simple_booking_josefa.yaml: same conversation, real Kokoro speech in
+# and real Moonshine transcription of the bot's TTS out, exercising VAD/turn-detection/
+# STT/TTS the way an actual phone call does (see docs/agent/EVOLUTION.md — every bug
+# found on a real call was invisible to text-mode evals). Kept as its own file, not a
+# second `scenarios:` entry alongside the text one, because this conversation runs the
+# flow to its terminal "goodbye" node — sharing one bot process with another scenario
+# (as `scenarios:` entries in one file do) leaves stale flow state behind for whichever
+# scenario runs second. Separate files get the Makefile's per-file bot restart instead.
+# CALL_CLOCK_OVERRIDE=2026-09-18T10:00:00+02:00
+user:
+  modality: audio
+  speech:
+    service: kokoro
+    voice: af_heart
+    sample_rate: 16000
+judge:
+  modality: audio
+  transcription:
+    service: moonshine
+  eval:
+    factory: eval_judge.helmcode_judge
+name: simple_booking_josefa_audio
+turns:
+  - user: "Hi, I'd like to book an appointment. My name is Josefa Domínguez Navarro and my DNI is 48064716Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+  - user: "With a general practitioner, as soon as possible."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+            args: { specialty: general_practice }
+      - event: response
+        text_contains: Ortiz
+  - user: "Yes, that works for me."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_offer
+            args: { offer_id: offer-1 }
+      - event: response
