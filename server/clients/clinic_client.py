@@ -17,6 +17,23 @@ SUBMIT_ROUTES = {
 
 ATTEMPTS = 2
 RETRY_DELAY_SECS = 1.0
+MAX_LOGGED_BODY = 500
+
+
+class ClinicApiError(RuntimeError):
+    """A non-success answer from the clinic API, with the evidence attached.
+
+    A bare ``HTTPStatusError`` says only "4xx". A scored run that fails with
+    ``Record mismatch`` is undiagnosable without the status, the path and the
+    body, which is exactly the detail this carries into the log.
+    """
+
+    def __init__(self, method: str, path: str, status: int, body: str):
+        super().__init__(f"{method} {path} -> HTTP {status}: {body}")
+        self.method = method
+        self.path = path
+        self.status = status
+        self.body = body
 
 
 class ClinicClient:
@@ -37,18 +54,36 @@ class ClinicClient:
                 if response.status_code == 409:
                     logger.info("{} {} -> 409 (already accepted)", method, path)
                     return response.json()
-                if response.status_code >= 500:
-                    raise httpx.HTTPStatusError(
-                        f"{response.status_code} from {path}",
-                        request=response.request,
-                        response=response,
+                if response.status_code >= 400:
+                    raise ClinicApiError(
+                        method,
+                        path,
+                        response.status_code,
+                        response.text[:MAX_LOGGED_BODY],
                     )
-                response.raise_for_status()
                 return response.json()
-            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
-                if attempt == ATTEMPTS or (
-                    isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500
-                ):
+            except ClinicApiError as exc:
+                retryable = exc.status >= 500
+                if attempt == ATTEMPTS or not retryable:
+                    logger.error("{} (attempt {}/{})", exc, attempt, ATTEMPTS)
+                    raise
+                logger.warning(
+                    "{} {} failed (attempt {}): HTTP {}",
+                    method,
+                    path,
+                    attempt,
+                    exc.status,
+                )
+                await asyncio.sleep(RETRY_DELAY_SECS)
+            except (httpx.TransportError, ValueError) as exc:
+                if attempt == ATTEMPTS:
+                    logger.error(
+                        "{} {} failed after {} attempts: {}",
+                        method,
+                        path,
+                        ATTEMPTS,
+                        type(exc).__name__,
+                    )
                     raise
                 logger.warning(
                     "{} {} failed (attempt {}): {}", method, path, attempt, type(exc).__name__
@@ -68,8 +103,16 @@ class ClinicClient:
         specialty_id: str,
         patient_id: str,
         location_id: str | None = None,
+        insurer: list[str] | None = None,
     ) -> dict:
-        query = {
+        """Slots for a patient.
+
+        ``insurer`` is repeatable and is what quotes a search against a plan the
+        record does not hold — the second policy of PR-17 (``API-avail-insurer``).
+        It is a query parameter, so several plan ids are sent as repeats rather
+        than as one comma-joined value.
+        """
+        query: dict = {
             "date_from": date_from,
             "date_to": date_to,
             "specialty_id": specialty_id,
@@ -77,8 +120,13 @@ class ClinicClient:
         }
         if location_id:
             query["location_id"] = location_id
+        if insurer:
+            query["insurer"] = list(insurer)
         return await self._request("GET", "/v1/availability", params=query)
 
     async def post_submission(self, action: dict) -> dict:
+        verb = action["action"]
+        if verb not in SUBMIT_ROUTES:
+            raise ValueError(f"unknown submission verb: {verb}")
         body = {k: v for k, v in action.items() if k != "action"}
-        return await self._request("POST", SUBMIT_ROUTES[action["action"]], json=body)
+        return await self._request("POST", SUBMIT_ROUTES[verb], json=body)

@@ -16,8 +16,8 @@ def test_failed_submission_can_retry():
 
     client = Client()
     sub = CallSubmission("x", client)
-    asyncio.run(sub.flush())
-    asyncio.run(sub.flush())
+    asyncio.run(sub.close())
+    asyncio.run(sub.close())
     assert client.calls == 2
 
 
@@ -53,6 +53,88 @@ def test_near_names_require_clarification():
 
     assert len(resolve_provider("Saez")) == 2
     assert len(resolve_provider("Saez", "general_practice")) == 1
+
+
+def test_a_spoken_title_separates_the_near_miss_pair():
+    """The roster publishes "Dr."/"Dra." and that alone halves the candidates."""
+    from flows.booking import resolve_provider
+
+    assert [p["id"] for p in resolve_provider("Dra. Iglesias")] == ["PR05"]
+    assert [p["id"] for p in resolve_provider("Dr. Saez")] == ["PR03"]
+
+
+def test_an_adult_patient_removes_the_paediatric_candidate():
+    """Sáez/Sáenz no longer needs a question when the patient is an adult.
+
+    A neutral "Doctor Sáez" matches both, and age settles it: paediatrics
+    cannot take a 61-year-old.
+    """
+    from flows.booking import resolve_provider
+
+    adult = {"date_of_birth": "1965-02-24", "insurer": "asisa", "referrals": []}
+    assert [p["id"] for p in resolve_provider("Dr. Saez", patient=adult)] == ["PR03"]
+
+
+def test_a_neutral_title_still_leaves_iglesias_ambiguous():
+    """Pin the deliberate limit: neither specialty is ruled out here, so the
+    clarifying question stays. Nobody should mistake this for a bug later."""
+    from clinic_catalog import load_catalog
+    from flows.booking import resolve_provider
+
+    gloria = {
+        "date_of_birth": "1999-06-15",
+        "insurer": "dkv",
+        "referrals": ["dermatology"],
+    }
+    plan = next(p for p in load_catalog()["plans"] if p["id"] == "dkv")
+    found = resolve_provider("Doctor Iglesias", patient=gloria, plan=plan)
+    assert sorted(p["id"] for p in found) == ["PR05", "PR06"]
+    # The spoken title does settle it, which is the improvement worth having.
+    assert [p["id"] for p in resolve_provider("Dra. Iglesias", patient=gloria, plan=plan)] == [
+        "PR05"
+    ]
+
+
+def test_a_repeated_confirmation_is_a_retry_not_a_conflict():
+    """A caller answering "yes" twice must not hear that the booking failed."""
+    from handlers import confirm_offer, get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [
+                    dict(
+                        provider_id="PR01",
+                        provider_name="Dra. Carmen Ortiz Vidal",
+                        location_id="centro",
+                        specialty_id="general_practice",
+                        appointment_type_id="review",
+                        start_time="2026-09-21T09:00:00+02:00",
+                        payable_with=["sanitas"],
+                    )
+                ],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-x", client),
+            "patient": {"patient_id": "P1", "insurer": "sanitas"},
+            "offers": {},
+        }
+    )
+    result, _ = asyncio.run(get_earliest_slot({"specialty": "general_practice"}, manager))
+    first, _ = asyncio.run(confirm_offer({"offer_id": result["offer_id"]}, manager))
+    second, node = asyncio.run(confirm_offer({"offer_id": result["offer_id"]}, manager))
+    assert first["status"] == "accepted"
+    assert second["status"] == "accepted"
+    assert node["name"] == "goodbye"
 
 
 def test_concurrent_call_isolation():
@@ -240,7 +322,40 @@ def test_provider_leave_requires_fallback_agreement():
     result, _ = asyncio.run(
         get_earliest_slot({"provider_name": "Pablo Requena", "site": "norte"}, manager)
     )
-    assert result["status"] == "provider_unavailable"
+    # A doctor on leave is a redirect, not a refusal: another doctor of the same
+    # specialty at the same site can serve, and the answer shape PR-03 expects is
+    # a booking. Consent is still taken — by the confirm node, out loud, before
+    # anything is submitted.
+    assert result["status"] == "offer"
+    assert result["note"] == "provider_on_leave"
+    assert manager.state["submission"].pending["action"] == "NO_ACTION"
+
+
+def test_redirect_never_widens_the_site_on_its_own():
+    """If nobody at the requested site can serve, say so rather than widen."""
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [],
+                "blocked": [{"provider_id": "PR02", "restriction": "provider_on_leave"}],
+            }
+
+    c = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": c,
+            "submission": CallSubmission("x", c),
+            "patient": {"patient_id": "P", "insurer": "sanitas"},
+            "offers": {},
+        }
+    )
+    result, _ = asyncio.run(
+        get_earliest_slot({"provider_name": "Pablo Requena", "site": "norte"}, manager)
+    )
+    assert result["status"] == "no_slots"
     assert manager.state["submission"].pending["reason"] == "provider_on_leave"
 
 

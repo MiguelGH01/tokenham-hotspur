@@ -72,6 +72,7 @@ def _search_patient_schema() -> FlowsFunctionSchema:
         },
         required=["stated_name", "id_type", "id_value"],
         handler=search_patient,
+        cancel_on_interruption=True,
     )
 
 

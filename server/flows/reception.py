@@ -1,6 +1,6 @@
 """Open-ended reception: route supported needs without resetting conversation history."""
 
-from pipecat.flows import FlowsFunctionSchema, NodeConfig
+from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 
 from flows.common import ROLE_MESSAGE
 from flows.identification import create_identify_node
@@ -45,11 +45,13 @@ def create_reception_node():
                 },
                 required=["intent"],
                 handler=route_request,
+                cancel_on_interruption=True,
             )
         ],
     )
 
 
+@flows_tool_options(cancel_on_interruption=True)
 async def start_registration(flow_manager):
     """The caller explicitly says they are new and wants registration, not another lookup."""
     from flows.registration import create_registration_node

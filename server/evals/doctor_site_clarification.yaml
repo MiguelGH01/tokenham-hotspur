@@ -1,3 +1,21 @@
+# PR-03 The Doctor and the Site — the CL-name-collision trap, solved rather than
+# stepped around.
+#
+# Dr. Martín Sáez (general practice) and Dra. Marta Sáenz (paediatrics) sound
+# alike, and "Saez" matches both at the similarity the flow uses. Two things
+# settle it without asking the caller a question they cannot answer:
+#
+#   * the title the caller said ("Dr." / "Dra."), and
+#   * whether the specialty could take this patient at all — a paediatrics
+#     candidate cannot take an adult.
+#
+# So the flow must resolve the pair and offer, not ask. Marta Sáenz is at Centro
+# on Fridays only, so an offer of Sáez at Centro lands on a Friday; what this
+# scenario pins is the doctor and the site, not the date.
+#
+# Before this behaviour existed the scenario deliberately fed a clarification
+# turn ("I mean the GP, Martin Saez"). It no longer has anything to clarify, and
+# its third turn is now the acceptance.
 name: doctor_site_clarification
 judge:
   eval:
@@ -5,22 +23,29 @@ judge:
 turns:
   - expect:
       - event: response
+
   - user: "I need an appointment. I am Chloe Roberts Smith and my NIE is Z4237244M."
     expect:
       - event: function_call
         calls:
           - name: search_patient
       - event: response
+
   - user: "With doctor Saez at Arenal Centro, please."
     expect:
       - event: function_call
         calls:
           - name: get_earliest_slot
       - event: response
-  - user: "I mean the GP, Martin Saez. Keep Arenal Centro."
+        eval: >
+          offers one specific appointment with Dr. Sáez at Arenal Centro (a doctor,
+          the site, a day and a time), or says nothing is free at that site. It
+          must not offer a paediatrician, must not offer another site, must not
+          ask the caller which of two doctors they meant, and must not refuse.
+
+  - user: "Yes please, book that."
     expect:
       - event: function_call
         calls:
-          - name: get_earliest_slot
-            args: {specialty: general_practice, site: centro}
+          - name: confirm_offer
       - event: response

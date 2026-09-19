@@ -115,6 +115,7 @@ def create_registration_node():
                 },
                 required=list(FIELDS),
                 handler=prepare_registration,
+                cancel_on_interruption=True,
             )
         ],
     )
@@ -138,6 +139,7 @@ def create_registration_confirm_node():
                 properties={"confirmed": {"type": "boolean"}},
                 required=["confirmed"],
                 handler=confirm_registration,
+                cancel_on_interruption=True,
             ),
             create_registration_node()["functions"][0],
         ],

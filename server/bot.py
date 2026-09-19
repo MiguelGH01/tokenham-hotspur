@@ -6,6 +6,7 @@ Run the bot using::
     uv run bot.py -t eval    # headless eval server for `pipecat eval run`
 """
 
+import asyncio
 import os
 import uuid
 from datetime import datetime
@@ -35,21 +36,21 @@ from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
 from pipecat.transports.base_transport import BaseTransport, TransportParams
 from pipecat.transports.daily.transport import DailyParams
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams
-from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_start import MinWordsUserTurnStartStrategy
+from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
-
-
 from booking import MADRID
 from clients.clinic_client import ClinicClient
+from clinic_catalog import load_catalog
 from flows.common import GREETING
 from flows.reception import create_reception_node
 from krisp_model import ensure_filter_model, existing_filter_model_path
+from liveness import SilenceWatchdog
 from submission import CallSubmission
 
-load_dotenv(override=True)
+load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
 ensure_filter_model()
 
 
@@ -97,14 +98,41 @@ def _connected_at() -> datetime:
     return datetime.fromisoformat(override) if override else datetime.now(MADRID)
 
 
+#: How long an inference may produce nothing before it is abandoned and
+#: re-issued. Pipecat defaults ``retry_on_timeout`` to ``False``, so an
+#: unresponsive stream used to be waited on until the platform cut the call for
+#: silence — a 246 s stall is on record. The re-issue pipecat performs is itself
+#: unbounded, so this bounds the *first* attempt only: dead air, then one fresh
+#: request. The watchdog's deferred re-run is the backstop beyond that.
+LLM_RETRY_TIMEOUT_SECS = float(os.getenv("LLM_RETRY_TIMEOUT_SECS", "8"))
+
+
 def build_llm():
+    """The service that answers the phone.
+
+    Latency here is not a comfort question. A call is capped at three minutes
+    and cut off when the agent produces no audible audio, and both signals are
+    attributed to us, so a reasoning model's extra seconds per turn are scored
+    as failure. ``LLM_DISABLE_THINKING`` and ``LLM_REASONING_EFFORT`` exist for
+    exactly that: the reference implementation measured deepseek-v4-flash on
+    this platform and runs it with thinking off and reasoning effort ``none``.
+
+    The OpenAI-backed services are also given ``retry_on_timeout=True`` with
+    ``LLM_RETRY_TIMEOUT_SECS``: an unresponsive stream is re-issued instead of
+    becoming dead air, which the scorer attributes to us outright.
+    """
     provider = os.getenv("LLM_PROVIDER", "helmcode")
     if provider == "helmcode":  # OpenAI-compatible gateway (chat completions)
         return OpenAILLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
+            retry_timeout_secs=LLM_RETRY_TIMEOUT_SECS,
+            retry_on_timeout=True,
             settings=OpenAILLMService.Settings(
-                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash"),
+                temperature=float(os.getenv("LLM_TEMPERATURE", "0.2")),
+                max_tokens=int(os.getenv("LLM_MAX_TOKENS", "512")),
+                extra={"reasoning_effort": os.getenv("LLM_REASONING_EFFORT", "none")},
             ),
         )
     if provider == "gemini":
@@ -112,71 +140,170 @@ def build_llm():
             api_key=os.environ.get("GEMINI_API_KEY") or os.environ["GOOGLE_API_KEY"],
             settings=GoogleLLMService.Settings(model=os.getenv("GEMINI_MODEL", "gemini-3.6-flash")),
         )
+    # Reasoning off explicitly, and the low-latency tier, both measured under
+    # load rather than assumed: 20 concurrent calls to gpt-5.1 answered 20/20
+    # with and without the tier, and the tier moved p50 from 1.04 s to 0.74 s
+    # and the worst call from 1.86 s to 0.95 s. Turn tails are what the silence
+    # window and the three-minute cap actually punish.
+    #
+    # ``temperature`` is only accepted while reasoning is off — a positive
+    # effort rejects it — so the two are set together or not at all.
+    effort = os.getenv("LLM_REASONING_EFFORT", "none")
+    openai_settings: dict = {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4.1"),
+        # A spoken turn is a sentence or two (observed: 7-79 tokens). The cap
+        # bounds a runaway answer, which is dead air with a deadline on it.
+        "max_completion_tokens": int(os.getenv("LLM_MAX_TOKENS", "400")),
+        "reasoning": OpenAIResponsesLLMService.ReasoningConfig(effort=effort),
+    }
+    if effort == "none":
+        openai_settings["temperature"] = float(os.getenv("LLM_TEMPERATURE", "0.2"))
     return OpenAIResponsesLLMService(
         api_key=os.getenv("OPENAI_API_KEY"),
-        settings=OpenAIResponsesLLMService.Settings(model=os.getenv("OPENAI_MODEL", "gpt-4.1")),
+        retry_timeout_secs=LLM_RETRY_TIMEOUT_SECS,
+        retry_on_timeout=True,
+        service_tier=os.getenv("OPENAI_SERVICE_TIER", "fast") or None,
+        settings=OpenAIResponsesLLMService.Settings(**openai_settings),
     )
 
 
 def build_eval_judge_llm(config: dict | None = None):
     """Factory for the eval harness judge (`judge.eval.factory:` in a scenario).
 
-    Reuses the bot's LLM service so the judge does not depend on a local Ollama,
-    but pins the judge model to ``EVAL_JUDGE_MODEL`` (default ``gpt-5.1``): the
-    bot judging its own replies makes verdicts drift with every bot-model swap.
-    A scenario's ``model`` key still wins.
+    The judge is pinned to its own model **and its own provider**. It used to
+    reuse the bot's service, which coupled two decisions that have nothing to do
+    with each other: putting the phone on a gateway that does not serve
+    ``gpt-5.1`` would have silently changed every verdict, or failed them, while
+    looking like a bot regression. Verdicts must not move when the bot's model
+    does.
+
+    A scenario's ``model`` key still wins over ``EVAL_JUDGE_MODEL``.
     """
-    llm = build_llm()
     override = (config or {}).get("model") or os.getenv("EVAL_JUDGE_MODEL", "gpt-5.1")
-    if override and hasattr(llm, "settings"):
-        llm.settings.model = override
-    return llm
-
-
-def build_turn_completion_config():
-    """Turn-completion marker rules tuned for this LLM.
-
-    The default protocol occasionally makes the model emit a bare marker (or
-    an empty reply), which stalls the turn: no llm_response ever arrives and
-    the caller waits on silence. These rules keep the ●/◐/○ machinery but
-    make a marker-only reply impossible and nail down the two cases seen in
-    evals: a fully stated identifier/phone number is a complete turn, and "
-    "there is always a sentence to say after ●.
-    """
-    from pipecat.turns.user_turn_completion_mixin import UserTurnCompletionConfig
-
-    return UserTurnCompletionConfig(
-        instructions="""
-TURN COMPLETION PROTOCOL (mandatory):
-Decide whether the caller's turn is complete, then start your response with exactly one marker as its very first character:
-
-●  complete: answer them now. ● must always be followed by your full spoken reply — a tool call or a question. Never write ● on its own and never write it again inside the reply.
-◐  the caller was cut off mid-phrase and continues in seconds. Write ◐ and nothing else.
-○  the caller asked for time to think ("hold on", "let me see"). Write ○ and nothing else.
-
-Deciding:
-- A caller who has just given the exact thing you asked for — a full name, a complete ID number with its letter, a complete phone number, an email, a specialty, a yes or a no — has finished their turn. Answer it with ●, even if they said more than you asked for.
-- A number or name is complete once the sentence around it ends. Do not wait for more digits or guess that more words are coming.
-- Only write ◐ when words actually stopped mid-phrase (a conjunction, a preposition, a trailing list). Only write ○ for an explicit request to wait.
-- If a tool call is the right response, the turn is complete: make the call.
-- If you would otherwise have nothing to say, still reply with one short complete sentence after ●.
-
-Format rules:
-- The marker is the first character. Exactly one marker per response.
-- After ◐ or ○ output nothing else. After ● always output your reply.
-""",
+    return OpenAIResponsesLLMService(
+        api_key=os.environ["OPENAI_API_KEY"],
+        settings=OpenAIResponsesLLMService.Settings(model=override),
     )
+
+
+def _user_turn_strategies() -> UserTurnStrategies:
+    """Turn detection for the voice path.
+
+    Two deliberate choices, both taken after reading the installed pipecat
+    1.11.0 source rather than from memory:
+
+    - The turn-completion marker protocol (marker-then-reply) is **not** used.
+      Its parameter pair is deprecated since 1.2.0 and removed in 2.0.0, and an
+      incomplete verdict suppresses the whole response while the pipeline waits
+      5-10 s before re-prompting. On a call capped at three minutes and cut on
+      silence, that is a silence generator, and ``Agent silence`` was the
+      largest single source of lost points.
+    - Barge-in damping is opt-in, because the damping itself costs turns.
+      ``MinWordsUserTurnStartStrategy`` discards the aggregation for anything
+      shorter than ``min_words`` while the bot speaks, so the one-word answers
+      this agent lives on — "yes", "morning", "Tuesday" — are exactly the ones
+      it drops. The library default (VAD plus transcription) keeps them.
+
+    Set ``BARGE_IN_MIN_WORDS`` to reinstate the damping if a noisy line makes
+    the bot interrupt itself; it is a manner trade-off, and manner is not
+    scored, while a dropped turn is.
+    """
+    min_words = int(os.getenv("BARGE_IN_MIN_WORDS", "0"))
+    if min_words <= 1:
+        return UserTurnStrategies()
+    return UserTurnStrategies(
+        start=[MinWordsUserTurnStartStrategy(min_words=min_words)],
+        stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())],
+    )
+
+
+#: Words a general-purpose recogniser gets wrong and the scorer compares exactly.
+#: The scored transcript has "Doctor Alina Iglesias" where the caller said Elena
+#: Iglesias, and a dictated DNI read back one digit out — both are a scored
+#: failure, while a clarification turn costs seconds the call does not have. The
+#: roster's own names, the sites and the plan labels are the vocabulary that
+#: matters, so they are boosted rather than hoped for.
+_STT_TITLES = {"Dr.", "Dra.", "D."}
+
+
+def _stt_keyterms() -> list[str]:
+    """Proper nouns worth boosting: provider names, sites, plan labels, ids.
+
+    ``keyterm`` prompting is a nova-3 feature, so :func:`_stt_settings` only
+    passes it for those models; an older model would reject the parameter.
+    """
+    catalogue = load_catalog()
+    names = [
+        token
+        for provider in catalogue["providers"]
+        for token in provider["name"].split()
+        if token not in _STT_TITLES
+    ]
+    sites = [loc["name"] for loc in catalogue["locations"]]
+    plans = [plan["name"] for plan in catalogue["plans"]]
+    return sorted({*names, *sites, *plans, "DNI", "NIE"})
+
+
+def _stt_settings() -> DeepgramSTTService.Settings:
+    """Speech recognition tuned for what is actually compared.
+
+    ``language=multi`` rather than ``en``, measured rather than assumed. The
+    clinic is Spanish and its callers are not: the published cases have
+    English-speaking callers reading out Spanish proper nouns, and the private
+    pool reaches into Spanish and Catalan (PR-11). Transcribing the same audio
+    through both settings on 19 Sep 2026:
+
+    ==================== ===================== =====================
+    model / language      English caller        Spanish caller
+    ==================== ===================== =====================
+    ``nova-3-general/en`` ``15750638P``          *(empty transcript)*
+    ``nova-3-general/multi`` ``157-50-638P``     ``15750638P``
+    ==================== ===================== =====================
+
+    ``multi`` is the only one that hears Spanish at all and it is no worse on
+    English — it produced ``Dr. Elena Iglesias`` where ``en`` produced the
+    stray ``Doctor. Elena Iglesias``. The hyphens ``smart_format`` adds to a
+    digit run are harmless: ``national_id.normalize_national_id`` strips ``-``
+    and whitespace before anything compares them.
+
+    ``numerals`` is what turns "six five zero" into digits before the model has
+    to do arithmetic on words, and ``keyterm`` is what turned a misheard ``DKB``
+    into the right ``DKV`` — a scored field.
+    """
+    model = os.getenv("DEEPGRAM_STT_MODEL", "nova-3-general")
+    options: dict = {
+        "model": model,
+        "language": os.getenv("DEEPGRAM_STT_LANGUAGE", "multi"),
+        "numerals": True,
+        "smart_format": True,
+        "punctuate": True,
+    }
+    if model.startswith("nova-3") and os.getenv("DEEPGRAM_STT_KEYTERMS", "1") != "0":
+        options["keyterm"] = _stt_keyterms()
+    return DeepgramSTTService.Settings(**options)
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
+    telephony = _is_twilio_session(runner_args)
 
-    stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
+    stt = DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        settings=_stt_settings(),
+    )
     tts = DeepgramTTSService(
         api_key=os.getenv("DEEPGRAM_API_KEY"),
+        # Telephony is 8 kHz end to end, so asking the synthesiser for 8 kHz
+        # avoids a resample per call — one less thing competing for the CPU when
+        # a Run All holds ten calls open at once.
+        sample_rate=int(os.getenv("DEEPGRAM_TTS_SAMPLE_RATE", "8000" if telephony else "0"))
+        or None,
         settings=DeepgramTTSService.Settings(
-            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
+            # Manner is not scored, but the three-minute cap is: speaking a
+            # little faster is a little more room before the wall clock bites.
+            speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
         ),
     )
     llm = build_llm()
@@ -186,36 +313,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
-
-            # Evita meter turns incompletos al contexto.
-            filter_incomplete_user_turns=True,
-
-            # Marker rules tuned for deepseek: a bare marker (or an empty
-            # reply after ●) stalls the turn — no llm_response ever arrives.
-            user_turn_completion_config=build_turn_completion_config(),
-
-            user_turn_strategies=UserTurnStrategies(
-                # IMPORTANTE:
-                # No interrumpir simplemente porque VAD detecte sonido.
-                start=[
-                    MinWordsUserTurnStartStrategy(
-                        min_words=3,
-                    )
-                ],
-
-                # SmartTurn decide cuándo realmente ha acabado
-                # de hablar el usuario.
-                stop=[
-                    TurnAnalyzerUserTurnStopStrategy(
-                        turn_analyzer=LocalSmartTurnAnalyzerV3()
-                    )
-                ],
-            ),
+            user_turn_strategies=_user_turn_strategies(),
         ),
     )
 
     user_aggregator = context_aggregator.user()
     assistant_aggregator = context_aggregator.assistant()
+
+    # Speaks a holding line instead of leaving dead air when the bot stalls.
+    # Placed before the LLM so both frames it emits travel downstream correctly.
+    watchdog = SilenceWatchdog(
+        silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
+        max_nudges=int(os.getenv("SILENCE_MAX_NUDGES", "2")),
+        rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
+        is_active=lambda: flow_started,
+    )
 
 
     @user_aggregator.event_handler("on_user_turn_started")
@@ -231,6 +343,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             transport.input(),
             stt,
             user_aggregator,
+            watchdog,
             llm,
             tts,
             transport.output(),
@@ -239,7 +352,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
 
     pipeline_params = {"enable_metrics": True, "enable_usage_metrics": True}
-    if _is_twilio_session(runner_args):
+    if telephony:
         pipeline_params["audio_in_sample_rate"] = 8000
         pipeline_params["audio_out_sample_rate"] = 8000
 
@@ -272,6 +385,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
 
     flow_started = False
+    _start_task: asyncio.Task | None = None
 
     async def start_flow():
         nonlocal flow_started
@@ -295,30 +409,64 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             ]
         )
 
+    async def start_flow_after_grace():
+        """Greet anyway if client-ready never arrives.
+
+        A call whose greeting is never queued is dead air from the first second,
+        and the scorer attributes that silence to the agent. ``start_flow`` is
+        idempotent, so the normal path makes this a no-op.
+        """
+        await asyncio.sleep(float(os.getenv("FLOW_START_GRACE_SECS", "8")))
+        if not flow_started:
+            logger.warning("Client-ready never arrived; starting the flow anyway")
+            await start_flow()
+
     # RTVI clients (webrtc, daily, eval) send client-ready after connecting, which
     # interrupts and drops anything queued earlier; telephony has no RTVI client.
     @worker.rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi):
         await start_flow()
 
-        
-
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
+        nonlocal _start_task
         logger.info("Client connected")
         if _is_twilio_session(runner_args):
             await start_flow()
+            return
+        if not flow_started:
+            _start_task = asyncio.create_task(start_flow_after_grace())
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
         logger.info("Client disconnected")
-        await submission.flush()
+        await submission.close()
         await runner.cancel()
+
+    async def deliver_until_accepted():
+        """Keep re-offering a decided plan for as long as the call lives.
+
+        A call with no accepted record scores nothing, and the platform can
+        refuse a submission transiently. ``flush`` only ever sends actions the
+        call has actually decided, so this cannot freeze a plan prematurely.
+        """
+        interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
+        while True:
+            await asyncio.sleep(interval)
+            if submission.delivery_started:
+                continue
+            if submission.actions:
+                await submission.flush()
+
+    _deliver_task = asyncio.create_task(deliver_until_accepted())
 
     try:
         await runner.run()
     finally:
-        await submission.flush()
+        if _start_task is not None:
+            _start_task.cancel()
+        _deliver_task.cancel()
+        await submission.close()
 
 
 def _audio_kwargs() -> dict:
