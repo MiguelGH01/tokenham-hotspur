@@ -28,7 +28,7 @@ CLOCK ?=
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
 
-.PHONY: help run-webrtc run-twilio run-eval evals tunnel guard oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+.PHONY: help run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -43,6 +43,7 @@ help:
 	@echo "                    (full logs written to server/eval-runs/<scenario>.eval.log + .debug.log)"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
+	@echo "make cost         - euros and seconds per recorded call, with p50/p95 (list prices, see call_cost.py)"
 	@echo "make oracle       - offline scoring: where the 196 points are and what each problem expects"
 	@echo "make oracle-fetch - refresh the organisers' published roster (do it each morning)"
 	@echo "make oracle-check - run the judge against every published answer (must reject none)"
@@ -81,6 +82,14 @@ test:
 FORCE ?=
 guard:
 	cd $(SERVER_DIR) && uv run python -m prosper_guard $(if $(filter 1,$(FORCE)),--force,)
+
+# What the recorded calls cost, in euros and seconds (JR-rigour). Reads the audit
+# trails call_metrics.py writes; list prices and their sources live in call_cost.py.
+#   make cost                        # server/audit-logs
+#   make cost AUDIT=path/to/trails
+AUDIT ?= $(or $(AUDIT_DIR),audit-logs)
+cost:
+	@cd $(SERVER_DIR) && uv run python -m call_cost $(AUDIT)
 
 # The offline oracle: score a submission against the organisers' published cases
 # without spending a scored run (see docs/scoring-design-notes.md).

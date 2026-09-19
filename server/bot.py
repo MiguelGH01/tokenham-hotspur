@@ -58,6 +58,7 @@ except ImportError:  # daily-python has no Windows wheels
 
 from affirmation_watch import AffirmationWatch
 from booking import MADRID
+from call_metrics import build_observer, call_ended, call_started
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
 from flows.common import GREETING
@@ -550,7 +551,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         pipeline,
         params=PipelineParams(**pipeline_params),
         idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[],
+        observers=[build_observer(call_id)],
     )
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)
@@ -648,6 +649,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     async def on_client_connected(transport, client):
         nonlocal _start_task
         logger.info("Client connected")
+        call_started(call_id)
         # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
         # nothing else would ever start the flow and the bot would stay silent until cut off.
         if isinstance(runner_args, WebSocketRunnerArguments):
@@ -680,6 +682,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     try:
         await runner.run()
     finally:
+        call_ended(call_id)
         if _start_task is not None:
             _start_task.cancel()
         _deliver_task.cancel()
