@@ -85,8 +85,14 @@ def build_llm():
         return OpenAILLMService(
             api_key=os.environ["HELMCODE_API_KEY"],
             base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-            settings=OpenAILLMService.Settings(model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")),
-            # ~8% of gateway requests hang with no response; normal TTFB is ~0.55s.
+            # `extra.timeout` is a per-request httpx read timeout: it fires on a gap between
+            # chunks, not on total response length, so it only catches a stalled stream —
+            # `retry_on_timeout` below only guards the initial connect (~8% of gateway
+            # requests hang there with no response at all; normal TTFB is ~0.55s), not a
+            # stream that opens fine and then goes silent mid-generation.
+            settings=OpenAILLMService.Settings(
+                model=os.getenv("HELMCODE_MODEL", "deepseek-v4-flash"), extra={"timeout": 10.0}
+            ),
             retry_on_timeout=True,
             retry_timeout_secs=3.0,
         )
@@ -149,6 +155,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
     )
     runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
     await runner.add_workers(worker)
+
+    @llm.event_handler("on_completion_timeout")
+    async def _on_completion_timeout(service):
+        # A stalled completion produced no text and no tool call, so the caller is
+        # sitting in silence; ask them to repeat rather than leave the call dead.
+        logger.warning("Call {}: LLM completion stalled, prompting caller to repeat", call_id)
+        await worker.queue_frames(
+            [TTSSpeakFrame(text="Sorry, could you say that again?", append_to_context=True)]
+        )
 
     flow_manager = FlowManager(
         worker=worker,

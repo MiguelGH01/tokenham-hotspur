@@ -165,3 +165,45 @@ Every scenario that failed for a *code* reason (not the LLM-empty-completion fla
 fix already committed to the working tree, verified standalone. **Recommended next step:
 run `make evals` once more, clean, to get an honest final tally** — not done here because
 the user asked to stop first.
+
+## Iteration 3 — real-call testing over the ngrok tunnel
+
+Tested `make run-twilio` + `make tunnel` against the real Prosper dashboard (two live
+calls). Two unrelated, real production bugs found this way that no local eval could have
+caught (evals never open a real audio path):
+
+1. **`RNNoiseFilter()` crashed on every real call, at connect.** `pyrnnoise~=0.4.3` calls
+   `audiolab.av.Graph(rate=...)`, but the resolved `audiolab` (and transitively `av`)
+   renamed that to `sample_rate`. The crash killed the audio input task for the whole
+   call — the first real call's caller was never transcribed past the greeting, and the
+   call correctly fell back to `NO_ACTION(patient_not_found)` on hangup (the "always
+   submit something" contract held). Tried pinning `audiolab==0.4.9` back to a compatible
+   API; that just exposed a second incompatibility one layer down (`audiolab` needs an
+   `av` API that no longer exists in current `av` releases either). Not a one-line pin —
+   disabled `RNNoiseFilter` in `bot.py` instead (commented out with the reason) until
+   `pipecat-ai`'s `rnnoise` extra pins a compatible trio. Verified clean boot after.
+2. **A mid-stream LLM stall left a second real call dead for ~30s with no recovery.**
+   After the RNNoise fix, a second call got past the greeting, transcribed the caller's
+   name/DNI correctly, then the completion's TTFB came back fine (~0.5s) but the stream
+   never produced any further text or a tool call — `search_patient` was never invoked.
+   The caller just sat in silence until they hung up 34s later.
+   Root cause, confirmed by reading `pipecat.services.openai.base_llm`: `retry_on_timeout`
+   only wraps the *initial* `chat.completions.create()` call in `asyncio.wait_for`,
+   catching a connection/first-byte hang (the documented "~8% of gateway requests hang").
+   It does not wrap iterating the stream afterward, so a stall *after* TTFB has no
+   timeout at all short of the OpenAI SDK's own multi-minute default — Pipecat's
+   `on_completion_timeout` event exists for exactly this, but nothing fired it because
+   nothing made the underlying request time out quickly enough.
+   Fix: added `extra={"timeout": 10.0}` to the Helmcode `Settings` — a per-request httpx
+   timeout, which (per `pipecat.utils.http.TIMEOUT_EXCEPTIONS`, explicitly documented as
+   catching "a timeout while iterating a response") fires on a *gap* between chunks, not
+   on total response length, so it only catches a genuine stall, not a long-but-active
+   reply. Registered an `on_completion_timeout` handler in `bot.py` that speaks "Sorry,
+   could you say that again?" (same `TTSSpeakFrame`/`worker.queue_frames` pattern already
+   used for the greeting) so a stall now recovers audibly within ~10s instead of leaving
+   the caller in dead silence for 30+. Did not attempt to silently replay the exact same
+   LLM turn — reconstructing that safely from inside a bare `on_completion_timeout(service)`
+   handler (which gets no context object) would need either private-attribute access to
+   the flow's context aggregator or a custom `process_frame` override, and isn't verified
+   against a real reproduction; asking the caller to repeat is the safer, provable fix.
+   Verified: bot boots clean, `ruff check` passes, `simple_booking_amelia` still passes.
