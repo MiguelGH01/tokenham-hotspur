@@ -32,6 +32,12 @@ def test_role_prompt_does_not_reask_known_facts():
     assert "One confirmation question" in ROLE_MESSAGE
 
 
+def test_role_prompt_keys_language_off_speech_not_names():
+    assert "language the caller is speaking" in ROLE_MESSAGE
+    assert "Spanish name or DNI/NIE" in ROLE_MESSAGE
+    assert "Answer in the caller's language." not in ROLE_MESSAGE
+
+
 def test_rails_advertise_the_always_on_tools():
     assert [tool.name for tool in RAILS] == [
         "flag_emergency",

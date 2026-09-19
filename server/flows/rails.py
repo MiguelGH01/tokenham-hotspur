@@ -241,7 +241,7 @@ async def answer_clinic_question(args, flow_manager: FlowManager):
         "question": args.get("question"),
         "facts": _catalogue_facts(),
         "instruction": (
-            "Answer only from these facts, in the caller's language. "
+            "Answer only from these facts, in the language the caller is speaking. "
             "Never guess a doctor, a site, an hour, or a plan. "
             "If they then want to book, keep what you just told them."
         ),
@@ -291,7 +291,11 @@ RAILS = [
     ),
     _schema(
         "pin_language",
-        "The caller is not speaking English, or switched language mid-call. Pin it and stay.",
+        (
+            "The caller is speaking a language other than the one you have been using, "
+            "in their own turns, not because a name, DNI/NIE, or clinic word is Spanish. "
+            "Pin the language they are speaking and stay."
+        ),
         pin_language,
         properties={
             "language": {
