@@ -3,6 +3,8 @@ import ast
 import re
 from pathlib import Path
 
+from transcript_utils import build_transcript
+
 EVENT_RE = re.compile(r"^\s*([\d.]+)\s+\[\s*(t\d+|--)\s*\]\s+(.*)$")
 TURN_RE = re.compile(r"^--- turn (\d+): (.*)$")
 CTX_RE = re.compile(r"Generating chat from context (\[.*\])\s*$")
@@ -73,23 +75,7 @@ def parse_bot_log(path: Path):
         elif em and em.group("level") == "WARNING":
             warnings.append({"ts": em.group("ts").strip(), "src": em.group("src").strip(), "msg": em.group("msg").strip()})
 
-    transcript = []
-    if last_ctx:
-        for msg in last_ctx:
-            if not isinstance(msg, dict):
-                continue
-            role = msg.get("role")
-            entry = {"role": role}
-            if msg.get("content"):
-                entry["content"] = msg["content"]
-            if msg.get("tool_calls"):
-                entry["tool_calls"] = [
-                    {"name": tc.get("function", {}).get("name"), "arguments": tc.get("function", {}).get("arguments")}
-                    for tc in msg["tool_calls"]
-                ]
-            if role == "tool":
-                entry["tool_call_id"] = msg.get("tool_call_id")
-            transcript.append(entry)
+    transcript = build_transcript(last_ctx)
     return transcript, errors, warnings
 
 

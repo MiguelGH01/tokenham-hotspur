@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from eval_parser import list_eval_runs, parse_eval_run
@@ -20,9 +20,21 @@ from real_parser import parse_real_calls
 SERVER_DIR = Path(__file__).resolve().parents[2]
 EVAL_RUNS_DIR = SERVER_DIR / "eval-runs"
 RUN_LOGS_DIR = SERVER_DIR / "run-logs"
+RECORDINGS_DIR = RUN_LOGS_DIR / "recordings"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 app = FastAPI()
+
+
+@app.middleware("http")
+async def no_cache(request, call_next):
+    # This is a local dev dashboard whose static files change constantly
+    # between edits; browser disk caching of index.html has repeatedly served
+    # stale JS/CSS after a save, masking real fixes as still-broken. Disable
+    # caching outright rather than chase it with cachebusting query strings.
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/api/eval-runs")
@@ -41,6 +53,17 @@ def api_get_eval_run(run_id: str):
 @app.get("/api/real-calls")
 def api_real_calls():
     return parse_real_calls(RUN_LOGS_DIR)
+
+
+@app.get("/api/recordings/{filename}")
+def api_recording(filename: str):
+    # `filename` comes straight from a call's `recording` field (real_parser.py),
+    # itself a glob match under RECORDINGS_DIR -- but treat it as untrusted input
+    # from the browser anyway and strip any path components before joining.
+    path = RECORDINGS_DIR / Path(filename).name
+    if not path.is_file():
+        return JSONResponse({"error": f"no such recording: {filename}"}, status_code=404)
+    return FileResponse(path, media_type="audio/wav")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
