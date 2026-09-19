@@ -17,7 +17,7 @@ from pipecat.flows import (
 import audit
 import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
-from clinic_catalog import load_catalog, location_ids, location_name, specialty_ids
+from clinic_catalog import load_catalog, location_ids, location_name, provider_names, specialty_ids
 from flows.common import (
     RULE_WORDS,
     TRIAGE_EXAMPLES,
@@ -273,11 +273,22 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     near_place = (args.get("near_place") or "").strip()
     site_name = location_name(site) if site else None
 
+    if args.get("unknown_doctor") is True:
+        state["submission"].set_no_action("provider_not_found")
+        return {
+            "status": "provider_not_found",
+            "instruction": (
+                "That name is not on the clinic roster. Do not pick a nearby doctor. "
+                "If they will see nobody else, finish_without_booking."
+            ),
+        }, None
+
     # Resolved before the doctor: the plan is one of the facts that decides
     # which doctor a spoken name means.
     plan = resolve_plan(catalogue, patient, args.get("policy_name"))
 
-    provider_name = args.get("provider_name") or cues.get("provider_name")
+    spoken = (args.get("provider_name") or cues.get("provider_name") or "").strip()
+    provider_name = spoken if spoken and spoken.lower() not in {"none", "null"} else None
     provider_id = None
     if provider_name:
         providers = resolve_provider(
@@ -603,9 +614,18 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
             "specialty": {"type": "string", "enum": specialty_ids()},
             "provider_name": {
                 "type": "string",
+                "enum": provider_names(),
                 "description": (
-                    "Doctor name as the caller said it. Copy their words; do not invent "
-                    "an ID or pick a nearby roster spelling yourself."
+                    "Exact roster name if the caller named a doctor on this list. "
+                    "Omit the field entirely when they did not name a doctor — that "
+                    "skips the doctor filter. Never invent a nearby spelling."
+                ),
+            },
+            "unknown_doctor": {
+                "type": "boolean",
+                "description": (
+                    "True only if they named a doctor who is not on the roster. "
+                    "Do not set this when they simply did not name anyone."
                 ),
             },
             "allow_alternative": {
@@ -762,16 +782,17 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     f"The patient is {patient['given_name']} {patient['first_surname']}. {already}"
                     "Find out which specialty or named doctor they need if that is still missing. "
                     "Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
-                    f"Roster (matching is done in code, never by you): {roster}. "
+                    f"Roster — if they named a doctor, pass provider_name as one of these exact "
+                    f"strings; if they named nobody, omit provider_name so the search is not "
+                    f"filtered by doctor: {roster}. "
                     "When the caller states or confirms a specialty — for example 'the GP' — pass "
                     "specialty. If they only described symptoms, pass the specialty from the "
-                    "triage examples. Pass provider_name whenever the caller names a doctor, and pass "
-                    "BOTH when they give both: 'Dr. Sáez, the GP' is specialty=general_practice "
-                    "AND provider_name='Sáez'. That pair is what identifies a doctor whose "
-                    "surname is ambiguous, so never drop one of the two. "
-                    "Do not rewrite a spoken name to a nearby roster spelling; pass it as heard. "
-                    "A named GP, site or doctor the caller said wins over an invented enum value. "
-                    "Do not guess a site or doctor from the enum. "
+                    "triage examples. If they named a doctor, pass that roster name AND specialty "
+                    "when they gave both: 'Dr. Sáez, the GP' is specialty=general_practice AND "
+                    "provider_name='Dr. Martín Sáez'. Sáez is the GP; Sáenz is paediatrics; "
+                    "Iglesias is dermatology; Iglesia is orthopaedics. Never pick the nearby "
+                    "other name. If the name they said is not on the roster, set unknown_doctor "
+                    "true and omit provider_name. "
                     "Only pass site, weekday or part_of_day if the caller asked for them. If they "
                     "gave a street or neighbourhood instead of a site name, pass near_place as "
                     "they said it and do not guess a site. Never "

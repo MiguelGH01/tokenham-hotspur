@@ -21,5 +21,9 @@ def location_ids() -> list[str]:
     return [loc["id"] for loc in load_catalog()["locations"]]
 
 
+def provider_names() -> list[str]:
+    return [p["name"] for p in load_catalog()["providers"]]
+
+
 def location_name(location_id: str) -> str:
     return next(loc["name"] for loc in load_catalog()["locations"] if loc["id"] == location_id)

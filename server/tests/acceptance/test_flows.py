@@ -294,6 +294,41 @@ def test_provider_site_and_weekday_preserved():
     assert offer["slot"].startswith("2026-09-25")
 
 
+def test_slot_schema_doctor_is_roster_or_omitted():
+    from clinic_catalog import provider_names
+    from flows.booking import _get_earliest_slot_schema
+
+    props = _get_earliest_slot_schema().properties
+    assert props["provider_name"]["enum"] == provider_names()
+    assert "provider_name" not in _get_earliest_slot_schema().required
+    assert "unknown_doctor" in props
+
+
+def test_unknown_named_doctor_does_not_search():
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            raise AssertionError("must not query availability")
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("x", client),
+            "patient": {"patient_id": "P1", "insurer": "sanitas"},
+            "offers": {},
+        }
+    )
+    result, node = asyncio.run(
+        get_earliest_slot({"unknown_doctor": True, "specialty": "orthopaedics"}, manager)
+    )
+    assert result["status"] == "provider_not_found"
+    assert node is None
+    assert manager.state["submission"].pending["reason"] == "provider_not_found"
+
+
 def test_real_node_schemas_construct():
     from pipecat.flows import FlowsFunctionSchema
 
