@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 from loguru import logger
 
 from observability.events import ObsEvent
@@ -125,4 +126,17 @@ def mount_observability_routes(app: FastAPI) -> None:
 
     # Same origin as the API and the WebRTC offer endpoint: no CORS, no build.
     if CONSOLE_DIR.is_dir():
-        app.mount("/console", StaticFiles(directory=CONSOLE_DIR, html=True), name="console")
+        app.mount("/console", _NoCacheStatic(directory=CONSOLE_DIR, html=True), name="console")
+
+
+class _NoCacheStatic(StaticFiles):
+    """Serve the console without caching.
+
+    A reload has to pick up an edited app.js; a browser holding the previous
+    one silently runs stale code, which looks like the fix never landed.
+    """
+
+    def file_response(self, *args, **kwargs) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+        return response

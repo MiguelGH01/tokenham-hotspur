@@ -963,7 +963,9 @@ function tcHeader(title, sub, opts){
 
 function tcRender(){
   modal.box.innerHTML = "";
-  ({connecting:tcConnecting, live:tcLive, result:tcResult})[modal.phase]();
+  const phase = {connecting: tcConnecting, live: tcLive, result: tcResult, error: tcError}[modal.phase];
+  if (!phase) { console.error("unknown modal phase", modal.phase); tcClose(); return; }
+  phase();
 }
 
 function tcConnecting(){
