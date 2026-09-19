@@ -44,7 +44,10 @@ try:
     from pipecat.transports.daily.transport import DailyParams
 except ImportError:  # daily-python has no Windows wheels
     DailyParams = None
-from pipecat.turns.user_stop import TurnAnalyzerUserTurnStopStrategy
+from pipecat.turns.user_stop import (
+    SpeechTimeoutUserTurnStopStrategy,
+    TurnAnalyzerUserTurnStopStrategy,
+)
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.workers.runner import WorkerRunner
 
@@ -125,7 +128,15 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             vad_analyzer=SileroVADAnalyzer(),
             filter_incomplete_user_turns=True,
             user_turn_strategies=UserTurnStrategies(
-                stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())]
+                # First to fire wins: smart-turn normally decides end-of-turn from audio +
+                # transcript; the speech-timeout strategy is a fast fallback for when it
+                # doesn't (real telephony audio can leave it unable to decide), so a stall
+                # there costs ~1.2s of silence instead of the full 5s on_user_turn_stop_timeout
+                # backstop.
+                stop=[
+                    TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3()),
+                    SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=1.2),
+                ]
             ),
         ),
     )

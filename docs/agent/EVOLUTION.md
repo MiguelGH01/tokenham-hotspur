@@ -227,3 +227,20 @@ caught (evals never open a real audio path):
    "decide silently, never speak your reasoning or working aloud" line to `ROLE_MESSAGE`
    in `flow/prompts.py`. Verified no regression on `simple_booking_amelia`; the underlying
    fix can only be confirmed by another real call with ambiguous input.
+
+4. **The reported "10 seconds to answer" was mostly turn-detection, not LLM latency.**
+   Measured the actual per-turn breakdown from the logs: STT ~0.3-0.5s, LLM think time
+   ~0.7-1.8s, TTS ~0.2s — none of that adds up to 10s. The real cost was a turn that hit
+   `on_user_turn_stop_timeout`: confirmed via the Pipecat docs that this is a hard 5.0s
+   backstop that fires "when the user has stopped speaking according to VAD but no
+   transcription-based stop has occurred." `bot.py` only configured one stop strategy
+   (`TurnAnalyzerUserTurnStopStrategy`, the smart-turn ML model); when it didn't confidently
+   fire on that turn's real 8kHz phone audio (`_on_user_turn_stopped ... strategy: None` in
+   the log — no strategy claimed it, only the backstop), the caller sat in silence for the
+   full 5s before any processing even started. This only shows up on real telephony audio;
+   eval text-mode never exercises turn detection. Fix: added
+   `SpeechTimeoutUserTurnStopStrategy(user_speech_timeout=1.2)` alongside the existing
+   smart-turn strategy in `bot.py` — stop strategies race, first to fire wins, so normal
+   turns are unaffected and a smart-turn stall now costs ~1.2s instead of 5s. Verified no
+   regression on `simple_booking_amelia`; effectiveness on real stalled turns needs another
+   real call to confirm.
