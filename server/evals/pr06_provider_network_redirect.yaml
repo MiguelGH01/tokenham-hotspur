@@ -1,0 +1,45 @@
+# PR-06 The Rules — case the_rules-fe23fca4aeb7
+#
+# The law, not the fixture: a provider who refuses the plan is a REDIRECT, not a
+# refusal, whenever a colleague in the same specialty takes it. Submitting
+# provider_not_in_network here would be the wrong answer shape — the expected
+# answer is a booking with someone else.
+#
+# Patient P00057 Gloria González Blanco, DOB 1999-06-15, DKV, holds a derm
+# referral. Dra. Elena Iglesias (PR05, dermatology) refuses DKV; Dr. Tomás
+# Vilar (PR12, dermatology, Norte) takes it.
+#
+# The caller says a surname that collides with Dr. Emilio Iglesia
+# (orthopaedics), so the flow must resolve the specialty before it can resolve
+# the doctor — the CL-name-collision trap, exercised here rather than avoided.
+name: pr06_provider_network_redirect
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hi, I need to see Dr. Iglesias about my eczema, it has flared up again."
+    expect:
+      - event: response
+
+  - user: "Gloria González Blanco, DNI 15750638P. It's the dermatologist I need."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+
+  - user: "Dermatology, the earliest you have with her."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          offers a concrete dermatology appointment with a DIFFERENT doctor
+          (a doctor plus a day and time). It must not refuse, must not say the
+          request cannot be done, and must not name Mrs Iglesias as the doctor
+          being offered. If nothing is free it may say so, but it must not
+          treat the plan as the problem.

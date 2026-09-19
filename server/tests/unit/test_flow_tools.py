@@ -88,7 +88,7 @@ def test_no_slots_records_no_availability_as_the_reason():
     flow = _flow(clinic, patient=PATIENT)
 
     result, node = asyncio.run(get_earliest_slot({"specialty": "general_practice"}, flow))
-    asyncio.run(flow.state["submission"].flush())
+    asyncio.run(flow.state["submission"].close())
 
     assert result == {"status": "no_slots"} and node is None
     assert clinic.posted[0]["action"] == "NO_ACTION" and clinic.posted[0]["reason"] == "no_availability"
@@ -99,7 +99,7 @@ def test_no_slots_reports_the_restriction_the_api_blocked_on():
     flow = _flow(clinic, patient=PATIENT)
 
     asyncio.run(get_earliest_slot({"specialty": "general_practice"}, flow))
-    asyncio.run(flow.state["submission"].flush())
+    asyncio.run(flow.state["submission"].close())
 
     assert clinic.posted[0]["reason"] == "referral_required"
 

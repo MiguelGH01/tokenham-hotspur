@@ -1,0 +1,43 @@
+# PR-06 The Rules — case the_rules-8d92ce10f4a6
+#
+# The law, not the fixture: the age window beats the spoken specialty for a
+# general complaint. A parent asking for "the GP" for a nine-year-old must be
+# booked into paediatrics; the API's not_eligible_age refusal would be the
+# wrong answer shape and would fail every private case of this family.
+#
+# Patient P00009 Sonia Álvarez Medina, DOB 2017-05-12, privado, seen in paeds.
+# The assertion is deliberately about the shape of the answer (an offered
+# paediatric appointment) rather than about a specific slot, so it keeps
+# holding as the calendar moves.
+name: pr06_age_redirect
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hi, I'd like to book my daughter's routine check-up please."
+    expect:
+      - event: response
+
+  - user: "Her name is Sonia Álvarez Medina, and her DNI is 62819257R."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+            args: { id_type: national_id }
+      - event: response
+
+  - user: "The GP please, the earliest you have."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          offers a concrete appointment (a doctor plus a day and time) for the
+          child, or if nothing is free, says nothing is available for that
+          request. It must NOT say the child is too young, must NOT say the
+          child cannot be seen, and must NOT refuse. Offering the child a
+          paediatrician's appointment passes.

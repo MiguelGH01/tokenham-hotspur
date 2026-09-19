@@ -15,8 +15,8 @@ class FakeClient:
         self.posted.append(action)
 
 
-def flushed(sub, client):
-    asyncio.run(sub.flush())
+def closed(sub, client):
+    asyncio.run(sub.close())
     assert len(client.posted) == 1
     return client.posted[0]
 
@@ -24,24 +24,26 @@ def flushed(sub, client):
 def test_unconfirmed_offer_is_submitted_when_call_ends():
     client = FakeClient(); sub = CallSubmission("c1", client)
     sub.set_offer(OFFER)
-    sent = flushed(sub, client)
+    sent = closed(sub, client)
     assert sent["action"] == "BOOK" and sent["slot"] == OFFER["slot"] and sent["call_id"] == "c1"
 
 
 def test_declined_offer_is_not_submitted():
     client = FakeClient(); sub = CallSubmission("c2", client)
     sub.set_offer(OFFER); sub.clear_offer()
-    assert flushed(sub, client)["action"] == "NO_ACTION"
+    assert closed(sub, client)["action"] == "NO_ACTION"
 
 
 def test_confirmed_booking_wins_over_a_later_offer():
     client = FakeClient(); sub = CallSubmission("c3", client)
     sub.set_offer(OFFER); sub.set_book(OFFER); sub.set_offer(OTHER)
-    assert flushed(sub, client)["slot"] == OFFER["slot"]
+    asyncio.run(sub.flush())
+    assert len(client.posted) == 1
+    assert client.posted[0]["slot"] == OFFER["slot"]
 
 
 def test_explicit_no_action_is_not_overridden_by_an_offer():
     client = FakeClient(); sub = CallSubmission("c4", client)
     sub.set_offer(OFFER); sub.set_no_action("no_availability")
-    sent = flushed(sub, client)
+    sent = closed(sub, client)
     assert sent["action"] == "NO_ACTION" and sent["reason"] == "no_availability"

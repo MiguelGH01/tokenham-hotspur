@@ -1,0 +1,27 @@
+# Run against a dedicated test environment; this scenario submits REGISTER.
+name: new_patient_registration
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
+turns:
+  - expect:
+      - event: response
+  - user: "I am a new patient and want to register, not book an appointment."
+    expect:
+      - event: function_call
+        calls:
+          - name: route_request
+            args: {intent: register}
+      - event: response
+  - user: "My given name is Ana, first surname Test, second surname Example. My DNI is 12345678Z. I was born on January second 1990. My phone is 612345678, my email is ana.test@example.com and my insurer is Sanitas."
+    expect:
+      - event: function_call
+        calls:
+          - name: prepare_registration
+      - event: response
+  - user: "Yes, all those details are correct. Register me only."
+    expect:
+      - event: function_call
+        calls:
+          - name: confirm_registration
+            args: {confirmed: true}

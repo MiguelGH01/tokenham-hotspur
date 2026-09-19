@@ -1,0 +1,47 @@
+# PR-05 When Exactly — the shape of case when_exactly-7d2467212026
+#
+# The law, not the fixture: "tomorrow" is the next calendar day in Europe/Madrid
+# and it MAY BE A SATURDAY. An agent that skips the weekend answers with Monday
+# and fails every private case of this shape.
+#
+# Clock pinned to a Friday whose Saturday is still on sale. That is the whole
+# constraint: the bot's clock is ours to pin, the clinic's calendar is not, and a
+# pin in the past asks for a day the clinic has already sold out — on 19 Sep this
+# scenario demanded Saturday the nineteenth, which by then was today, and no
+# correct answer existed. Re-pin it to a later Friday when this one passes.
+#   make eval-one S=pr05_tomorrow_is_saturday CLOCK=2026-10-02T10:00:00+02:00
+#
+# Patient P00001 Josefa Domínguez Navarro, Mapfre, returning. Only Dra. Carmen
+# Ortiz Vidal (PR01, centro) works Saturdays, so her Saturday morning is the only
+# correct answer and Monday is the failure this scenario exists to catch.
+name: pr05_tomorrow_is_saturday
+judge:
+  eval:
+    factory: "bot.build_eval_judge_llm"
+turns:
+  - expect:
+      - event: response
+
+  - user: "Hello, my hay fever is bad again and I'd like to be seen tomorrow if possible."
+    expect:
+      - event: response
+
+  - user: "Josefa Domínguez Navarro, DNI 48064716Y."
+    expect:
+      - event: function_call
+        calls:
+          - name: search_patient
+      - event: response
+
+  - user: "The GP please."
+    expect:
+      - event: function_call
+        calls:
+          - name: get_earliest_slot
+      - event: response
+        eval: >
+          offers a concrete appointment (a doctor plus a day and time), or says
+          nothing is free. The day offered must be Saturday the twenty-sixth of
+          September, and it must NOT be Monday the twenty-eighth of September or
+          any later day. Naming the weekday "Saturday" or the date "26 September"
+          both pass.

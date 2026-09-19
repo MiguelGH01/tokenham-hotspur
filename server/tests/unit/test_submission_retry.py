@@ -21,7 +21,9 @@ class FlakyClient:
         self.posted.append(action)
 
 
-def test_failed_post_is_retried_by_the_next_flush():
+def test_failed_post_is_retried_by_the_next_flush(monkeypatch):
+    monkeypatch.setenv("SUBMIT_DELIVERY_ATTEMPTS", "1")
+    monkeypatch.setenv("SUBMIT_DELIVERY_BACKOFF_SECS", "0")
     client = FlakyClient(failures=1)
     sub = CallSubmission("c1", client)
     sub.set_book(OFFER)
@@ -35,6 +37,7 @@ def test_failed_post_is_retried_by_the_next_flush():
 def test_successful_post_is_still_sent_only_once():
     client = FlakyClient(failures=0)
     sub = CallSubmission("c2", client)
+    sub.set_book(OFFER)
 
     asyncio.run(sub.flush())
     asyncio.run(sub.flush())
@@ -49,6 +52,6 @@ def test_offer_after_a_no_availability_clears_the_stale_refusal():
     sub.set_no_action("no_availability")
     sub.set_offer(OFFER)
 
-    asyncio.run(sub.flush())
+    asyncio.run(sub.close())
 
     assert client.posted[0]["action"] == "BOOK"

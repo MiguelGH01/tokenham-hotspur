@@ -1,10 +1,12 @@
 # PR-01 case simple_booking-3371b9ac9462 — Ignacio Vázquez Moreno (phone, returning, orthopaedics)
 # Expected BOOK: P00005 / PR10 / sur / orthopaedic_review / 2026-09-21T09:30:00+02:00 / cigna
+name: simple_booking_ignacio
 judge:
   eval:
-    factory: eval_judge.helmcode_judge
-name: simple_booking_ignacio
+    factory: "bot.build_eval_judge_llm"
 turns:
+  - expect:
+      - event: response
   - user: "Good morning, this is Ignacio Vázquez Moreno. I don't have my ID on me, but my phone number is 731 169 716."
     expect:
       - event: function_call
@@ -19,7 +21,10 @@ turns:
           - name: get_earliest_slot
             args: { specialty: orthopaedics }
       - event: response
-        text_contains: Peral
+        # The earliest slot (and so the named doctor) moves with the dial day —
+        # public-case answers re-anchor to 09:00 Europe/Madrid on the day the
+        # case is dialled. Assert the shape, not a fixture date.
+        eval: "the reply offers one specific orthopaedics appointment — a named provider, a site, a day and a time — and does not refuse, ask a different clarifying question, or offer a Sunday; a short confirmation question about the offered slot (for example 'Does that work for you?') is acceptable"
   - user: "Yes please."
     expect:
       - event: function_call

@@ -5,8 +5,8 @@ import asyncio
 import httpx
 import pytest
 
-from clinic import clinic_client
-from clinic.clinic_client import ClinicClient
+from clients import clinic_client
+from clients.clinic_client import ClinicApiError, ClinicClient
 
 
 def _client(monkeypatch, responses):
@@ -19,7 +19,9 @@ def _client(monkeypatch, responses):
         status, body = responses[len(calls) - 1]
         return httpx.Response(status, json=body)
 
-    client = ClinicClient(base_url="http://clinic/api", api_key="pk-test", transport=httpx.MockTransport(handler))
+    client = ClinicClient(
+        base_url="http://clinic/api", api_key="pk-test", transport=httpx.MockTransport(handler)
+    )
     return client, calls
 
 
@@ -41,8 +43,9 @@ def test_5xx_is_retried_once(monkeypatch):
 def test_4xx_is_not_retried(monkeypatch):
     client, calls = _client(monkeypatch, [(422, {"detail": "bad"}), (200, {})])
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(ClinicApiError) as exc:
         asyncio.run(client.search_directory(national_id="x"))
+    assert exc.value.status == 422
     assert len(calls) == 1
 
 

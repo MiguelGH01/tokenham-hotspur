@@ -28,7 +28,7 @@ def test_closed_day_is_skipped_for_the_next_open_one():
 def test_without_closed_days_nothing_is_filtered():
     availability = {"slots": [_slot("2026-10-12T09:00:00+02:00")]}
 
-    assert pick_offer(availability, PATIENT, CONNECTED)["slot"] == "2026-10-12T09:00:00+02:00"
+    assert pick_offer(availability, PATIENT, CONNECTED, closed_days=frozenset())["slot"] == "2026-10-12T09:00:00+02:00"
 
 
 def test_clock_override_applies_only_where_it_is_allowed(monkeypatch):
