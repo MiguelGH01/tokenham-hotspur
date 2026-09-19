@@ -1,18 +1,22 @@
-import os
+"""judge.eval.factory target for server/evals scenarios.
+
+DISCLAIMER: this judges every scenario with whatever LLM bot.py's own
+build_llm() would construct for a live call — i.e. LLM_PROVIDER (helmcode by
+default; gemini/openai are the other options bot.py supports), not a model
+pinned specifically for judging. Switching LLM_PROVIDER before a run changes
+the judge too, so eval results are only comparable across runs made with the
+same LLM_PROVIDER.
+"""
 
 from dotenv import load_dotenv
-from pipecat.services.openai.llm import OpenAILLMService
+from pipecat.services.llm_service import LLMService
 
-# The eval CLI is a separate process from bot.py, so it never loads .env on its own.
+from bot import build_llm
+
+# The eval CLI runs as its own process (not bot.py), so it never loads .env on its own.
 load_dotenv()
 
 
-def helmcode_judge(config: dict) -> OpenAILLMService:
-    """judge.eval.factory target: judge scenarios with the bot's own Helmcode gateway."""
-    return OpenAILLMService(
-        api_key=os.environ["HELMCODE_API_KEY"],
-        base_url=os.getenv("HELMCODE_BASE_URL", "https://api.helmcode.com/v1"),
-        settings=OpenAILLMService.Settings(
-            model=config.get("model") or os.getenv("HELMCODE_MODEL", "deepseek-v4-flash")
-        ),
-    )
+def helmcode_judge(config: dict) -> LLMService:
+    """judge.eval.factory target: judge scenarios with the bot's own configured LLM."""
+    return build_llm()
