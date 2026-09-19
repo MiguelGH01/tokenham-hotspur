@@ -176,6 +176,12 @@ asserts the offer and the confirmation instead.
 
 ## Notes
 
+- Work-unit commit: **c8ee2d2** — `fix(run-all): deliver the decided record, stop
+  the silence, tune the phone` (39 files, on branch `feature/flows`; not pushed).
+  It carries the previous increment's uncommitted work as well, for the reason in
+  *Deliberate limits*.
+- `make test` 74 passed, `make eval` 15/15, `make concurrency N=20` 20/20 — all
+  run against the working tree this commit records.
 - Freeze: Sunday 20 September 2026, 06:00 Europe/Madrid.
 - `SC-cooldown-run` is 15 minutes after a Run All finishes.
 - Run `make concurrency` before the first scored run of the day. It costs a
