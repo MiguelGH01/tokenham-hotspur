@@ -17,6 +17,7 @@ from pipecat.flows import (
 import audit
 import dates
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
+from clients.clinic_client import ClinicApiError
 from clinic_catalog import (
     closure_days,
     load_catalog,
@@ -241,6 +242,20 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     return matches
 
 
+def _slot_fingerprint(slot: dict) -> str:
+    """Stable id for a slot we already read out, so a retry cannot offer it again."""
+    raw = slot.get("slot") or slot["start_time"]
+    start = datetime.fromisoformat(raw).astimezone(MADRID).isoformat()
+    return f"{slot['provider_id']}|{start}"
+
+
+def _remember_tried_slot(state: dict, slot: dict) -> None:
+    tried = state.setdefault("tried_slots", [])
+    key = _slot_fingerprint(slot)
+    if key not in tried:
+        tried.append(key)
+
+
 @announce("get_earliest_slot")
 async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     """Find the earliest bookable slot, applying the rules the API cannot.
@@ -382,11 +397,14 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     if target is not None:
         # A named day is searched from itself, so "first thing on Monday the
         # twelfth of October" can still be answered when that Monday is a
-        # closure. Rolling forward drops the weekday on purpose: the caller asked
-        # for the earliest morning after the holiday, not the next Monday.
+        # closure. Pin weekday to the *resolved* day: dropping it let pick_offer
+        # take any day in the 14-day window, so a Monday the 5th of October
+        # came back as Tuesday and the model retried the same query when the
+        # caller refused. A closed named day still rolls (Fiesta → Tuesday),
+        # and the pin follows that roll rather than the spoken weekday.
         target = dates.next_open_day(target, site)
         date_from, date_to = dates.window_around(target)
-        weekday = None
+        weekday = WEEKDAYS[target.weekday()]
     else:
         date_from, date_to = search_window(connected_at)
     try:
@@ -398,6 +416,28 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             location_id=site,
             insurer=[plan["id"]] if plan else None,
         )
+    except ClinicApiError as exc:
+        if exc.status == 422:
+            # A bad window is not a full diary. Retrying the same dates 422s again.
+            logger.error("availability rejected the window: {}", exc)
+            state["submission"].set_no_action("no_availability")
+            return {
+                "status": "no_slots",
+                "instruction": (
+                    "The clinic cannot search that date window. Say nothing is available "
+                    "for that request. Do not call get_earliest_slot again with the same dates."
+                ),
+            }, None
+        logger.error("availability lookup failed: {}", type(exc).__name__)
+        return {
+            "status": "lookup_failed",
+            "instruction": (
+                "The clinic's diary could not be reached. This is a fault on our side, "
+                "not an answer about availability: do not say that nothing is free and "
+                "do not offer a rule. Apologise for the delay in one short sentence and "
+                "call get_earliest_slot again with exactly the same request."
+            ),
+        }, None
     except Exception as exc:
         # Same distinction as the directory lookup: the clinic's API being down is
         # not the same as "nothing is free". Told "no slots" the agent would name
@@ -437,6 +477,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             if (not site or s["location_id"] == site)
             and s.get("specialty_id", specialty) == specialty
             and provider_speaks(catalogue, s["provider_id"], language)
+            and _slot_fingerprint(s) not in set(state.get("tried_slots") or ())
         ],
     }
     if state.get("intent") == "reschedule":
@@ -548,6 +589,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     state["offer_seq"] = state.get("offer_seq", 0) + 1
     offer_id = f"offer-{state['offer_seq']}"
     state["offers"][offer_id] = offer
+    _remember_tried_slot(state, offer)
     prepare_proposal(flow_manager, offer_id)
     audit.audit(
         state.get("call_id", "unknown"),
@@ -647,8 +689,14 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
 @announce("revise_search")
 async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
     """The caller wants a different specialty, site, day or time."""
-    from flows.requests import revise_request
+    from flows.requests import live_keys, revise_request
 
+    state = flow_manager.state
+    for key in live_keys(flow_manager):
+        offer = (state.get("offers") or {}).get(key)
+        if offer:
+            _remember_tried_slot(state, offer)
+    state["submission"].clear_offer()
     revise_request(flow_manager)
     return None, create_slot_node(flow_manager)
 
@@ -878,7 +926,8 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
                     "including the address if they asked which site is closest. Ask if that "
                     "works, then stop talking. Do not call confirm_offer in this turn. Nothing "
                     "is booked until they answer. After they say yes, call confirm_offer. If they "
-                    "want something different, call revise_search. If "
+                    "refuse this slot or want something different, call revise_search: that slot "
+                    "is remembered and the next search will not offer it again. If "
                     "confirm_offer returns CANCELLED, or says the call is still running, the "
                     "booking is not recorded yet: say you are finishing it off and call "
                     "confirm_offer again with the same offer_id. If it returns "

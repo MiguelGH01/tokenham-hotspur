@@ -813,3 +813,151 @@ def test_derm_without_referral_still_refuses_after_an_empty_diary():
     assert result["status"] == "blocked" and node["name"] == "refused"
     assert posted[0]["action"] == "NO_ACTION"
     assert posted[0]["reason"] == "referral_required"
+
+
+def _gynae_slot(start: str) -> dict:
+    return dict(
+        provider_id="PR11",
+        provider_name="Dra. Isabel Montoro",
+        location_id="centro",
+        specialty_id="gynaecology",
+        appointment_type_id="review",
+        start_time=start,
+        payable_with=["sanitas"],
+    )
+
+
+def test_named_monday_is_not_answered_with_the_tuesday_in_the_same_window():
+    """date_from + weekday must try that Monday first, not any day in the 14-day span."""
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [
+                    _gynae_slot("2026-10-06T09:00:00+02:00"),  # Tuesday
+                    _gynae_slot("2026-10-05T09:00:00+02:00"),  # Monday
+                ],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-oct5", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert result["status"] == "offer"
+    assert manager.state["offers"]["offer-1"]["slot"].startswith("2026-10-05")
+    assert result.get("note") != "negotiated"
+
+
+def test_named_monday_negotiates_only_after_that_monday_is_empty():
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [_gynae_slot("2026-10-06T09:00:00+02:00")],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-oct5-empty", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert result["status"] == "offer"
+    assert result["note"] == "negotiated"
+    assert manager.state["offers"]["offer-1"]["slot"].startswith("2026-10-06")
+
+
+def test_a_slot_already_offered_is_skipped_on_the_next_search():
+    """A refused/retried search must not read out the same Monday again."""
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [
+                    _gynae_slot("2026-10-05T09:00:00+02:00"),
+                    _gynae_slot("2026-10-06T09:00:00+02:00"),
+                ],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-skip-tried", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+            "tried_slots": [],
+        },
+        get_current_context=lambda: [],
+    )
+    first, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    second, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert first["status"] == "offer"
+    assert manager.state["offers"][first["offer_id"]]["slot"].startswith("2026-10-05")
+    assert second["status"] == "offer"
+    assert manager.state["offers"][second["offer_id"]]["slot"].startswith("2026-10-06")

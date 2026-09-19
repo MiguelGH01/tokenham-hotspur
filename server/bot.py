@@ -699,6 +699,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
                 "submission": submission,
                 "patient": None,
                 "offers": {},
+                "tried_slots": [],
                 "identify_attempts": 0,
             }
         )
