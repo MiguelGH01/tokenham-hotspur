@@ -2,6 +2,7 @@
 
 from clinic.clinic_catalog import (
     closure_days,
+    load_base_catalog,
     load_catalog,
     location_ids,
     location_name,
@@ -10,6 +11,7 @@ from clinic.clinic_catalog import (
 
 __all__ = [
     "closure_days",
+    "load_base_catalog",
     "load_catalog",
     "location_ids",
     "location_name",

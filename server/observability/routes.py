@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response
 from loguru import logger
 
+import reception_notices
 from observability.events import ObsEvent
 from observability.hub import get_hub
 from observability.store import shift_start_iso
@@ -123,6 +124,10 @@ def mount_observability_routes(app: FastAPI) -> None:
             logger.warning("Observability WS closed: {}", exc)
         finally:
             hub.unsubscribe(queue)
+
+    # Reception's notices ride on the console's app: same origin, same port, so
+    # the page that shows them is the page that writes them.
+    reception_notices.mount_notices_routes(app)
 
     # Same origin as the API and the WebRTC offer endpoint: no CORS, no build.
     if CONSOLE_DIR.is_dir():

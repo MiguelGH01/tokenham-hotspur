@@ -36,6 +36,7 @@ import os
 from loguru import logger
 
 import audit
+import reception_notices
 from booking import pick_offer, search_window
 from clinic_catalog import closure_days, load_catalog
 from submission import book_action, cancel_action, register_action, reschedule_action
@@ -147,6 +148,12 @@ async def _first_slot(state, patient) -> dict | None:
         except Exception as exc:
             logger.debug("cold booking lookup failed: {}", type(exc).__name__)
             continue
+        # The same filter the conversation applies. This path submits a record
+        # too — it is what a call that decided nothing ends on — so a doctor
+        # reception marked away must not be bookable here either.
+        availability, _ = reception_notices.hide_absent(
+            availability, reception_notices.load_notices()
+        )
         offer = pick_offer(availability, patient, connected_at, closed_days=closure_days())
         if offer is not None:
             return offer

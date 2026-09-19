@@ -238,3 +238,11 @@ server/audit-logs/
 
 # Centralita console SQLite (local, regenerable from fixtures)
 server/data/
+
+# Reception's notices: whatever the front desk has set right now, per machine.
+# Never committed — a notice in the tree would change what a scored call books.
+server/reception_notices.json
+server/reception_notices.json*.tmp
+
+# Screenshots and traces left behind when a browser drives the console locally
+.playwright-mcp/

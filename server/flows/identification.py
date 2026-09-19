@@ -3,7 +3,7 @@
 from loguru import logger
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NodeConfig
 
-from flows.common import ROLE_MESSAGE, create_giveup_node
+from flows.common import create_giveup_node, current_role_message
 from national_id import is_valid_national_id, normalize_national_id
 from observability.emit import emit_state_patch, trace_tool
 
@@ -120,7 +120,7 @@ def create_identify_node() -> NodeConfig:
 
     return NodeConfig(
         name="identify",
-        role_message=ROLE_MESSAGE,
+        role_message=current_role_message(),
         task_messages=[
             {
                 "role": "developer",

@@ -32,10 +32,9 @@ button{font:inherit;color:inherit;cursor:pointer}
   padding:11px 16px;padding-top:calc(11px + env(safe-area-inset-top,0px));
   background:var(--surface);border-bottom:1px solid var(--line);position:relative;z-index:30}
 .brand{display:flex;align-items:center;gap:9px;min-width:0}
-.brand .mark{width:15px;height:15px;border-radius:3px;background:var(--accent);flex:none;
-  position:relative}
-.brand .mark::after{content:"";position:absolute;left:4px;top:4px;width:7px;height:7px;
-  border-radius:1px;background:var(--surface)}
+/* The wordmark is served at 2x and laid out by height, so the row keeps its
+   rhythm whatever the artwork's aspect ratio turns out to be. */
+.brand .logo{height:22px;width:auto;display:block}
 .brand b{font-family:var(--ui);font-weight:700;font-size:15px;letter-spacing:-.2px;white-space:nowrap}
 .brand span{font-size:13px;color:var(--faint);white-space:nowrap}
 .topbar .spacer{flex:1 1 30px}
