@@ -29,6 +29,7 @@ from pipecat.runner.utils import create_transport, parse_telephony_websocket
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
+from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.openai.responses.llm import OpenAIResponsesLLMService
@@ -138,6 +139,9 @@ def build_stt():
     )
 
 
+_ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
+
+
 def build_tts():
     provider = os.getenv("TTS_PROVIDER", "elevenlabs")
     if provider == "deepgram":
@@ -147,12 +151,37 @@ def build_tts():
                 voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en")
             ),
         )
+    model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
+    voice = os.environ["ELEVENLABS_VOICE_ID"]
+    language = os.getenv("ELEVENLABS_LANGUAGE", "es")
+    # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are not
+    # a real model: the classic TTS WebSocket accepts the socket then returns no audio.
+    use_dialogue = model in _ELEVENLABS_V3_MODELS or ("v3" in model and "ttv" not in model)
+    if use_dialogue:
+        if model not in _ELEVENLABS_V3_MODELS:
+            logger.warning(
+                "ELEVENLABS_MODEL={} is not a TTS WebSocket model; using "
+                "ElevenLabsDialogueTTSService with eleven_v3_conversational. "
+                "Set eleven_v3 or eleven_v3_conversational explicitly.",
+                model,
+            )
+            model = "eleven_v3_conversational"
+        logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
+        return ElevenLabsDialogueTTSService(
+            api_key=os.environ["ELEVENLABS_API_KEY"],
+            settings=ElevenLabsDialogueTTSService.Settings(
+                voice=voice,
+                model=model,
+                language=language,
+            ),
+        )
+    logger.info("TTS: ElevenLabs WebSocket ({})", model)
     return ElevenLabsTTSService(
         api_key=os.environ["ELEVENLABS_API_KEY"],
         settings=ElevenLabsTTSService.Settings(
-            voice=os.environ["ELEVENLABS_VOICE_ID"],
-            model=os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5"),
-            language=os.getenv("ELEVENLABS_LANGUAGE", "es"),
+            voice=voice,
+            model=model,
+            language=language,
         ),
     )
 

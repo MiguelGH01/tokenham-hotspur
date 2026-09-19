@@ -20,7 +20,7 @@ getting the bot running and testing it.
 | [uv](https://docs.astral.sh/uv/) | `brew install uv`. It installs the right Python (3.12) for you. |
 | Team API key (`pk-…`) and dashboard login | The organisers' desk. One key per team — ask a teammate, don't request a new one: rotating it breaks everyone else. |
 | Soniox API key | [console.soniox.com](https://console.soniox.com/) (`SONIOX_API_KEY`) |
-| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`) |
+| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`). `ELEVENLABS_MODEL=eleven_v3` or `eleven_v3_conversational` uses Text-to-Dialogue; Flash/Turbo use the normal TTS WebSocket. |
 | Deepgram API key | Only if you set `STT_PROVIDER=deepgram` or `TTS_PROVIDER=deepgram` |
 | An LLM key | `HELMCODE_API_KEY` for the default provider, or a Gemini / OpenAI key |
 | [ngrok](https://ngrok.com/) account | Only for real calls from the dashboard. Free tier is enough. |
