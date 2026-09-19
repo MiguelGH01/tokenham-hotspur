@@ -7,12 +7,9 @@ from pipecat.flows import FlowManager, NodeConfig
 
 from flow.prompts import ROLE_MESSAGE
 from flow.tools import (
-    confirm_offer_schema,
-    decline_other_providers,
+    act_functions,
     flush_submission,
-    get_earliest_slot_schema,
     register_patient_schema,
-    revise_search,
     search_patient_schema,
 )
 
@@ -35,7 +32,6 @@ def create_close_node(kind: str) -> NodeConfig:
         pre_actions=[
             {"type": "tts_say", "text": text, "append_text_to_context": False},
             {"type": "function", "handler": flush_submission},
-            {"type": "end_conversation"},
         ],
     )
 
@@ -85,10 +81,5 @@ def create_act_node(flow_manager: FlowManager) -> NodeConfig:
                 ),
             }
         ],
-        functions=[
-            get_earliest_slot_schema(),
-            confirm_offer_schema(),
-            revise_search,
-            decline_other_providers,
-        ],
+        functions=act_functions(flow_manager),
     )

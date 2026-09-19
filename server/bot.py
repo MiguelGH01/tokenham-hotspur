@@ -8,6 +8,7 @@ Run the bot using::
 
 import asyncio
 import os
+import threading
 import uuid
 from datetime import datetime
 
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.evals.transport import EvalTransportParams
 from pipecat.flows import FlowManager
-from pipecat.frames.frames import EndFrame, TTSSpeakFrame
+from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -120,6 +121,8 @@ def build_llm():
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
     call_id = _call_id(runner_args)
     logger.info("Starting bot for call {}", call_id)
+    if str(call_id).startswith("local-"):
+        logger.error("Call has no start.callSid; submissions will 404")
 
     stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
     tts = DeepgramTTSService(
@@ -197,9 +200,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
-    # No forced submit on a short timer that overwrites a later BOOK. At 150s we commit
-    # whatever we have and hang up so the 180s wall-clock does not fire.
-
+    # Submit before the 180s cap, but do not close the socket: the harness hanging
+    # up is a normal end; we hanging up is scored as "connection lost".
     async def _commit_before_wall_clock():
         await asyncio.sleep(WALL_CLOCK_COMMIT_SECS)
         if submission._flushed:
@@ -209,10 +211,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             submission.set_book(submission.offered)
         await submission.flush()
         await worker.queue_frames(
-            [
-                TTSSpeakFrame(text="I've noted that. Thank you, goodbye.", append_to_context=False),
-                EndFrame(),
-            ]
+            [TTSSpeakFrame(text="I've noted that. Thank you, goodbye.", append_to_context=False)]
         )
 
     @context_aggregator.user().event_handler("on_user_turn_idle")
@@ -277,28 +276,38 @@ async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) ->
 
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
-    # Load ONNX off the event loop so a 10–20 socket burst can greet immediately.
-    await asyncio.to_thread(warm_audio_models)
+    # Consume the Twilio handshake before loading models. Warming ONNX first
+    # left `connected`/`start` sitting unread; the harness then drops us
+    # ("connection lost") and we POST the default NO_ACTION ("record mismatch").
+    if isinstance(runner_args, WebSocketRunnerArguments):
+        transport = await _telephony_transport(runner_args, transport_params_twilio())
+        await asyncio.to_thread(warm_audio_models)
+    else:
+        await asyncio.to_thread(warm_audio_models)
+        transport = await create_transport(runner_args, transport_params())
+    await run_bot(transport, runner_args)
 
-    # Noise suppression is deliberately off: not needed until the noisy-audio problems
-    # (PR-12). When it is, add `"audio_in_filter": <filter>` here — and test it on a real
-    # call first: RNNoiseFilter with pyrnnoise 0.4.3 + av 17 crashes on the first frame,
-    # which kills audio input and leaves the bot deaf for the whole call.
-    def _audio_kwargs() -> dict:
-        return {"audio_in_enabled": True, "audio_out_enabled": True}
 
-    transport_params = {
+def _audio_kwargs() -> dict:
+    return {"audio_in_enabled": True, "audio_out_enabled": True}
+
+
+def transport_params_twilio() -> FastAPIWebsocketParams:
+    return FastAPIWebsocketParams(**_audio_kwargs())
+
+
+def transport_params() -> dict:
+    params = {
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
         "eval": lambda: EvalTransportParams(audio_in_enabled=True, audio_out_enabled=True),
     }
     if DailyParams is not None:
-        transport_params["daily"] = lambda: DailyParams(**_audio_kwargs())
-    if isinstance(runner_args, WebSocketRunnerArguments):
-        transport = await _telephony_transport(runner_args, transport_params["twilio"]())
-    else:
-        transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args)
+        params["daily"] = lambda: DailyParams(**_audio_kwargs())
+    return params
+
+
+threading.Thread(target=warm_audio_models, daemon=True, name="warm-audio").start()
 
 
 if __name__ == "__main__":

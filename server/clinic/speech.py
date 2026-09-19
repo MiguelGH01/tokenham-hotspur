@@ -5,7 +5,17 @@ from __future__ import annotations
 import re
 from datetime import date
 
-from clinic.clinic_catalog import _name_tokens, fold, load_catalog, match_plan, match_providers
+from clinic.clinic_catalog import (
+    _name_tokens,
+    fold,
+    load_catalog,
+    location_by_id,
+    location_ids,
+    match_plan,
+    match_providers,
+    specialty_by_id,
+    specialty_ids,
+)
 from dates import _MONTHS, _ORDINALS
 from national_id import is_valid_national_id
 
@@ -71,8 +81,78 @@ def infer_specialty(text: str | None) -> str | None:
     if not text:
         return None
     raw = f" {fold(text)} "
-    hits = [sid for sid, keys in _SPECIALTY_HINTS if any(k in raw for k in keys)]
-    return hits[0] if len(hits) == 1 else None
+    hits: list[str] = []
+    for spec in load_catalog()["specialties"]:
+        name = fold(spec["name"])
+        sid = spec["id"]
+        spoken_id = sid.replace("_", " ")
+        if f" {name} " in raw or f" {spoken_id} " in raw or f" {sid} " in raw:
+            hits.append(sid)
+    for sid, keys in _SPECIALTY_HINTS:
+        if any(k in raw for k in keys):
+            hits.append(sid)
+    unique = list(dict.fromkeys(hits))
+    return unique[0] if len(unique) == 1 else None
+
+
+def _mentions_specialty(spoken: str, specialty_id: str) -> bool:
+    if specialty_id not in specialty_ids():
+        return False
+    raw = f" {fold(spoken)} "
+    spec = specialty_by_id(specialty_id)
+    if f" {fold(spec['name'])} " in raw or f" {specialty_id.replace('_', ' ')} " in raw:
+        return True
+    return any(sid == specialty_id and k in raw for sid, keys in _SPECIALTY_HINTS for k in keys)
+
+
+def resolve_slot_query(args: dict, spoken: str) -> dict:
+    """Map tool args onto catalogue ids only when the caller actually said them.
+
+    Enum fields on the tool are a closed list from clinic.json. Models still fill
+    optional enums; an invented site or specialty would POST a different BOOK.
+    """
+    spoken = spoken or ""
+    stripped = greeting_stripped(spoken)
+    folded = fold(stripped)
+    specialty = infer_specialty(spoken)
+    site = infer_site(spoken)
+    provider = infer_provider_spoken(spoken, specialty) or infer_provider_spoken(spoken)
+
+    if not specialty and provider:
+        named = match_providers(provider)
+        if len(named) == 1:
+            specialty = named[0]["specialty_id"]
+
+    arg_spec = args.get("specialty")
+    if not specialty and arg_spec in specialty_ids() and _mentions_specialty(spoken, arg_spec):
+        specialty = arg_spec
+
+    arg_site = args.get("site")
+    if not site and arg_site in location_ids():
+        loc = location_by_id(arg_site)
+        if fold(loc["name"]) in folded or arg_site in folded.split():
+            site = arg_site
+
+    arg_provider = (args.get("provider") or "").strip()
+    if not provider and arg_provider and match_providers(spoken):
+        provider = infer_provider_spoken(arg_provider) or arg_provider
+
+    weekday = args.get("weekday")
+    if not weekday or weekday not in folded:
+        weekday = None
+    part_of_day = args.get("part_of_day")
+    if part_of_day not in ("morning", "afternoon") or part_of_day not in folded:
+        part_of_day = None
+
+    return {
+        "specialty": specialty,
+        "site": site,
+        "provider": provider,
+        "when_text": stripped,
+        "weekday": weekday,
+        "part_of_day": part_of_day,
+        "others_ok": args.get("others_ok", True),
+    }
 
 
 def infer_dob(text: str | None) -> str | None:

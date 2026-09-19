@@ -7,22 +7,15 @@ and a finished call→close change node.
 from datetime import datetime
 
 from loguru import logger
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.flows import FlowArgs, FlowManager, FlowsFunctionSchema, NO_RESPONSE
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.flows.types import FlowsDirectFunctionWrapper
+from pipecat.frames.frames import LLMSetToolsFrame, TTSSpeakFrame
 
 from booking import WEEKDAYS
-from clinic.clinic_catalog import location_ids, location_name, match_plan, specialty_ids
+from clinic.clinic_catalog import location_ids, location_name, match_plan, plan_literals, specialty_ids
 from clinic.search import find_offer
-from clinic.speech import (
-    greeting_stripped,
-    infer_provider_spoken,
-    infer_site,
-    infer_specialty,
-    parse_register,
-    register_complete,
-    user_speech,
-    wants_register,
-)
+from clinic.speech import parse_register, register_complete, resolve_slot_query, user_speech, wants_register
 from national_id import is_valid_national_id, normalize_national_id
 
 MAX_IDENTIFY_ATTEMPTS = 3
@@ -175,24 +168,23 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     if not state.get("patient"):
         return {"status": "need_patient"}, None
 
-    spoken = user_speech(flow_manager)
-    specialty = infer_specialty(spoken) or args["specialty"]
-    site = infer_site(spoken) or args.get("site")
-    provider = infer_provider_spoken(spoken, specialty) or args.get("provider") or infer_provider_spoken(spoken)
-    when_from_speech = greeting_stripped(spoken)
-    when_text = when_from_speech if when_from_speech.strip() else args.get("when")
+    query = resolve_slot_query(args, user_speech(flow_manager))
+    specialty = query["specialty"]
+    if not specialty:
+        await _say(flow_manager, "Which specialty did you need?")
+        return {"status": "need_specialty", "specialties": specialty_ids()}, NO_RESPONSE
 
     result, offer = await find_offer(
         state["client"],
         state["patient"],
         state["connected_at"],
         specialty=specialty,
-        site=site,
-        provider_spoken=provider,
-        when_text=when_text,
-        weekday=args.get("weekday"),
-        part_of_day=args.get("part_of_day"),
-        others_ok=args.get("others_ok", True),
+        site=query["site"],
+        provider_spoken=query["provider"],
+        when_text=query["when_text"],
+        weekday=query["weekday"],
+        part_of_day=query["part_of_day"],
+        others_ok=query["others_ok"],
     )
     if result["status"] == "lookup_failed":
         logger.error("availability lookup failed: {}", result.get("error"))
@@ -232,6 +224,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
     logger.info("Offer {}: {}", offer_id, offer)
+    await refresh_act_tools(flow_manager)
     await _say(flow_manager, f"{summary}. Does that work?", in_context=True)
     return {
         "status": "offer",
@@ -343,7 +336,11 @@ def register_patient_schema() -> FlowsFunctionSchema:
             "date_of_birth": {"type": "string", "description": "YYYY-MM-DD"},
             "phone": {"type": "string"},
             "email": {"type": "string"},
-            "insurer": {"type": "string", "description": "Spoken plan, e.g. Mapfre Salud."},
+            "insurer": {
+                "type": "string",
+                "enum": plan_literals(),
+                "description": "Catalogue plan id or name, e.g. mapfre or Mapfre Salud.",
+            },
         },
         required=[
             "given_name",
@@ -363,44 +360,86 @@ def get_earliest_slot_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="get_earliest_slot",
         description=(
-            "Find a real bookable slot for the identified patient. Pass the spoken doctor "
-            "name and when-phrase; if you omit them they are recovered from what the caller said."
+            "Find a real bookable slot. Pass a specialty id only if the caller named that "
+            "specialty; omit site, doctor, weekday, and part of day unless they said them. "
+            "Do not guess a site or doctor from the enum."
         ),
         properties={
-            "specialty": {"type": "string", "enum": specialty_ids()},
-            "site": {"type": "string", "enum": location_ids(), "description": "Only if the caller asked for a site."},
-            "provider": {"type": "string", "description": "Spoken doctor name if they named one."},
+            "specialty": {
+                "type": "string",
+                "enum": specialty_ids(),
+                "description": "Catalogue specialty id, only if they named it or a synonym like GP.",
+            },
+            "site": {
+                "type": "string",
+                "enum": location_ids(),
+                "description": "Only if they named Arenal Centro, Norte, or Sur.",
+            },
+            "provider": {"type": "string", "description": "Spoken doctor name if they named one. Omit otherwise."},
             "when": {
                 "type": "string",
                 "description": "Spoken when, e.g. tomorrow, this coming Thursday, Saturday morning.",
             },
-            "weekday": {"type": "string", "enum": WEEKDAYS, "description": "Only if they named a weekday and not a date phrase."},
+            "weekday": {
+                "type": "string",
+                "enum": WEEKDAYS,
+                "description": "Only if they named that weekday.",
+            },
             "part_of_day": {
                 "type": "string",
                 "enum": ["morning", "afternoon"],
-                "description": "Only if the caller asked for morning (before 2pm) or afternoon.",
+                "description": "Only if they asked for morning (before 2pm) or afternoon.",
             },
             "others_ok": {
                 "type": "boolean",
                 "description": "False when they already said they will not see any other doctor.",
             },
         },
-        required=["specialty"],
+        required=[],
         handler=get_earliest_slot,
     )
 
 
-def confirm_offer_schema() -> FlowsFunctionSchema:
+def confirm_offer_schema(flow_manager: FlowManager | None = None) -> FlowsFunctionSchema:
+    offers = list((getattr(flow_manager, "state", {}) or {}).get("offers") or {})
+    offer_field: dict = {
+        "type": "string",
+        "description": "Id returned by get_earliest_slot. Omit to confirm the last offer.",
+    }
+    if offers:
+        offer_field["enum"] = offers
     return FlowsFunctionSchema(
         name="confirm_offer",
         description=(
             "Caller accepted the appointment. Call this as soon as they say yes. "
-            "offer_id is optional: omit it to confirm the last offer."
+            "offer_id must be one the availability search actually returned."
         ),
-        properties={"offer_id": {"type": "string", "description": "Id from get_earliest_slot, e.g. offer-1."}},
+        properties={"offer_id": offer_field},
         required=[],
         handler=confirm_offer,
     )
+
+
+def act_functions(flow_manager: FlowManager):
+    return [
+        get_earliest_slot_schema(),
+        confirm_offer_schema(flow_manager),
+        revise_search,
+        decline_other_providers,
+    ]
+
+
+async def refresh_act_tools(flow_manager: FlowManager) -> None:
+    """Point confirm_offer at live offer ids from /availability without changing node."""
+    worker = getattr(flow_manager, "_worker", None)
+    create = getattr(flow_manager, "_create_function_schema", None)
+    if worker is None or create is None:
+        return
+    standard = []
+    for func in list(getattr(flow_manager, "_global_functions", []) or []) + act_functions(flow_manager):
+        tool = FlowsDirectFunctionWrapper(function=func) if callable(func) else func
+        standard.append(await create(tool))
+    await worker.queue_frames([LLMSetToolsFrame(tools=ToolsSchema(standard_tools=standard))])
 
 
 RAILS = [flag_emergency, decline_out_of_scope, pin_language, record_final_intent]

@@ -5,6 +5,7 @@ from clinic.speech import (
     infer_specialty,
     parse_register,
     register_complete,
+    resolve_slot_query,
     wants_register,
 )
 
@@ -49,3 +50,34 @@ def test_parse_register_fills_from_speech():
     assert fields["email"] == "joaquingonzalez24@hotmail.com"
     assert register_complete(fields)
     assert wants_register(spoken)
+
+
+def test_infer_specialty_from_catalogue_name():
+    assert infer_specialty("I need Paediatrics please") == "paediatrics"
+    assert infer_specialty("physiotherapy for my back") == "physiotherapy"
+
+
+def test_resolve_ignores_invented_site_and_specialty():
+    spoken = "Hello, I need an appointment. I'm Amelia Hughes White. A GP, the earliest, at Arenal Centro."
+    query = resolve_slot_query(
+        {"specialty": "dermatology", "site": "norte", "weekday": "monday"},
+        spoken,
+    )
+    assert query["specialty"] == "general_practice"
+    assert query["site"] == "centro"
+    assert query["weekday"] is None
+
+
+def test_resolve_does_not_invent_site_when_caller_omitted_it():
+    spoken = "Josefa Domínguez Navarro. The GP please. Tomorrow if possible."
+    query = resolve_slot_query({"specialty": "general_practice", "site": "centro"}, spoken)
+    assert query["specialty"] == "general_practice"
+    assert query["site"] is None
+
+
+def test_resolve_named_doctor_sets_specialty():
+    spoken = "With doctor Saez at Arenal Centro, please."
+    query = resolve_slot_query({"specialty": "dermatology"}, spoken)
+    assert query["site"] == "centro"
+    assert query["provider"] and "Sáez" in query["provider"]
+    assert query["specialty"] == "general_practice"

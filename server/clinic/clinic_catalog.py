@@ -42,6 +42,20 @@ def location_ids() -> list[str]:
     return [loc["id"] for loc in load_catalog()["locations"]]
 
 
+def plan_ids() -> list[str]:
+    return [plan["id"] for plan in load_catalog()["plans"]]
+
+
+def plan_literals() -> list[str]:
+    """Canonical plan ids plus spoken names the model is allowed to pass."""
+    values: list[str] = []
+    for plan in load_catalog()["plans"]:
+        values.append(plan["id"])
+        if plan["name"] not in values:
+            values.append(plan["name"])
+    return values
+
+
 def location_name(location_id: str) -> str:
     return next(loc["name"] for loc in load_catalog()["locations"] if loc["id"] == location_id)
 
