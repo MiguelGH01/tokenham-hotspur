@@ -35,9 +35,9 @@ Max board from full roster: **49** (`SC-max`). Public walkthroughs for open prob
 |---|---|
 | **Intent** | Baseline: patient already on file wants earliest appointment in one specialty. |
 | **Answer** | `BOOK`. If several providers tie on earliest slot, any is right. |
-| **Must handle** | Name + one identifier (DNI/NIE or phone); optional site / weekday / time-of-day (“morning” before 14:00, “afternoon” from 14:00). Earliest = day after call. Appointment type from record (`CL-type-rule`), including specialty-specific review types — `orthopaedic_review` is one instance, not the only one. Tied earliest providers: any is right (do not pin a public `provider_id`). |
+| **Must handle** | Name + one identifier (DNI/NIE or phone); optional site / weekday / time-of-day (“morning” before 14:00, “afternoon” from 14:00). Earliest = day after call. Appointment type from record (`CL-type-rule`), including specialty types such as `orthopaedic_review`. |
 | **Links** | `FR-book`, `FR-earliest`, `FR-appointment-type` |
-| **Scenarios** | [scenarios/simple_booking.md](scenarios/simple_booking.md) — 4 public **fixtures** (`PR-01-S1`…`S5`) |
+| **Scenarios** | [scenarios/simple_booking.md](scenarios/simple_booking.md) — 4 public cases (`PR-01-S1`…`S5`) |
 
 ## PR-02 — The Switchboard
 
@@ -55,10 +55,10 @@ Max board from full roster: **49** (`SC-max`). Public walkthroughs for open prob
 |---|---|
 | **Intent** | Named provider at named site — may be ambiguous across specialties, elsewhere that weekday, on leave, or nonexistent. |
 | **Answer** | `BOOK` with exact provider and location, or `NO_ACTION`. |
-| **Must handle** | Named doctor at named site; near-miss surnames resolved with specialty context; leave → same specialty **at same site**; not at site that weekday → keep provider+site, earliest other day they sit there; nonexistent + refuses anyone else → `NO_ACTION(provider_not_found)`. Public Sáez / Requena / Fuentes are tests of those functions. |
+| **Must handle** | Happy path named doctor at site; Sáez vs Sáenz; Requena leave → same specialty **at same site**; doctor not at site that weekday → keep provider+site, earliest other day; nonexistent doctor + refuses anyone else → `NO_ACTION(provider_not_found)`. |
 | **Links** | `FR-site-provider`, `FR-no-action`, `CL-requena-leave`, `CL-name-collision` |
-| **Scenarios** | [scenarios/doctor_and_site.md](scenarios/doctor_and_site.md) — 5 public **fixtures** (`PR-03-S1`…`S6`) |
-| **Live probe** | [10-live-probe-findings.md](10-live-probe-findings.md) — instance data (hours, leave, plan refusals), not a lookup table for the bot |
+| **Scenarios** | [scenarios/doctor_and_site.md](scenarios/doctor_and_site.md) — 5 public cases (`PR-03-S1`…`S6`) |
+| **Live probe** | [10-live-probe-findings.md](10-live-probe-findings.md) — Sáez schedule (Centro Fri only / Sur Mon–Thu); Requena leave → PR07 Norte; ASISA×Sur; DKV×Iglesias |
 
 ## PR-04 — The New Patient
 
@@ -76,7 +76,7 @@ Max board from full roster: **49** (`SC-max`). Public walkthroughs for open prob
 |---|---|
 | **Intent** | Relative/colloquial dates resolved against connect time, site hours, closures. |
 | **Answer** | `BOOK` at the exact slot. |
-| **Fixed vocabulary (public cases use one)** | `tomorrow`, `the day after tomorrow`, `a week from today`, `in a fortnight`, `on Saturday morning`, `first thing on Monday the twelfth of October`, and for each weekday `this coming <day>`, `first thing <day>` (morning), `<day> afternoon`. Weekday phrase = first such weekday **strictly after** day of call. **Private cases may use other wording** — same engine (connect clock + hours + closures), not a whitelist. |
+| **Fixed vocabulary (cases use one)** | `tomorrow`, `the day after tomorrow`, `a week from today`, `in a fortnight`, `on Saturday morning`, `first thing on Monday the twelfth of October`, and for each weekday `this coming <day>`, `first thing <day>` (morning), `<day> afternoon`. Weekday phrase = first such weekday **strictly after** day of call. |
 | **Traps** | Sur Friday lunchtime shut; only Centro Saturday; nothing Sunday; network shut Mon 12 Oct Fiesta. If requested day closed, caller takes earliest on next open day still matching rest of ask. **`tomorrow` can be Saturday.** `this coming <day>` is strictly after the call day. |
 | **Links** | `FR-relative-time`, `CL-fiesta`, `CL-clock`, `CL-saturday`, `LIVE-01`, `LIVE-13`, `LIVE-14` |
 | **Scenarios** | [scenarios/when_exactly.md](scenarios/when_exactly.md) — 5 public cases (`PR-05-S1`…`S6`) |

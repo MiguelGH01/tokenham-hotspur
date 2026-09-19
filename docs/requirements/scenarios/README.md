@@ -27,4 +27,4 @@ Slot times in booking cases are the extract’s anchor; official docs say public
 | [when_exactly.md](when_exactly.md) | `PR-05` | 5 |
 | [the_rules.md](the_rules.md) | `PR-06` | 5 |
 
-Base problem requirements remain in [06-problems.md](../06-problems.md). Scenario files only add concrete asks, expected actions, and requirement ID hits. New-problem handoff: [../../agent/add-pr04-06.md](../../agent/add-pr04-06.md).
+Base problem requirements remain in [06-problems.md](../06-problems.md). Scenario files only add concrete asks, expected actions, and requirement ID hits.

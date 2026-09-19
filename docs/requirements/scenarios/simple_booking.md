@@ -2,8 +2,6 @@
 
 Weight **1**. Each case is one dial. Answer verb: `BOOK` → `POST /api/v1/submit/book`.
 
-Public JSON is a **leaderboard fixture**. Provider and slot can move with connect day; “any tied earliest” is still correct. Implement identify + `/availability` filters + type from the response — not “Josefa → PR01 19 Sep”.
-
 ## Scenario-derived requirements
 
 | ID | Requirement | Priority |

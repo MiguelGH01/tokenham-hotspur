@@ -6,7 +6,7 @@ Process map and Pipecat Flows graph for the Clínica Arenal receptionist. Requir
 |---|---|
 | [process-map.md](process-map.md) | Workflows, rails, fallbacks, state, problem mapping |
 | [flow.yaml](flow.yaml) | `FlowConfig` graph (nodes, tools, `transition_to` branches) |
-| [add-pr04-06.md](add-pr04-06.md) | Handoff: add **new** problems (register / dates / clinic rules) as engines, not case switches |
+| [add-pr04-06.md](add-pr04-06.md) | Handoff: wire register / relative dates / clinic-rule branches into the bot |
 
 **Contract:** the LLM talks and extracts; **code** owns directory match, dates, nearest site, appointment type, leave/site fallbacks, `blocked` → `reason`, and every `POST /submit/*`. The model never authors `patient_id`, `slot`, or `reason`.
 
