@@ -76,8 +76,13 @@ async def prepare_registration(args, flow_manager):
         matches = await state["client"].search_directory(
             national_id=patient["national_id"], name=" ".join(patient[k] for k in FIELDS[:3])
         )
-    except Exception:
-        return {"status": "lookup_failed"}, None
+    except Exception as exc:
+        # A down directory must not block REGISTER. The eight fields are already
+        # validated; waiting here is how PR-04 ends with no /submit/register POST.
+        from loguru import logger
+
+        logger.warning("registration directory check failed: {}", type(exc).__name__)
+        matches = []
     if any(normalize_national_id(p["national_id"]) == patient["national_id"] for p in matches):
         return {
             "status": "already_registered",
@@ -151,6 +156,11 @@ def create_registration_node(flow_manager=None):
             + ", ".join(bits)
             + ". Reuse these. Do not ask for them again. "
         )
+    lookup_line = (
+        "A directory lookup already showed they are not on file. Do not search again. "
+        if already
+        else "They asked to register as new. Do not look them up first. "
+    )
     return NodeConfig(
         name="registration",
         respond_immediately=True,
@@ -158,14 +168,16 @@ def create_registration_node(flow_manager=None):
             {
                 "role": "developer",
                 "content": (
-                    "Speak in this turn. They are not on file; register them now. Do not stay "
-                    "silent after the lookup. Collect given name, both surnames, DNI/NIE, "
-                    "full birth date with four-digit year, phone, email and insurer. "
-                    f"{already}"
-                    "If they already said several fields in one turn, do not re-ask them one by "
-                    "one. Call prepare_registration as soon as all eight fields are known. "
-                    "Transcribe dictated digits, at and dot carefully; never invent or fix the "
-                    "national ID check letter. Do not book an appointment."
+                    "Speak in this turn. "
+                    + lookup_line
+                    + already
+                    + "In one short sentence ask for every field still missing: given name, "
+                    "both surnames, DNI or NIE including the letter, date of birth with "
+                    "four-digit year, phone, email, and insurer. Then stop. Do not thank "
+                    "them. Do not ask one field at a time. Do not say hello again. "
+                    "When they answer, ask only for what is still missing, still in one "
+                    "sentence. Call prepare_registration the moment all eight are known. "
+                    "Never invent or fix the national ID check letter. Do not book."
                 ),
             }
         ],

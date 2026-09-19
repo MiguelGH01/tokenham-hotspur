@@ -250,6 +250,48 @@ def test_concurrent_call_isolation():
     asyncio.run(run())
 
 
+def test_prepare_registration_still_queues_register_when_directory_is_down():
+    """PR-04: /submit/register is the scored write; a 502 on /directory is not a skip."""
+    from flows.registration import prepare_registration
+    from flows.requests import begin_request
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            raise OSError("directory 502")
+
+        async def post_submission(self, action):
+            return {"record": {"actions": [action]}}
+
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": Client(),
+            "submission": CallSubmission("c", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    begin_request(manager, "register")
+    result, node = asyncio.run(
+        prepare_registration(
+            dict(
+                given_name="Ana",
+                first_surname="Test",
+                second_surname="Test",
+                national_id="12345678Z",
+                date_of_birth="1990-01-02",
+                phone="612345678",
+                email="ana@example.com",
+                insurer="sanitas",
+            ),
+            manager,
+        )
+    )
+    assert result["status"] == "needs_confirmation"
+    assert node["name"] == "registration_confirm"
+    assert manager.state["submission"].pending["action"] == "REGISTER"
+
+
 def test_provider_site_and_weekday_preserved():
     from handlers import get_earliest_slot
 
@@ -342,6 +384,18 @@ def test_real_node_schemas_construct():
     ):
         assert node["task_messages"]
         assert all(isinstance(f, FlowsFunctionSchema) for f in node["functions"])
+
+
+def test_registration_node_asks_every_field_in_one_turn():
+    from flows.registration import create_registration_node
+
+    prompt = create_registration_node()["task_messages"][0]["content"]
+    assert "one field at a time" in prompt
+    assert "not on file" not in prompt
+    manager = SimpleNamespace(state={"registration_seed": {"national_id": "12345678Z"}})
+    seeded = create_registration_node(manager)["task_messages"][0]["content"]
+    assert "not on file" in seeded
+    assert "12345678Z" in seeded
 
 
 def test_unpayable_and_closed_slots_rejected():

@@ -689,8 +689,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         }
     )
 
+    hung_up = False
+
     @user_aggregator.event_handler("on_user_turn_idle")
     async def on_user_turn_idle(aggregator):
+        if hung_up:
+            return
         text = _reprompt(context)
         logger.info(
             "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
@@ -744,6 +748,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        nonlocal hung_up
+        hung_up = True
         logger.info("Client disconnected")
         await submission.close()
         await runner.cancel()
