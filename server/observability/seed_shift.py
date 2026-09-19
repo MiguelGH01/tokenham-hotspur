@@ -42,6 +42,29 @@ def _pick_action(rng: random.Random) -> str:
     return "NO_ACTION"
 
 
+# How a call of each outcome walks the graph, and which tool moved it on.
+# Stages match the funnel the console draws, so a seeded shift exercises the
+# same projections a real one does.
+_PATHS: dict[str, list[tuple[str, str]]] = {
+    "BOOK":       [("identify", "search_patient"), ("find_slot", "get_earliest_slot"),
+                   ("confirm", "confirm_offer"), ("goodbye", "finish_call")],
+    "REGISTER":   [("identify", "search_patient"), ("registration", "prepare_registration"),
+                   ("registration_confirm", "confirm_registration"), ("goodbye", "finish_call")],
+    "CANCEL":     [("identify", "search_patient"), ("appointments", "lookup_appointments"),
+                   ("cancel_confirm", "confirm_cancellation"), ("goodbye", "finish_call")],
+    "RESCHEDULE": [("identify", "search_patient"), ("appointments", "lookup_appointments"),
+                   ("find_slot", "get_earliest_slot"), ("confirm", "confirm_offer"),
+                   ("goodbye", "finish_call")],
+}
+# A refusal stops at a stage, carrying the reason the code set there.
+_REFUSALS: list[tuple[int, str]] = [
+    (1, "patient_not_found"), (1, "out_of_scope"),
+    (2, "no_availability"), (2, "provider_not_in_network"), (2, "referral_required"),
+    (2, "not_eligible_age"), (2, "location_not_covered"), (2, "specialty_not_covered"),
+    (2, "provider_not_found"),
+]
+
+
 def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
@@ -85,6 +108,49 @@ def build_shift_events(
                 "payload": {"from": None, "to": "reception"},
             }
         )
+
+        # Walk the graph the way this outcome would. A refused call stops
+        # partway and carries the reason the tool set when it did.
+        reason: str | None = None
+        if action in _PATHS:
+            walk = _PATHS[action]
+        elif action == "ESCALATE":
+            walk, reason = [("identify", "search_patient"), ("refused", "finish_call")], "medical_emergency"
+        else:  # NO_ACTION
+            stop, reason = _REFUSALS[rng.randrange(len(_REFUSALS))]
+            walk = _PATHS["BOOK"][:stop] + [("no_booking", "finish_call")]
+
+        node_from = "reception"
+        identified = False
+        for step, (node_to, tool) in enumerate(walk, start=1):
+            at = call_start + timedelta(seconds=4 * step)
+            events.append({
+                "kind": "tool.called", "call_id": call_id, "ts": _iso(at),
+                "payload": {"name": tool, "args": {"node": node_from}},
+            })
+            events.append({
+                "kind": "tool.returned", "call_id": call_id,
+                "ts": _iso(at + timedelta(milliseconds=rng.randint(80, 900))),
+                "payload": {
+                    "name": tool, "status": "ok", "next_node": node_to,
+                    "from_node": node_from,
+                    "justification": f"{tool} resolved, so the call moves to {node_to}.",
+                    "reason_codes": [],
+                },
+            })
+            events.append({
+                "kind": "node.entered", "call_id": call_id,
+                "ts": _iso(at + timedelta(seconds=1)),
+                "payload": {"from": node_from, "to": node_to},
+            })
+            if node_to == "identify" and not (reason == "patient_not_found" and step == 1):
+                identified = True
+                events.append({
+                    "kind": "state.patched", "call_id": call_id,
+                    "ts": _iso(at + timedelta(seconds=1, milliseconds=200)),
+                    "payload": {"patient_id": f"PA-{i:04d}"},
+                })
+            node_from = node_to
         events.append(
             {
                 "kind": "metrics.first_word",
@@ -158,7 +224,7 @@ def build_shift_events(
                 "payload": {
                     "action": action,
                     "seq": 1,
-                    "reason": "out_of_scope" if action == "NO_ACTION" else None,
+                    "reason": reason,
                     "summary": f"Paciente {i} · {action}",
                 },
             }
@@ -201,10 +267,15 @@ def write_jsonl(events: list[ObsEvent], path: Path) -> None:
 async def load_into_db(events: list[ObsEvent], db_path: Path) -> dict:
     store = await reset_store(db_path)
     hub = reset_hub(store)
-    await hub.ensure_ready()
-    count = await hub.load_fixture_events(events, clear=True)
-    summary = await store.shift_summary(since=shift_start_iso())
-    return {"loaded": count, "shift": summary}
+    try:
+        await hub.ensure_ready()
+        count = await hub.load_fixture_events(events, clear=True)
+        summary = await store.shift_summary(since=shift_start_iso())
+        return {"loaded": count, "shift": summary}
+    finally:
+        # Without this the script prints its summary and then hangs: the
+        # aiosqlite connection owns a non-daemon thread.
+        await hub.aclose()
 
 
 def main() -> None:

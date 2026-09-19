@@ -284,15 +284,23 @@ class ObservabilityStore:
                     ts,
                 ),
             )
-            # Primary action = first queued verb for the call.
+            # Primary action = first queued verb for the call. The reason is
+            # recorded separately: a state.patched carrying pending_action may
+            # already have set the verb, and the coded reason arrives only
+            # here — gating it on the verb being unset loses it entirely.
             row = await self._get_call_row(call_id)
             if row and not row["primary_action"]:
                 await self.db.execute(
                     """
-                    UPDATE calls SET primary_action = ?, primary_reason = ?
+                    UPDATE calls SET primary_action = ?
                     WHERE call_id = ? AND primary_action IS NULL
                     """,
-                    (verb, payload.get("reason"), call_id),
+                    (verb, call_id),
+                )
+            if payload.get("reason") and (not row or not row["primary_reason"]):
+                await self.db.execute(
+                    "UPDATE calls SET primary_reason = ? WHERE call_id = ? AND primary_reason IS NULL",
+                    (payload["reason"], call_id),
                 )
         elif kind == "submit.posted":
             verb = payload.get("action") or payload.get("verb")

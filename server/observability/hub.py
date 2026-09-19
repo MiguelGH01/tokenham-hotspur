@@ -45,6 +45,23 @@ class CallHub:
             self._ready.set()
         return self._store
 
+    async def aclose(self) -> None:
+        """Stop the background shift ticker and close the store.
+
+        aiosqlite runs its connection on a non-daemon thread, so a script that
+        leaves the store open never exits.
+        """
+        task = self._shift_task
+        self._shift_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # pragma: no cover
+                pass
+        if self._store is not None and self._store.is_open:
+            await self._store.close()
+
     async def _persist(self, write) -> None:
         """Persist, but never let observation break the call it observes."""
         try:
