@@ -799,7 +799,6 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
                 await inner.aclose()
 
 
-
 def _audio_kwargs() -> dict:
     return {
         "audio_in_enabled": True,
