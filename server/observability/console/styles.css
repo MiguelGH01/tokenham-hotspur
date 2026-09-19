@@ -28,6 +28,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 
 /* ---------- shell ---------- */
 .shell{display:flex;flex-direction:column;height:100%;min-height:0}
+.shell[hidden],.login-screen[hidden]{display:none!important}
 .topbar{display:flex;align-items:center;gap:13px;flex-wrap:wrap;
   padding:11px 16px;padding-top:calc(11px + env(safe-area-inset-top,0px));
   background:var(--surface);border-bottom:1px solid var(--line);position:relative;z-index:30}
@@ -502,4 +503,109 @@ button{font:inherit;color:inherit;cursor:pointer}
   *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
     transition-duration:.01ms!important}
   .bub .w{opacity:1}
+  .cal-block.is-enter,.cal-block.is-leave{animation:none!important}
+}
+
+/* ---------- login ---------- */
+.login-screen{min-height:100%;display:flex;align-items:center;justify-content:center;
+  padding:24px 16px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));
+  background:var(--ground)}
+.login-card{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;box-shadow:var(--shadow-lift);padding:28px 26px 24px}
+.login-brand{margin-bottom:18px}
+.login-card h1{margin:0 0 8px;font-family:var(--ui);font-size:22px;font-weight:700;
+  letter-spacing:-.3px;color:var(--ink)}
+.login-hint{margin:0 0 20px;font-size:13.5px;color:var(--muted);line-height:1.55}
+.login-hint code{font-family:var(--mono);font-size:12px;background:var(--surface-2);
+  border:1px solid var(--line);border-radius:3px;padding:1px 5px;color:var(--ink-2)}
+.login-label{display:block;font-family:var(--ui);font-size:12.5px;font-weight:600;
+  color:var(--ink-2);margin-bottom:6px}
+.login-input{display:block;width:100%;box-sizing:border-box;font:inherit;font-family:var(--mono);
+  font-size:14px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface);color:var(--ink);outline:none;transition:border-color .14s}
+.login-input:focus{border-color:var(--accent)}
+.login-input::placeholder{color:var(--hair);font-family:var(--ui)}
+.login-error{margin:10px 0 0;font-size:13px;color:var(--bad)}
+.login-submit{width:100%;margin-top:16px;padding:9px 14px;font-size:14px}
+.picker{display:flex;align-items:center;gap:8px}
+
+/* ---------- doctor schedule ---------- */
+.doctor-shell .topbar{flex-wrap:wrap}
+.doc-badge{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--muted);
+  padding:3px 10px;border:1px solid var(--line);border-radius:100px;background:var(--surface)}
+.doc-page{max-width:920px;margin:0 auto;padding:28px 20px 48px}
+.doc-head{margin-bottom:18px}
+.doc-head h1{margin:0 0 6px;font-family:var(--ui);font-size:26px;font-weight:700;
+  letter-spacing:-.4px;color:var(--ink)}
+.doc-head p{margin:0;font-size:14px;color:var(--muted)}
+.leave-banner{margin:0 0 20px;padding:12px 14px;border-radius:var(--r);
+  background:var(--warn-wash);border:1px solid #8A5A0033;color:var(--warn);
+  font-size:13.5px;line-height:1.5}
+.leave-banner strong{font-weight:600;color:var(--ink)}
+.doc-section{margin-bottom:28px}
+.doc-section h2{margin:0 0 12px;font-family:var(--ui);font-size:13px;font-weight:600;
+  color:var(--ink);letter-spacing:.01em}
+.schedule-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface);box-shadow:var(--shadow)}
+.schedule{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
+.schedule th,.schedule td{padding:10px 12px;border-bottom:1px solid var(--line-soft);
+  text-align:left;vertical-align:top}
+.schedule thead th{font-family:var(--ui);font-size:11.5px;font-weight:600;color:var(--faint);
+  background:var(--surface-2);border-bottom:1px solid var(--line);white-space:nowrap}
+.schedule tbody th{font-family:var(--ui);font-weight:600;color:var(--ink);white-space:nowrap;
+  width:1%;background:var(--surface)}
+.schedule td{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+.schedule td.empty{color:var(--hair)}
+.schedule tbody tr:last-child th,.schedule tbody tr:last-child td{border-bottom:0}
+.chip-groups{display:flex;flex-direction:column;gap:14px}
+.chip-group h3{margin:0 0 8px;font-family:var(--ui);font-size:12px;font-weight:600;color:var(--faint)}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;font-size:12.5px;font-weight:500;
+  padding:4px 10px;border-radius:100px;border:1px solid var(--line);background:var(--surface-2);
+  color:var(--ink-2)}
+.chip.ok{background:var(--ok-wash);border-color:#0E6B4533;color:var(--ok)}
+.chip.bad{background:var(--bad-wash);border-color:#9B1C3133;color:var(--bad)}
+
+/* ---------- doctor calendar ---------- */
+.doc-cal-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.doc-cal-head h2{margin:0;flex:1}
+.doc-cal-nav{display:flex;align-items:center;gap:8px}
+.doc-cal-range{font-family:var(--mono);font-size:12.5px;color:var(--muted);min-width:11rem;text-align:center}
+.doc-cal-note{margin:0 0 10px;font-size:12.5px;color:var(--faint);line-height:1.45;min-height:1.2em}
+.cal-legend{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:12px;font-size:12px;color:var(--muted)}
+.cal-legend span{display:inline-flex;align-items:center;gap:6px}
+.cal-legend .lg{width:10px;height:10px;border-radius:2px;display:inline-block}
+.cal-legend .lg.booked{background:#2563AE}
+.cal-legend .lg.free{background:var(--ok);opacity:.55}
+.cal-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--r);
+  background:var(--surface);box-shadow:var(--shadow)}
+.cal-idle{padding:28px 16px;text-align:center;color:var(--faint);font-size:13.5px}
+.cal-grid{display:grid;grid-template-columns:52px repeat(6,minmax(110px,1fr));
+  min-width:760px;min-height:420px}
+.cal-corner,.cal-dayhead{position:sticky;top:0;z-index:2;background:var(--surface-2);
+  border-bottom:1px solid var(--line);padding:8px 6px;font-size:11.5px;font-weight:600;
+  color:var(--faint);text-align:center}
+.cal-dayhead b{display:block;font-family:var(--ui);font-size:13px;font-weight:600;color:var(--ink);margin-top:2px}
+.cal-dayhead span{font-family:var(--mono);font-weight:500}
+.cal-hour{border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
+  font-family:var(--mono);font-size:10.5px;color:var(--hair);padding:2px 4px;text-align:right}
+.cal-cell{position:relative;border-right:1px solid var(--line-soft);border-bottom:1px solid var(--line-soft);
+  background:repeating-linear-gradient(to bottom,transparent,transparent 14px,var(--line-soft) 14px,var(--line-soft) 15px)}
+.cal-block{position:absolute;left:3px;right:3px;border-radius:4px;padding:3px 5px;overflow:hidden;
+  font-size:10.5px;line-height:1.25;border:1px solid transparent;cursor:default}
+.cal-block .t{font-family:var(--mono);font-size:9.5px;opacity:.85}
+.cal-block .l{font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cal-block.booked{background:#2563AE18;border-color:#2563AE44;color:#1e4f8c}
+.cal-block.free{background:var(--ok-wash);border-color:#0E6B4533;color:var(--ok)}
+@keyframes calIn{from{opacity:0;transform:translateY(10px) scale(.9)}
+  to{opacity:1;transform:none}}
+@keyframes calOut{to{opacity:0;transform:translateY(-8px) scale(.88)}}
+@keyframes calPulse{0%{box-shadow:0 0 0 0 #2563AE66}70%{box-shadow:0 0 0 10px #2563AE00}
+  100%{box-shadow:0 0 0 0 #2563AE00}}
+.cal-block.is-enter{animation:calIn .42s cubic-bezier(.2,.85,.2,1) both;z-index:3}
+.cal-block.booked.is-enter{animation:calIn .42s cubic-bezier(.2,.85,.2,1) both,
+  calPulse .85s ease .12s}
+.cal-block.is-leave{animation:calOut .34s ease forwards;pointer-events:none;z-index:4}
+@media (max-width:700px){
+  .cal-grid{grid-template-columns:40px repeat(6,minmax(88px,1fr));min-width:600px}
 }

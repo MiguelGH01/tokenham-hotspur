@@ -106,7 +106,35 @@ const API = {
   async call(id) {
     const r = await fetch("/observability/calls/" + encodeURIComponent(id));
     return r.ok ? r.json() : null;
-  }
+  },
+  async me() {
+    const r = await fetch("/auth/me");
+    if (r.status === 401) return null;
+    if (!r.ok) throw new Error("auth/me " + r.status);
+    return r.json();
+  },
+  async login(key) {
+    const r = await fetch("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    if (!r.ok) {
+      const err = new Error("invalid_key");
+      err.status = r.status;
+      throw err;
+    }
+    return r.json();
+  },
+  async logout() {
+    await fetch("/auth/logout", { method: "POST" });
+  },
+  async calendar(weekStart) {
+    const q = weekStart ? ("?week_start=" + encodeURIComponent(weekStart)) : "";
+    const r = await fetch("/auth/me/calendar" + q);
+    if (!r.ok) throw new Error("calendar " + r.status);
+    return r.json();
+  },
 };
 
 /* ------------------------------------------------- call object projection */
@@ -1513,38 +1541,366 @@ function tcShowResult() {
   tcRender();
 }
 
-/* ===================================================================== boot */
-document.querySelectorAll(".nav button").forEach((b) =>
-  b.addEventListener("click", () => setView(b.dataset.view)));
-document.querySelectorAll(".tabs button").forEach((b) =>
-  b.addEventListener("click", () => setPane(b.dataset.pane)));
-$("#btnPlace").addEventListener("click", tcOpen);
-$("#btnTrace").addEventListener("click", (e) => {
-  state.trace = !state.trace;
-  e.target.setAttribute("aria-pressed", String(state.trace));
-  const c = state.calls.get(state.sel); if (c) { c._drawn = 0; renderStream(c); }
-});
-$("#btnFollow").addEventListener("click", (e) => {
-  state.follow = !state.follow;
-  e.target.setAttribute("aria-pressed", String(state.follow));
-});
+/* ===================================================================== auth */
+const WEEKDAYS = [
+  ["monday", "Lun"],
+  ["tuesday", "Mar"],
+  ["wednesday", "Mié"],
+  ["thursday", "Jue"],
+  ["friday", "Vie"],
+  ["saturday", "Sáb"],
+];
+const WEEKDAY_LABEL = Object.fromEntries(WEEKDAYS);
+let calWeekStart = null; // ISO Monday of the visible week
+let calProviderId = null;
+let calPollTimer = null;
+let calBusy = false;
+let calLastSig = "";
+let calBuiltWeek = null;
+const CAL_POLL_MS = 2000;
+const CAL_START = 8 * 60;
+const CAL_END = 20 * 60;
+const CAL_PX = 1.1;
 
-setInterval(() => {
-  const clock = $("#clock");
-  if (clock) clock.textContent = hhmmss(simNow()) + " Europe/Madrid";
-  state.order.forEach((id) => {
-    const c = state.calls.get(id);
-    if (c.status === "live") {
-      const n = lineEls.get(id);
-      if (n) { const e = n.querySelector(".el"); if (e) e.textContent = dur(simNow() - c.startedAt); }
-    }
+function showOnly(which) {
+  $("#viewLogin").hidden = which !== "login";
+  $("#shellAdmin").hidden = which !== "admin";
+  $("#shellDoctor").hidden = which !== "doctor";
+  document.title = which === "admin" ? "Arenal Centralita"
+    : which === "doctor" ? "Mi horario · Clínica Arenal"
+    : "Clínica Arenal";
+  if (which !== "doctor") stopCalPoll();
+}
+
+function insurerName(ref) {
+  if (!ref) return "—";
+  if (typeof ref === "string") return ref;
+  return ref.name || ref.id || "—";
+}
+
+function chipGroup(title, items, cls) {
+  const g = el("div", "chip-group");
+  g.appendChild(el("h3", null, title));
+  const row = el("div", "chips");
+  if (!items || !items.length) {
+    row.appendChild(el("span", "chip", "—"));
+  } else {
+    items.forEach((t) => row.appendChild(el("span", "chip" + (cls ? " " + cls : ""), t)));
+  }
+  g.appendChild(row);
+  return g;
+}
+
+function mondayOf(isoDate) {
+  const d = new Date(isoDate + "T12:00:00");
+  const day = (d.getDay() + 6) % 7; // Mon=0
+  d.setDate(d.getDate() - day);
+  return d.toISOString().slice(0, 10);
+}
+
+function shiftWeek(isoMonday, deltaWeeks) {
+  const d = new Date(isoMonday + "T12:00:00");
+  d.setDate(d.getDate() + deltaWeeks * 7);
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtDayLabel(iso) {
+  const d = new Date(iso + "T12:00:00");
+  return pad(d.getDate()) + "/" + pad(d.getMonth() + 1);
+}
+
+function minutesOf(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function blockKey(date, b) {
+  return [date, b.start, b.end, b.kind, b.source || "", b.label || ""].join("|");
+}
+
+function isCitaBlock(b) {
+  return b.kind === "booked";
+}
+
+function calSignature(data) {
+  return JSON.stringify((data.days || []).map((d) => [d.date, d.blocks || []]));
+}
+
+function stopCalPoll() {
+  if (calPollTimer != null) {
+    clearInterval(calPollTimer);
+    calPollTimer = null;
+  }
+}
+
+function startCalPoll() {
+  stopCalPoll();
+  calPollTimer = setInterval(() => {
+    if ($("#shellDoctor").hidden) return;
+    loadDoctorCalendar(calWeekStart, { silent: true });
+  }, CAL_POLL_MS);
+}
+
+function makeCalBlock(b, calStart, calEnd, px, animateIn) {
+  const s = minutesOf(b.start);
+  const e = minutesOf(b.end);
+  if (e <= calStart || s >= calEnd) return null;
+  const top = Math.max(s, calStart) - calStart;
+  const blockH = Math.max(12, (Math.min(e, calEnd) - Math.max(s, calStart)) * px - 2);
+  const node = el("div", "cal-block " + b.kind);
+  node.style.top = (top * px) + "px";
+  node.style.height = blockH + "px";
+  node.appendChild(el("span", "t", b.start + "–" + b.end));
+  node.appendChild(el("span", "l", b.label || b.kind));
+  if (animateIn && isCitaBlock(b) && !REDUCED) {
+    node.classList.add("is-enter");
+    later(() => node.classList.remove("is-enter"), 700);
+  }
+  return node;
+}
+
+function renderCalendar(data, opts) {
+  const silent = !!(opts && opts.silent);
+  const wrap = $("#docCalendar");
+  const note = $("#calNote");
+  const range = $("#calRange");
+  if (!wrap) return;
+  calWeekStart = data.date_from;
+  range.textContent = fmtDayLabel(data.date_from) + " – " + fmtDayLabel(data.date_to);
+  if (data.source === "availability") {
+    note.textContent = "En vivo · huecos de la clínica; el resto del horario aparece como cita.";
+  } else if (String(data.source || "").startsWith("availability_error")) {
+    note.textContent = "En vivo · sin ocupación remota; el horario se muestra como libre.";
+  } else {
+    note.textContent = "En vivo";
+  }
+
+  const days = (data.days || []).filter((d) => d.weekday !== "sunday");
+  const sameWeek = silent && calBuiltWeek === data.date_from && wrap.querySelector(".cal-grid");
+  if (!sameWeek) {
+    wrap.textContent = "";
+    wrap.appendChild(buildCalColumns(days, CAL_START, CAL_END, CAL_PX, !silent));
+    calBuiltWeek = data.date_from;
+    return;
+  }
+  patchCalColumns(wrap.querySelector(".cal-grid"), days, CAL_START, CAL_END, CAL_PX);
+}
+
+function buildCalColumns(days, calStart, calEnd, px, animateCitas) {
+  const height = (calEnd - calStart) * px;
+  const root = el("div", "cal-grid");
+  root.style.gridTemplateRows = "auto " + height + "px";
+
+  root.appendChild(el("div", "cal-corner", ""));
+  days.forEach((d) => {
+    const h = el("div", "cal-dayhead");
+    h.appendChild(el("b", null, WEEKDAY_LABEL[d.weekday] || d.weekday));
+    h.appendChild(el("span", null, fmtDayLabel(d.date)));
+    root.appendChild(h);
   });
-  const nb = $("#navBadge");
-  if (nb) { const l = liveNow(); nb.textContent = String(l); nb.hidden = l === 0; }
-  if (view === "overview") refreshLive();
-}, 1000);
 
-(async function start() {
+  const hoursCol = el("div", null);
+  hoursCol.style.position = "relative";
+  hoursCol.style.borderRight = "1px solid var(--line-soft)";
+  for (let m = calStart; m < calEnd; m += 60) {
+    const lab = el("div", "cal-hour", pad(Math.floor(m / 60)) + ":00");
+    lab.style.position = "absolute";
+    lab.style.top = ((m - calStart) * px) + "px";
+    lab.style.right = "4px";
+    lab.style.left = "0";
+    lab.style.border = "0";
+    lab.style.background = "transparent";
+    hoursCol.appendChild(lab);
+  }
+  root.appendChild(hoursCol);
+
+  days.forEach((d) => {
+    const col = el("div", "cal-cell");
+    col.dataset.date = d.date;
+    col.style.height = height + "px";
+    (d.blocks || []).forEach((b) => {
+      const node = makeCalBlock(b, calStart, calEnd, px, animateCitas);
+      if (!node) return;
+      node.dataset.key = blockKey(d.date, b);
+      col.appendChild(node);
+    });
+    root.appendChild(col);
+  });
+  return root;
+}
+
+function patchCalColumns(root, days, calStart, calEnd, px) {
+  if (!root) return;
+  const cols = {};
+  root.querySelectorAll(".cal-cell[data-date]").forEach((c) => { cols[c.dataset.date] = c; });
+  days.forEach((d) => {
+    const col = cols[d.date];
+    if (!col) return;
+    const next = new Map();
+    (d.blocks || []).forEach((b) => next.set(blockKey(d.date, b), b));
+    const existing = new Map();
+    Array.from(col.querySelectorAll(".cal-block")).forEach((n) => {
+      if (n.classList.contains("is-leave")) return;
+      existing.set(n.dataset.key, n);
+    });
+
+    existing.forEach((node, key) => {
+      if (next.has(key)) return;
+      const wasCita = node.classList.contains("booked");
+      if (wasCita && !REDUCED) {
+        node.classList.add("is-leave");
+        later(() => { if (node.parentNode) node.parentNode.removeChild(node); }, 380);
+      } else if (node.parentNode) {
+        node.parentNode.removeChild(node);
+      }
+    });
+
+    next.forEach((b, key) => {
+      if (existing.has(key)) return;
+      const node = makeCalBlock(b, calStart, calEnd, px, true);
+      if (!node) return;
+      node.dataset.key = key;
+      col.appendChild(node);
+    });
+  });
+}
+
+async function loadDoctorCalendar(weekStart, opts) {
+  const silent = !!(opts && opts.silent);
+  if (calBusy) return;
+  calBusy = true;
+  const wrap = $("#docCalendar");
+  if (!silent && wrap) wrap.innerHTML = '<div class="cal-idle">Cargando agenda…</div>';
+  try {
+    const data = await API.calendar(weekStart || undefined);
+    const sig = calSignature(data);
+    if (silent && sig === calLastSig) return;
+    calLastSig = sig;
+    renderCalendar(data, { silent });
+  } catch (err) {
+    console.error(err);
+    if (!silent && wrap) wrap.innerHTML = '<div class="cal-idle">No se pudo cargar la agenda.</div>';
+  } finally {
+    calBusy = false;
+  }
+}
+
+function renderDoctorSchedule(provider) {
+  $("#docName").textContent = provider.name;
+  $("#docMeta").textContent = provider.specialty_name + " · " + provider.id;
+  $("#docBadge").textContent = provider.id;
+
+  const leave = $("#docLeave");
+  if (provider.leave) {
+    leave.hidden = false;
+    leave.textContent = "";
+    const strong = el("strong", null, "De baja");
+    leave.appendChild(strong);
+    leave.appendChild(document.createTextNode(
+      " del " + provider.leave.start + " al " + provider.leave.end
+      + (provider.leave.reason ? " (" + provider.leave.reason + ")" : "") + "."
+    ));
+  } else {
+    leave.hidden = true;
+    leave.textContent = "";
+  }
+
+  const schedules = provider.schedules || [];
+  const wrap = $("#docSchedule");
+  wrap.textContent = "";
+  const table = el("table", "schedule");
+  const thead = document.createElement("thead");
+  const hr = document.createElement("tr");
+  hr.appendChild(el("th", null, "Sede"));
+  WEEKDAYS.forEach(([, label]) => hr.appendChild(el("th", null, label)));
+  thead.appendChild(hr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  if (!schedules.length) {
+    const tr = document.createElement("tr");
+    const td = el("td", "empty", "Sin horario en el catálogo");
+    td.colSpan = 7;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  } else {
+    schedules.forEach((site) => {
+      const byDay = {};
+      (site.days || []).forEach((d) => {
+        byDay[d.weekday] = (d.intervals || []).join(", ");
+      });
+      const tr = document.createElement("tr");
+      tr.appendChild(el("th", null, site.location_name || site.location_id));
+      WEEKDAYS.forEach(([key]) => {
+        const text = byDay[key];
+        tr.appendChild(el("td", text ? null : "empty", text || "—"));
+      });
+      tbody.appendChild(tr);
+    });
+  }
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  const chips = $("#docChips");
+  chips.textContent = "";
+  chips.appendChild(chipGroup("Idiomas", provider.languages));
+  chips.appendChild(chipGroup("Tipos de cita", provider.appointment_type_names));
+  chips.appendChild(chipGroup(
+    "Seguros aceptados",
+    (provider.accepted_insurers || []).map(insurerName),
+    "ok"
+  ));
+  chips.appendChild(chipGroup(
+    "Seguros rechazados",
+    (provider.refused_insurers || []).map(insurerName),
+    "bad"
+  ));
+}
+
+async function doLogout() {
+  stopCalPoll();
+  calLastSig = "";
+  calBuiltWeek = null;
+  try { if (ws) ws.close(); } catch (_) {}
+  ws = null;
+  state.calls.clear();
+  state.order = [];
+  state.sel = null;
+  lineEls.clear();
+  if (board) board.textContent = "";
+  await API.logout();
+  showLogin();
+}
+
+function showLogin() {
+  showOnly("login");
+  const err = $("#loginError");
+  err.hidden = true;
+  err.textContent = "";
+  $("#loginKey").value = "";
+  later(() => $("#loginKey").focus(), 50);
+}
+
+async function enterSession(session) {
+  if (session.role === "admin") {
+    showOnly("admin");
+    await bootAdmin();
+    return;
+  }
+  if (session.role === "provider" && session.provider) {
+    showOnly("doctor");
+    $("#docClock").textContent = hhmmss(simNow()) + " Europe/Madrid";
+    calProviderId = session.provider.id;
+    calLastSig = "";
+    calBuiltWeek = null;
+    renderDoctorSchedule(session.provider);
+    await loadDoctorCalendar(calWeekStart);
+    startCalPoll();
+    return;
+  }
+  showLogin();
+}
+
+async function bootAdmin() {
   $("#clock").textContent = hhmmss(simNow()) + " Europe/Madrid";
   try {
     const [shift, calls] = await Promise.all([API.shift(), API.calls()]);
@@ -1562,5 +1918,79 @@ setInterval(() => {
   renderTally();
   setView("overview");
   connect();
+}
+
+/* ===================================================================== boot */
+document.querySelectorAll(".nav button").forEach((b) =>
+  b.addEventListener("click", () => setView(b.dataset.view)));
+document.querySelectorAll(".tabs button").forEach((b) =>
+  b.addEventListener("click", () => setPane(b.dataset.pane)));
+$("#btnPlace").addEventListener("click", tcOpen);
+$("#btnTrace").addEventListener("click", (e) => {
+  state.trace = !state.trace;
+  e.target.setAttribute("aria-pressed", String(state.trace));
+  const c = state.calls.get(state.sel); if (c) { c._drawn = 0; renderStream(c); }
+});
+$("#btnFollow").addEventListener("click", (e) => {
+  state.follow = !state.follow;
+  e.target.setAttribute("aria-pressed", String(state.follow));
+});
+$("#btnLogoutAdmin").addEventListener("click", () => doLogout());
+$("#btnLogoutDoctor").addEventListener("click", () => doLogout());
+$("#calPrev").addEventListener("click", () => {
+  const base = calWeekStart || mondayOf(new Date().toISOString().slice(0, 10));
+  calLastSig = "";
+  calBuiltWeek = null;
+  loadDoctorCalendar(shiftWeek(base, -1));
+});
+$("#calNext").addEventListener("click", () => {
+  const base = calWeekStart || mondayOf(new Date().toISOString().slice(0, 10));
+  calLastSig = "";
+  calBuiltWeek = null;
+  loadDoctorCalendar(shiftWeek(base, 1));
+});
+$("#loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = $("#loginKey").value.trim();
+  const err = $("#loginError");
+  err.hidden = true;
+  if (!key) return;
+  try {
+    const session = await API.login(key);
+    await enterSession(session);
+  } catch (_) {
+    err.textContent = "Clave no reconocida. Prueba admin o un id de médico (PR01…PR12).";
+    err.hidden = false;
+  }
+});
+
+setInterval(() => {
+  const clock = $("#clock");
+  if (clock && !$("#shellAdmin").hidden) clock.textContent = hhmmss(simNow()) + " Europe/Madrid";
+  const docClock = $("#docClock");
+  if (docClock && !$("#shellDoctor").hidden) docClock.textContent = hhmmss(simNow()) + " Europe/Madrid";
+  state.order.forEach((id) => {
+    const c = state.calls.get(id);
+    if (c.status === "live") {
+      const n = lineEls.get(id);
+      if (n) { const e = n.querySelector(".el"); if (e) e.textContent = dur(simNow() - c.startedAt); }
+    }
+  });
+  const nb = $("#navBadge");
+  if (nb) { const l = liveNow(); nb.textContent = String(l); nb.hidden = l === 0; }
+  if (view === "overview" && !$("#shellAdmin").hidden) refreshLive();
+}, 1000);
+
+(async function start() {
+  try {
+    const session = await API.me();
+    if (session) {
+      await enterSession(session);
+      return;
+    }
+  } catch (err) {
+    console.error("Could not reach auth", err);
+  }
+  showLogin();
 })();
 })();

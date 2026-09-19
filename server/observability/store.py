@@ -490,6 +490,61 @@ class ObservabilityStore:
             for r in rows
         ]
 
+    async def list_provider_bookings(
+        self,
+        provider_id: str,
+        *,
+        date_from: str,
+        date_to: str,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """BOOK/RESCHEDULE still on the diary, plus CANCELs that free a slot.
+
+        Returns ``{"bookings": [...], "cancellations": [...]}`` so the calendar
+        can drop a named cita and force that tick back to libre.
+        """
+        cur = await self.db.execute(
+            """
+            SELECT a.verb, a.status, a.summary, a.payload_json, c.patient_name, c.call_id
+            FROM actions a
+            JOIN calls c ON c.call_id = a.call_id
+            WHERE a.verb IN ('BOOK', 'RESCHEDULE', 'CANCEL')
+              AND a.status = 'posted'
+            ORDER BY a.created_at ASC
+            """
+        )
+        rows = await cur.fetchall()
+        bookings: list[dict[str, Any]] = []
+        cancellations: list[dict[str, Any]] = []
+        for r in rows:
+            payload = json.loads(r["payload_json"] or "{}")
+            body = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+            if not isinstance(body, dict):
+                body = payload
+            if body.get("provider_id") != provider_id:
+                continue
+            slot = body.get("slot")
+            if not isinstance(slot, str) or len(slot) < 10:
+                continue
+            slot_day = slot[:10]
+            if slot_day < date_from or slot_day > date_to:
+                continue
+            row = {
+                "call_id": r["call_id"],
+                "verb": r["verb"],
+                "slot": slot,
+                "provider_id": provider_id,
+                "location_id": body.get("location_id"),
+                "appointment_type_id": body.get("appointment_type_id"),
+                "appointment_id": body.get("appointment_id"),
+                "patient_name": r["patient_name"] or body.get("patient_name"),
+                "summary": r["summary"],
+            }
+            if r["verb"] == "CANCEL":
+                cancellations.append(row)
+            else:
+                bookings.append(row)
+        return {"bookings": bookings, "cancellations": cancellations}
+
     async def load_live_snapshots(self) -> list[CallSnapshot]:
         """Hydrate in-memory hub with currently-live calls and their events."""
         cur = await self.db.execute(

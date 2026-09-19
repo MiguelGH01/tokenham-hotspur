@@ -111,8 +111,27 @@ def reschedule_action(appointment_id: str, offer: dict) -> dict:
     }
 
 
-def cancel_action(appointment_id: str) -> dict:
-    return {"action": "CANCEL", "appointment_id": appointment_id}
+def cancel_action(appointment_id: str, *, appointment: dict | None = None) -> dict:
+    """Cancel one diary row.
+
+    Optional ``appointment`` adds provider/slot for the doctor calendar only;
+    :meth:`ClinicClient.post_submission` strips those before the clinic POST.
+    """
+    action: dict = {"action": "CANCEL", "appointment_id": appointment_id}
+    if not appointment:
+        return action
+    if appointment.get("provider_id"):
+        action["provider_id"] = appointment["provider_id"]
+    if appointment.get("location_id"):
+        action["location_id"] = appointment["location_id"]
+    slot = appointment.get("start_time") or appointment.get("slot")
+    if slot:
+        action["slot"] = slot
+    if appointment.get("appointment_type_id"):
+        action["appointment_type_id"] = appointment["appointment_type_id"]
+    if appointment.get("duration_minutes") is not None:
+        action["duration_minutes"] = appointment["duration_minutes"]
+    return action
 
 
 def register_action(patient: dict) -> dict:
@@ -192,7 +211,15 @@ class CallSubmission:
 
         The question a late confirmation asks: a retry of what is already
         decided is safe, a different action cannot become the record any more.
+        CANCEL compares on ``appointment_id`` only — calendar fields on the
+        stored row must not make a retry look like a different decision.
         """
+        if action.get("action") == "CANCEL":
+            target = action.get("appointment_id")
+            return any(
+                a.get("action") == "CANCEL" and a.get("appointment_id") == target
+                for a in self.actions
+            )
         return action in self.actions
 
     def new_request(self):
@@ -264,8 +291,8 @@ class CallSubmission:
     def set_register(self, patient):
         self._set_primary(register_action(patient))
 
-    def set_cancel(self, appointment_id):
-        self._set_primary(cancel_action(appointment_id))
+    def set_cancel(self, appointment_id, *, appointment: dict | None = None):
+        self._set_primary(cancel_action(appointment_id, appointment=appointment))
 
     def set_reschedule(self, appointment_id, offer):
         self._set_primary(reschedule_action(appointment_id, offer))
@@ -400,13 +427,21 @@ class CallSubmission:
         backoff = max(0.0, float(os.getenv("SUBMIT_DELIVERY_BACKOFF_SECS", "1.0")))
         async with self._lock:
             for action in pending:
-                payload = {"call_id": self.call_id, **deepcopy(action)}
+                # CANCEL may carry provider/slot for the doctor calendar; the
+                # clinic route only accepts appointment_id (+ call_id).
+                deliver = action
+                if action.get("action") == "CANCEL":
+                    deliver = {
+                        "action": "CANCEL",
+                        "appointment_id": action["appointment_id"],
+                    }
+                payload = {"call_id": self.call_id, **deepcopy(deliver)}
                 for attempt in range(1, attempts + 1):
                     audit.audit(
                         self.call_id,
                         "submission_attempt",
                         verb=action.get("action"),
-                        payload={k: v for k, v in action.items()},
+                        payload={k: v for k, v in deliver.items()},
                         final=final,
                         attempt=attempt,
                     )

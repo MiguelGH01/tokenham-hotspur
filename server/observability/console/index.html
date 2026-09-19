@@ -1,14 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Arenal Centralita</title>
+<title>Clínica Arenal</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="shell">
+
+<!-- Login -->
+<div class="login-screen" id="viewLogin">
+  <div class="login-card">
+    <div class="brand login-brand">
+      <i class="mark"></i>
+      <b>Clínica Arenal</b>
+    </div>
+    <h1>Entrar</h1>
+    <p class="login-hint">Usa <code>admin</code> para la centralita, o el id del médico (<code>PR01</code>…<code>PR12</code>) para ver tu horario.</p>
+    <form id="loginForm" autocomplete="off">
+      <label class="login-label" for="loginKey">Clave</label>
+      <input class="login-input" id="loginKey" name="key" type="text" inputmode="text" autofocus required placeholder="admin o PR01">
+      <p class="login-error" id="loginError" hidden role="alert"></p>
+      <button class="btn primary login-submit" type="submit">Entrar</button>
+    </form>
+  </div>
+</div>
+
+<!-- Admin: observability console -->
+<div class="shell" id="shellAdmin" hidden>
   <div class="topbar">
     <div class="brand">
       <i class="mark"></i>
@@ -23,6 +43,7 @@
     <div class="spacer"></div>
     <div class="picker">
       <button class="btn primary" id="btnPlace">Place test call</button>
+      <button class="btn" id="btnLogoutAdmin" type="button">Cerrar sesión</button>
     </div>
   </div>
 
@@ -81,7 +102,55 @@
   </div>
 </div>
 
+<!-- Doctor: weekly schedule -->
+<div class="shell doctor-shell" id="shellDoctor" hidden>
+  <div class="topbar">
+    <div class="brand">
+      <i class="mark"></i>
+      <b>Clínica Arenal</b>
+      <span>Mi horario</span>
+    </div>
+    <span class="tclock" id="docClock">—</span>
+    <div class="spacer"></div>
+    <span class="doc-badge" id="docBadge">—</span>
+    <button class="btn" id="btnLogoutDoctor" type="button">Cerrar sesión</button>
+  </div>
+  <div class="scroll">
+    <div class="doc-page">
+      <header class="doc-head">
+        <h1 id="docName">—</h1>
+        <p id="docMeta">—</p>
+      </header>
+      <div class="leave-banner" id="docLeave" hidden></div>
+      <section class="doc-section">
+        <div class="doc-cal-head">
+          <h2>Agenda de la semana</h2>
+          <div class="doc-cal-nav">
+            <button class="btn" type="button" id="calPrev" aria-label="Semana anterior">←</button>
+            <span class="doc-cal-range" id="calRange">—</span>
+            <button class="btn" type="button" id="calNext" aria-label="Semana siguiente">→</button>
+          </div>
+        </div>
+        <p class="doc-cal-note" id="calNote"></p>
+        <div class="cal-legend">
+          <span><i class="lg booked"></i> Cita</span>
+          <span><i class="lg free"></i> Libre</span>
+        </div>
+        <div class="cal-wrap" id="docCalendar"><div class="cal-idle">Cargando agenda…</div></div>
+      </section>
+      <section class="doc-section">
+        <h2>Horario semanal</h2>
+        <div class="schedule-wrap" id="docSchedule"></div>
+      </section>
+      <section class="doc-section">
+        <h2>Detalle</h2>
+        <div class="chip-groups" id="docChips"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=9"></script>
 </body>
 </html>

@@ -42,6 +42,46 @@ def _pick_action(rng: random.Random) -> str:
     return "NO_ACTION"
 
 
+# Demo BOOK/RESCHEDULE bodies so the doctor calendar has named citas after seed.
+_DEMO_PROVIDERS = [
+    ("PR01", "centro"),
+    ("PR04", "centro"),
+    ("PR07", "centro"),
+    ("PR05", "sur"),
+    ("PR03", "sur"),
+]
+
+
+def _demo_action_body(action: str, index: int, call_start: datetime) -> dict:
+    if action not in {"BOOK", "RESCHEDULE", "CANCEL"}:
+        return {}
+    provider_id, location_id = _DEMO_PROVIDERS[index % len(_DEMO_PROVIDERS)]
+    # Spot the booking a few days ahead, on a weekday morning slot.
+    day = (call_start + timedelta(days=1 + (index % 5))).date()
+    while day.weekday() >= 5:  # skip Sat/Sun for demo simplicity
+        day += timedelta(days=1)
+    hour = 9 + (index % 4)
+    minute = (index * 15) % 60
+    slot = datetime(day.year, day.month, day.day, hour, minute, tzinfo=timezone.utc)
+    # Store as Madrid-looking offset string (+02:00) for calendar matching.
+    slot_local = slot.astimezone(__import__("zoneinfo").ZoneInfo("Europe/Madrid"))
+    body = {
+        "provider_id": provider_id,
+        "location_id": location_id,
+        "slot": slot_local.isoformat(),
+        "appointment_type_id": "review" if action == "BOOK" else None,
+        "policy_id": "mapfre",
+    }
+    if action == "RESCHEDULE":
+        body.pop("appointment_type_id", None)
+        body["appointment_id"] = f"A{index:06d}"
+    if action == "CANCEL":
+        body.pop("appointment_type_id", None)
+        body.pop("policy_id", None)
+        body["appointment_id"] = f"A{index:06d}"
+    return {k: v for k, v in body.items() if v is not None}
+
+
 # How a call of each outcome walks the graph, and which tool moved it on.
 # Stages match the funnel the console draws, so a seeded shift exercises the
 # same projections a real one does.
@@ -277,6 +317,7 @@ def build_shift_events(
                     "seq": 1,
                     "reason": reason,
                     "summary": f"Paciente {i} · {action}",
+                    "payload": _demo_action_body(action, i, call_start),
                 },
             }
         )
