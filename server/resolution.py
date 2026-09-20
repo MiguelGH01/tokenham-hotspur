@@ -77,7 +77,12 @@ def prepared_action(state) -> dict | None:
     """
     intent = state.get("intent")
     appointment = state.get("appointment") or {}
-    if intent == "cancel" and appointment:
+    # A live proposal is required, exactly as for BOOK below: a caller who
+    # selected an appointment and then declined the cancellation (or moved on
+    # to something else) has ``keep_appointment``/``revise_request`` pop the
+    # proposal precisely so this branch stops matching a cancellation nobody
+    # confirmed.
+    if intent == "cancel" and appointment and state.get("proposal"):
         return cancel_action(appointment["appointment_id"])
     held = live_offer(state)
     if intent == "reschedule" and appointment and held:

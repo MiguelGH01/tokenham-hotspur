@@ -186,3 +186,74 @@ def test_reschedule_keeps_existing_type_and_requires_later_consent():
     assert posted[0]['appointment_id'] == 'A1'
     asyncio.run(revise_search(manager))
     assert result['offer_id'] in manager.state['offers']
+
+
+def test_declining_an_offer_does_not_book_it_on_hangup():
+    """confirm node had no tool for an outright decline: the model could only say
+    so in text, leaving the read-back offer live for resolve_fallback to submit
+    as BOOK on hang-up (calls b3b11767, 9ed8af6a)."""
+    from datetime import datetime
+
+    from flows.booking import finish_without_booking, get_earliest_slot
+    from resolution import resolve_fallback
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                'slots': [dict(
+                    provider_id='PR01', provider_name='Doctor', location_id='centro',
+                    specialty_id='general_practice', appointment_type_id='review',
+                    start_time='2026-09-21T09:00:00+02:00', payable_with=['sanitas'],
+                )],
+                'blocked': [],
+            }
+        async def post_submission(self, payload):
+            return payload
+
+    client = Client()
+    state = {
+        'connected_at': datetime.fromisoformat('2026-09-19T10:00:00+02:00'),
+        'intent': 'book', 'client': client, 'offers': {},
+        'patient': {'patient_id': 'P1', 'insurer': 'sanitas', 'given_name': 'Ana', 'first_surname': 'Test'},
+    }
+    state['submission'] = CallSubmission('c', client, fallback=lambda: resolve_fallback(state))
+    messages = [{'role': 'user', 'content': 'I need a GP appointment'}]
+    manager = SimpleNamespace(state=state, get_current_context=lambda: messages)
+    asyncio.run(get_earliest_slot({'specialty': 'general_practice'}, manager))
+    assert state['proposal'] is not None
+
+    messages.append({'role': 'user', 'content': "no, I don't want it"})
+    result, _ = asyncio.run(finish_without_booking(manager))
+    assert result['status'] == 'no_booking'
+    assert state.get('proposal') is None
+
+    assert asyncio.run(state['submission'].close()) is True
+    assert state['submission'].actions == [{'action': 'NO_ACTION', 'reason': 'no_availability'}]
+
+
+def test_declining_a_cancellation_does_not_cancel_it_on_hangup():
+    from flows.appointments import keep_appointment, select_appointment
+    from resolution import resolve_fallback
+
+    class Client:
+        async def post_submission(self, payload):
+            return payload
+
+    client = Client()
+    state = {
+        'intent': 'cancel', 'client': client,
+        'appointments': {'A1': {'appointment_id': 'A1', 'patient_id': 'P1'}},
+        'patient': {'patient_id': 'P1'},
+    }
+    state['submission'] = CallSubmission('c', client, fallback=lambda: resolve_fallback(state))
+    manager = SimpleNamespace(state=state, get_current_context=lambda: [])
+    asyncio.run(select_appointment({'appointment_id': 'A1'}, manager))
+    assert state['appointment']['appointment_id'] == 'A1'
+
+    result, _ = asyncio.run(keep_appointment(manager))
+    assert result['status'] == 'kept'
+    assert state.get('appointment') is None
+    assert state.get('proposal') is None
+
+    assert asyncio.run(state['submission'].close()) is True
+    assert state['submission'].actions == [{'action': 'NO_ACTION', 'reason': 'no_availability'}]

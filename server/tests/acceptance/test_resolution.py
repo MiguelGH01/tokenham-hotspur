@@ -83,10 +83,23 @@ def test_a_moved_appointment_is_submitted_as_a_reschedule():
 
 
 def test_a_cancellation_read_back_is_the_ending():
-    state = _state(intent="cancel", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    state = _state(
+        intent="cancel",
+        appointment={"appointment_id": "A1", "patient_id": "P1"},
+        proposal={"key": "A1", "revision": 0},
+    )
     assert asyncio.run(resolution.resolve_fallback(state)) == {
         "action": "CANCEL",
         "appointment_id": "A1",
+    }
+
+
+def test_a_declined_cancellation_is_not_submitted():
+    """``keep_appointment`` pops the proposal; a stale ``appointment`` alone must not cancel it."""
+    state = _state(intent="cancel", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
     }
 
 

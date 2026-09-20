@@ -8,7 +8,7 @@ and the choice is then read back and confirmed in a **later** turn before
 anything is cancelled or moved.
 """
 
-from pipecat.flows import FlowsFunctionSchema, NodeConfig
+from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 
 from flows.common import WAIT_FOR_ANSWER, announce, gated_confirmation, record_already_settled, speak_tool
 from flows.requests import prepare_proposal, proposal_status, revise_request
@@ -205,11 +205,44 @@ def create_cancel_node() -> NodeConfig:
                     "correction first. If it returns expired, that appointment is no longer the "
                     "one on offer: select it again. If it returns delivery_conflict, do not "
                     "claim the cancellation and say goodbye. A correction means selecting the "
-                    "appointment again, never cancelling the one that was read out."
+                    "appointment again, never cancelling the one that was read out. If they "
+                    "decide to keep the appointment and do not want to select a different one, "
+                    "call keep_appointment — do not just say goodbye in text."
                 ),
             }
         ],
-        functions=[_confirm_cancellation_schema(), _selection_schema()],
+        functions=[_confirm_cancellation_schema(), _selection_schema(), keep_appointment],
+    )
+
+
+@flows_tool_options(cancel_on_interruption=True)
+@announce("keep_appointment")
+async def keep_appointment(flow_manager):
+    """The caller decides not to cancel the appointment that was read back."""
+    state = flow_manager.state
+    submission = state["submission"]
+    if submission.pending["action"] != "NO_ACTION":
+        return {"status": "already_confirmed"}, None
+    if not submission.actions:
+        # Nothing was decided yet: state a NO_ACTION now, or a hang-up right
+        # after this reads state["appointment"] (still set from selection) and
+        # submits CANCEL for a booking the caller just asked to keep.
+        submission.set_no_action("no_availability", provisional=False)
+    state.pop("appointment", None)
+    state.pop("cancel_batch", None)
+    # The cancellation this call read back is no longer live either way: a
+    # hang-up right after this must not let resolve_fallback rediscover it.
+    revise_request(flow_manager)
+    await submission.flush()
+    return {"status": "kept"}, NodeConfig(
+        name="kept",
+        task_messages=[
+            {
+                "role": "developer",
+                "content": "The appointment was not cancelled and stays as it was. Confirm that and say goodbye.",
+            }
+        ],
+        post_actions=[{"type": "end_conversation"}],
     )
 
 

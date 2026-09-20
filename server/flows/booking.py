@@ -937,11 +937,13 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
                     "or correction first. If it returns expired, that offer is no longer on the "
                     "table: call revise_search and offer what it returns. If it returns "
                     "delivery_conflict, the call's record is already settled: do not claim the "
-                    "appointment, apologise and say goodbye."
+                    "appointment, apologise and say goodbye. If they decline this appointment "
+                    "outright and do not want a different search, call finish_without_booking — "
+                    "do not just say goodbye in text."
                 ),
             }
         ],
-        functions=[_confirm_offer_schema(flow_manager), revise_search],
+        functions=[_confirm_offer_schema(flow_manager), revise_search, finish_without_booking],
     )
 
 
@@ -949,9 +951,21 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
 @announce("finish_without_booking")
 async def finish_without_booking(flow_manager: FlowManager):
     """The caller declines alternatives or ends without an appointment."""
+    from flows.requests import revise_request
+
     submission = flow_manager.state["submission"]
     if submission.pending["action"] != "NO_ACTION":
         return {"status": "already_confirmed"}, None
+    if not submission.actions:
+        # Nothing was decided yet (a plain decline of a good offer, not a rule
+        # failure another handler already recorded a reason for): state one now,
+        # or a live offer/proposal this call read back but never confirmed is
+        # rediscovered by the hang-up fallback and submitted as BOOK anyway —
+        # the caller was told no, and the record said yes.
+        submission.set_no_action("no_availability", provisional=False)
+    # The offer this call may still be holding is no longer live either way:
+    # a hang-up right after this must not let resolve_fallback find it again.
+    revise_request(flow_manager)
     await submission.flush()
     return {"status": "no_booking"}, NodeConfig(
         name="no_booking",
