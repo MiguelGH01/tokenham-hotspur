@@ -238,3 +238,6 @@ server/audit-logs/
 
 # Centralita console SQLite (local, regenerable from fixtures)
 server/data/
+
+# Playwright MCP scratch output
+.playwright-mcp/

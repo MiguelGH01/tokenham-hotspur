@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Clínica Arenal</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -36,7 +37,7 @@
     </div>
     <nav class="nav" aria-label="Views">
       <button data-view="overview" aria-current="true">Overview</button>
-      <button data-view="calls" aria-current="false">Conversations <span class="badge" id="navBadge">0</span></button>
+      <button data-view="calls" aria-current="false">Conversations <span class="badge" id="navBadge" hidden>0</span></button>
     </nav>
     <div class="wire" id="wire"><i class="dot"></i><span id="wireTxt">live · 0 on the line</span></div>
     <span class="tclock" id="clock">—</span>
