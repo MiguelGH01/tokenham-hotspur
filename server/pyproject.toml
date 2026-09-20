@@ -9,6 +9,7 @@ dependencies = [
     "httpx",
     "aiosqlite",
     "tzdata; sys_platform == 'win32'",
+    "typesafe-sdk",
 ]
 
 [dependency-groups]

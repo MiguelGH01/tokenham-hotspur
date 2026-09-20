@@ -791,7 +791,7 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/01/1253e6698a07380cd31a736d248a3f2a50a7c88779a1813da27503cadc2a/contourpy-1.3.3.tar.gz", hash = "sha256:083e12155b210502d0bca491432bb04d56dc3432f95a979b429f2848c3dbe880", size = 13466174, upload-time = "2025-07-26T12:03:12.549Z" }
 wheels = [
@@ -882,7 +882,7 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
 ]
 dependencies = [
-    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" } },
+    { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/83/5a/a55177dd22553a277388e8a1b3220e92de91bacb28356cdc73caa240121d/contourpy-1.4.0.tar.gz", hash = "sha256:20156f5a1ac4f8ce02656e39a61e82164a3d359796dc8026f75b062783d500e1", size = 13323726, upload-time = "2026-09-11T19:05:05.808Z" }
 wheels = [
@@ -3568,7 +3568,7 @@ anthropic = [
     { name = "anthropic" },
 ]
 daily = [
-    { name = "daily-python" },
+    { name = "daily-python", marker = "sys_platform != 'win32'" },
 ]
 deepgram = [
     { name = "deepgram-sdk" },
@@ -3653,6 +3653,7 @@ dependencies = [
     { name = "httpx" },
     { name = "pipecat-ai", extra = ["anthropic", "deepgram", "evals", "google", "rnnoise", "runner", "webrtc", "websocket"] },
     { name = "pipecat-ai", extra = ["daily"], marker = "sys_platform != 'win32'" },
+    { name = "typesafe-sdk" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
@@ -3669,6 +3670,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "pipecat-ai", extras = ["anthropic", "cartesia", "deepgram", "elevenlabs", "evals", "google", "openai", "rnnoise", "runner", "silero", "soniox", "webrtc", "websocket"], specifier = ">=1.11.0" },
     { name = "pipecat-ai", extras = ["daily"], marker = "sys_platform != 'win32'", specifier = ">=1.11.0" },
+    { name = "typesafe-sdk" },
     { name = "tzdata", marker = "sys_platform == 'win32'" },
 ]
 
@@ -4222,7 +4224,7 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform == 'win32'",
 ]
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/04/e7c1fe4dc78a6fdbfd6c337b1c3732ff543b8a397683ab38378447baa331/pyee-13.0.1.tar.gz", hash = "sha256:0b931f7c14535667ed4c7e0d531716368715e860b988770fc7eb8578d1f67fc8", size = 31655, upload-time = "2026-02-14T21:12:28.044Z" }
 wheels = [
@@ -4243,7 +4245,7 @@ resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform == 'win32'",
 ]
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version >= '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/f1/fdedc2c75c3e31a330659c85e5793bb18b3397981fbf0844c6dee5b18926/pyee-14.0.0.tar.gz", hash = "sha256:76dd0f4314ecd27f02dc73589dea7fd3853f9b6176d8ef9b122860657e3602de", size = 98760, upload-time = "2026-08-13T04:26:11.021Z" }
 wheels = [
@@ -5273,6 +5275,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/16/f7/57713ba479fd405eb76de31404b2c744c289e336b2d999511ebf51e496f7/typer-0.27.2.tar.gz", hash = "sha256:269b7eb9d3c202ca84b4bc9618cb04ebb43d3d4d1e567e4c768607232c05f945", size = 204045, upload-time = "2026-08-28T10:26:55.046Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/bf/205d0004930ede8f542fb58f601526fccf4ae7626075ca1e6c4de5d3d652/typer-0.27.2-py3-none-any.whl", hash = "sha256:b3a5fc4342d5fc8fda8fc3010b1cf117e9249aab7fae800c2eff62fd3842d97d", size = 123130, upload-time = "2026-08-28T10:26:53.752Z" },
+]
+
+[[package]]
+name = "typesafe-sdk"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx2" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "tenacity" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/e2/ac317772d4d5cfabf3cecdeacd83cc838523e240bb4e1cf256837e6005bb/typesafe_sdk-0.7.0.tar.gz", hash = "sha256:930d42fd73cfed6f25bccae488ce0f30f6043eaedd8682ef59734e79ab94a876", size = 22235, upload-time = "2026-09-18T09:12:30.846Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/2a/16f4163e6d8827ef80b2ed7a400c80688e1ebf571c10f143f792bdafc654/typesafe_sdk-0.7.0-py3-none-any.whl", hash = "sha256:c6d2257c4b04b8d4d81cff2b55489b4188795fd44fb40b9cef26ff243b2d1080", size = 35352, upload-time = "2026-09-18T09:12:29.625Z" },
 ]
 
 [[package]]

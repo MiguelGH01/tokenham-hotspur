@@ -36,6 +36,7 @@
     <nav class="nav" aria-label="Views">
       <button data-view="overview" aria-current="true">Overview</button>
       <button data-view="calls" aria-current="false">Conversations <span class="badge" id="navBadge">0</span></button>
+      <button data-view="insights" aria-current="false">Insights</button>
       <button data-view="notices" aria-current="false">Notices <span class="badge" id="noticeBadge" hidden>0</span></button>
     </nav>
     <div class="wire" id="wire"><i class="dot"></i><span id="wireTxt">live · 0 on the line</span></div>
@@ -102,10 +103,57 @@
     </section>
 
     <section class="col" id="colWhy">
-      <div class="colhead"><h2>Why this happened</h2><span class="count" id="whyCount"></span></div>
-      <div class="scroll"><div class="why-pane" id="why"></div></div>
+      <div class="colhead"><h2>Insights</h2><span class="count" id="insightCount"></span></div>
+      <div class="scroll">
+        <div class="insight-pane" id="insightPane"></div>
+        <div class="why-head"><h2>Why this happened</h2><span class="count" id="whyCount"></span></div>
+        <div class="why-pane" id="why"></div>
+      </div>
     </section>
   </div>
+  </div>
+
+  <!-- Admin: post-call classifications extracted by Jev -->
+  <div class="view" id="viewInsights" hidden>
+   <div class="scroll">
+    <div class="dash">
+      <header class="dashhead">
+        <div>
+          <h1>Conversation insights</h1>
+          <p>Labels Jev applies when a call ends. One Choice question per label over the transcript.</p>
+        </div>
+      </header>
+
+      <section class="ntc-block">
+        <div class="ntc-head">
+          <h2>Defined insights</h2>
+          <span class="count" id="insCount"></span>
+          <div style="flex:1"></div>
+          <button class="btn primary" id="insAdd" type="button">Add insight</button>
+        </div>
+        <div id="insList"></div>
+        <p class="ntc-status" id="insStatus" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="ntc-block">
+        <div class="ntc-head"><h2>How it works</h2></div>
+        <dl class="ntc-cases">
+          <div>
+            <dt>Natural-language question</dt>
+            <dd>Write what you want to know about the call. Jev sees the full transcript and picks one of your values.</dd>
+          </div>
+          <div>
+            <dt>Discrete values</dt>
+            <dd>At least two options (e.g. <code>si</code> / <code>no</code>). Include <code>unknown</code> or <code>no_aplica</code> when the transcript may not answer.</dd>
+          </div>
+          <div>
+            <dt>After hang-up</dt>
+            <dd>Each insight is one TypeSafe request. Results show on the right of the conversation.</dd>
+          </div>
+        </dl>
+      </section>
+    </div>
+   </div>
   </div>
 
   <!-- Admin: what reception has told the agent today -->
@@ -176,6 +224,36 @@
    </div>
   </div>
 </div>
+
+<dialog class="ntc-dialog" id="insDialog">
+  <form method="dialog" id="insForm">
+    <h2>Add insight</h2>
+    <label class="ntc-field">
+      <span>Name (id)</span>
+      <input type="text" id="insName" maxlength="64" pattern="[A-Za-z0-9._-]{1,64}"
+             placeholder="e.g. persona_mayor" required>
+    </label>
+    <label class="ntc-field">
+      <span>Question for Jev</span>
+      <textarea id="insDescription" maxlength="500" rows="3"
+                placeholder="e.g. Is the caller an elderly person (persona mayor)?"></textarea>
+    </label>
+    <div class="ntc-field">
+      <span>Possible values</span>
+      <div class="ins-values" id="insValueChips"></div>
+      <div class="ins-value-row">
+        <input type="text" id="insValueInput" maxlength="64" placeholder="Add a value, then Enter">
+        <button class="btn" type="button" id="insValueAdd">Add</button>
+      </div>
+      <p class="ntc-hint" style="padding:4px 0 0">At least two. Tip: include <code>unknown</code> when unsure.</p>
+    </div>
+    <p class="ntc-error" id="insError" hidden></p>
+    <div class="ntc-actions">
+      <button class="btn" type="button" id="insCancel">Cancel</button>
+      <button class="btn primary" type="button" id="insSave">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <!-- Admin: one notice, in a dialog rather than an inline row, so a half-typed
      absence is never live. -->
@@ -284,6 +362,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

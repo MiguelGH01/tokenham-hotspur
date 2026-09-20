@@ -20,6 +20,9 @@ EventKind = Literal[
     "action.queued",
     "submit.posted",
     "metrics.first_word",
+    "insight.pending",
+    "insight.extracted",
+    "insight.failed",
 ]
 
 # Nodes the running bot actually uses (flows/*.py). Grow when the graph grows.
