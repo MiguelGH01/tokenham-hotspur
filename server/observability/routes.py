@@ -30,7 +30,11 @@ from observability.events import ObsEvent
 from observability.hub import get_hub
 from observability.insights import (
     MAX_INSIGHTS,
+    backfill_snapshot,
+    drop_insight_backfill,
     extract_call_insights,
+    schedule_insight_backfill,
+    typesafe_configured,
     validate_insight_body,
 )
 from observability.store import resolve_period_bound, shift_start_iso
@@ -289,7 +293,10 @@ def mount_observability_routes(app: FastAPI) -> None:
     @app.get("/observability/insights")
     async def list_insights(_admin: dict = Depends(require_admin)):
         store = await hub.ensure_ready()
-        return {"insights": await store.list_insight_defs()}
+        return {
+            "insights": await store.list_insight_defs(),
+            "backfill": backfill_snapshot(),
+        }
 
     @app.post("/observability/insights")
     async def create_insight(body: InsightCreateBody, _admin: dict = Depends(require_admin)):
@@ -317,7 +324,16 @@ def mount_observability_routes(app: FastAPI) -> None:
             if "UNIQUE" in str(exc).upper():
                 raise HTTPException(status_code=422, detail="name: already exists") from exc
             raise
-        return created
+        payload = dict(created)
+        if typesafe_configured():
+            schedule_insight_backfill(created, store=store, hub=hub)
+            payload["backfill"] = {"status": "queued"}
+        else:
+            payload["backfill"] = {
+                "status": "skipped",
+                "reason": "typesafe_unconfigured",
+            }
+        return payload
 
     @app.delete("/observability/insights/{insight_id}")
     async def delete_insight(insight_id: int, _admin: dict = Depends(require_admin)):
@@ -325,6 +341,7 @@ def mount_observability_routes(app: FastAPI) -> None:
         ok = await store.delete_insight_def(insight_id)
         if not ok:
             raise HTTPException(status_code=404, detail="insight_not_found")
+        drop_insight_backfill(insight_id)
         return {"ok": True, "id": insight_id}
 
     @app.post("/observability/fixtures/{name}/load")

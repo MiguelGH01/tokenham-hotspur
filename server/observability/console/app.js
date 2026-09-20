@@ -1053,10 +1053,12 @@ function setView(v){
 
 /* ---------------------------------------------- conversation insights (admin)
 
-   Definitions live in SQLite; each hang-up runs one Jev Choice per label.
-   The page only creates and deletes — extraction is automatic. */
+   Definitions live in SQLite. Creating one scans every past conversation;
+   hang-up classifies new calls. Recalculate on a call is the fallback. */
 
 let insightDefs = [];
+let insightBackfill = null;
+let backfillTimer = null;
 let draftValues = [];
 
 function insightStatus(text, tone){
@@ -1066,12 +1068,72 @@ function insightStatus(text, tone){
   n.className = "ntc-status" + (tone ? " is-" + tone : "");
 }
 
+function backfillLine(p){
+  if(!p) return "";
+  const name = p.name || "insight";
+  if(p.status === "running"){
+    const total = p.total || 0;
+    const done = p.done || 0;
+    if(!total) return "Saved " + name + ". Scanning conversations…";
+    return "Applying " + name + " to conversations… " + done + " / " + total;
+  }
+  if(p.status === "cancelled") return "Stopped applying " + name + ".";
+  if(p.status === "failed") return "Failed applying " + name + (p.error ? ": " + p.error : ".");
+  if(p.status === "done"){
+    const ok = p.ok || 0;
+    const extra = [];
+    if(p.skipped) extra.push(p.skipped + " skipped");
+    if(p.failed) extra.push(p.failed + " failed");
+    return "Applied " + name + " to " + ok + " conversation" + (ok===1?"":"s")
+      + (extra.length ? " (" + extra.join(", ") + ")" : "") + ".";
+  }
+  return "";
+}
+
+function renderInsightBackfill(){
+  const line = backfillLine(insightBackfill);
+  if(!line){ insightStatus(""); return; }
+  const tone = insightBackfill && insightBackfill.status === "done" ? "ok"
+    : (insightBackfill && (insightBackfill.status === "failed" || insightBackfill.status === "cancelled") ? "bad" : "");
+  insightStatus(line, tone);
+}
+
+function onInsightBackfill(p){
+  insightBackfill = p || null;
+  if(view === "insights") renderInsightBackfill();
+}
+
+function stopWatchingBackfill(){
+  if(backfillTimer){ clearInterval(backfillTimer); backfillTimer = null; }
+}
+
+function watchBackfill(){
+  stopWatchingBackfill();
+  backfillTimer = setInterval(async () => {
+    if(view !== "insights"){ stopWatchingBackfill(); return; }
+    try{
+      const data = await API.insights();
+      insightDefs = data.insights || [];
+      insightBackfill = data.backfill || null;
+      renderInsightDefs();
+      renderInsightBackfill();
+      if(!insightBackfill || insightBackfill.status !== "running") stopWatchingBackfill();
+    } catch(_){ /* keep the last line */ }
+  }, 1000);
+}
+
 async function loadInsights(){
   try{
     const data = await API.insights();
     insightDefs = data.insights || [];
+    insightBackfill = data.backfill || null;
     renderInsightDefs();
-    insightStatus("");
+    if(insightBackfill){
+      renderInsightBackfill();
+      if(insightBackfill.status === "running") watchBackfill();
+    } else {
+      insightStatus("");
+    }
   } catch(err){
     insightStatus(String(err.message || err), "bad");
   }
@@ -1087,7 +1149,7 @@ function renderInsightDefs(){
   if(!insightDefs.length){
     const e = el("div","empty");
     e.appendChild(el("b",null,"No insights defined"));
-    e.appendChild(el("span",null,"Add a label with at least two values. After hang-up, Jev classifies every conversation."));
+    e.appendChild(el("span",null,"Add a label with at least two values. Jev classifies existing conversations immediately, and new ones after hang-up."));
     host.appendChild(e);
     return;
   }
@@ -1186,10 +1248,19 @@ function wireInsightUi(){
     }
     try{
       const created = await API.createInsight({ name, description, values: draftValues.slice() });
-      insightDefs.push(created);
+      const { backfill, ...def } = created;
+      insightDefs.push(def);
       renderInsightDefs();
       $("#insDialog").close();
-      insightStatus("Saved " + created.name + ".", "ok");
+      if(backfill && backfill.status === "queued"){
+        insightBackfill = { status: "running", name: def.name, total: 0, done: 0, ok: 0, skipped: 0, failed: 0 };
+        renderInsightBackfill();
+        watchBackfill();
+      } else if(backfill && backfill.status === "skipped"){
+        insightStatus("Saved " + def.name + ". Existing conversations will not be labeled until TypeSafe is configured.", "bad");
+      } else {
+        insightStatus("Saved " + def.name + ".", "ok");
+      }
     } catch(ex){
       err.hidden = false;
       err.textContent = String(ex.message || ex);
@@ -1581,7 +1652,7 @@ function renderInsightPane(c){
     link.type = "button";
     link.style.marginTop = "8px";
     link.addEventListener("click", () => setView("insights"));
-    e.appendChild(el("span",null,"Add labels on the Insights page; Jev classifies each call after hang-up."));
+    e.appendChild(el("span",null,"Add labels on the Insights page; Jev classifies existing conversations and new calls after hang-up."));
     e.appendChild(link);
     host.appendChild(e);
     return;
@@ -1589,7 +1660,7 @@ function renderInsightPane(c){
   if(!items.length && defined){
     const e = el("div","empty");
     e.appendChild(el("b",null,"No insights yet"));
-    e.appendChild(el("span",null,"Labels are defined. Run Jev on this conversation."));
+    e.appendChild(el("span",null,"Not classified yet. Recalculate if the automatic scan missed this call."));
     e.appendChild(recomputeButton(c));
     host.appendChild(e);
     return;
@@ -2064,6 +2135,7 @@ function connect() {
   ws.onmessage = (m) => {
     let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
     if (msg.kind === "snapshot") { onSnapshot(msg); return; }
+    if (msg.kind === "insight.backfill") { onInsightBackfill(msg.payload || {}); return; }
     onEvent(msg);
   };
 }
@@ -2096,8 +2168,10 @@ function onSnapshot(msg) {
 }
 function onEvent(ev) {
   if (!ev || !ev.call_id) return;
+  const insightEvent = String(ev.kind || "").startsWith("insight.");
   let c = twinCall(ev.call_id, ts(ev.ts));
   if (!c) {
+    if (insightEvent) return;
     c = blankCall(ev.call_id);
     c.ringing = true;
     state.calls.set(c.id, c);
@@ -2117,6 +2191,7 @@ function onEvent(ev) {
   if (c.ringing && (ev.kind === "transcript.bot" || ev.kind === "transcript.user")) c.ringing = false;
   renderLine(c);
   if (state.sel === c.id) { appendStream(c); renderWhy(c); }
+  if (insightEvent) return;
   if (ev.kind === "call.ended" || ev.kind === "submit.posted" || ev.kind === "call.started") {
     API.shift().then((s) => { mapShift(s); lastKpiSig = ""; lastDrill = null; refreshAll(); }).catch(() => {});
     if (ev.kind === "call.ended") {

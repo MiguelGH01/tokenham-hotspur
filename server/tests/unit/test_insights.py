@@ -13,7 +13,9 @@ from observability.auth import COOKIE_NAME
 from observability.events import make_event
 from observability.hub import get_hub, reset_hub
 from observability.insights import (
+    collect_backfill_call_ids,
     extract_call_insights,
+    run_insight_backfill,
     validate_insight_body,
 )
 from observability.store import reset_store
@@ -90,7 +92,10 @@ def test_validate_ok():
 
 def test_insight_crud_and_validation(client):
     _admin(client)
-    assert client.get("/observability/insights").json() == {"insights": []}
+    assert client.get("/observability/insights").json() == {
+        "insights": [],
+        "backfill": None,
+    }
 
     bad = client.post(
         "/observability/insights",
@@ -117,6 +122,7 @@ def test_insight_crud_and_validation(client):
     body = created.json()
     assert body["name"] == "persona_mayor"
     assert body["values"] == ["si", "no"]
+    assert body["backfill"]["status"] == "skipped"
     insight_id = body["id"]
 
     dup = client.post(
@@ -130,13 +136,17 @@ def test_insight_crud_and_validation(client):
     assert dup.status_code == 422
     assert "already exists" in dup.json()["detail"]
 
-    listed = client.get("/observability/insights").json()["insights"]
-    assert len(listed) == 1
-    assert listed[0]["id"] == insight_id
+    listed = client.get("/observability/insights").json()
+    assert len(listed["insights"]) == 1
+    assert listed["insights"][0]["id"] == insight_id
+    assert listed["backfill"] is None
 
     gone = client.delete(f"/observability/insights/{insight_id}")
     assert gone.status_code == 200
-    assert client.get("/observability/insights").json() == {"insights": []}
+    assert client.get("/observability/insights").json() == {
+        "insights": [],
+        "backfill": None,
+    }
 
     missing = client.delete(f"/observability/insights/{insight_id}")
     assert missing.status_code == 404
@@ -397,6 +407,7 @@ def test_extract_accepts_turns_when_store_is_empty(tmp_path, monkeypatch):
         ]
         kinds = [e["kind"] for e in await store.list_events("conv_only")]
         assert "insight.extracted" in kinds
+        assert "conv_only" not in {c["call_id"] for c in hub.list_calls()}
         await hub.aclose()
 
     asyncio.run(run())
@@ -406,8 +417,8 @@ def test_recompute_endpoint_runs_jev(client, monkeypatch):
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
     fake = _FakeClient()
 
-    from observability.insights import extract_call_insights as real_extract
     import observability.routes as routes_mod
+    from observability.insights import extract_call_insights as real_extract
 
     async def _extract(call_id, *, store, emitter, client=None, turns=None):
         return await real_extract(
@@ -415,6 +426,7 @@ def test_recompute_endpoint_runs_jev(client, monkeypatch):
         )
 
     monkeypatch.setattr(routes_mod, "extract_call_insights", _extract)
+    monkeypatch.setattr(routes_mod, "schedule_insight_backfill", lambda *a, **k: None)
 
     _admin(client)
     created = client.post(
@@ -450,3 +462,125 @@ def test_recompute_requires_defs(client):
     r = client.post("/observability/calls/CA-missing/insights")
     assert r.status_code == 422
     assert r.json()["detail"] == "no_insights_defined"
+
+
+def test_extractor_respects_defs_filter(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+
+    async def run():
+        store = await reset_store(tmp_path / "filter.sqlite")
+        hub = reset_hub(store)
+        await hub.ensure_ready()
+        only = await store.create_insight_def(
+            name="urgencia", description="Urgent?", values=["si", "no"]
+        )
+        await store.create_insight_def(
+            name="persona_mayor", description="Elderly?", values=["si", "no"]
+        )
+        await hub.start_call("CA-f", transport="webrtc")
+        await hub.emit(
+            make_event("transcript.user", "CA-f", text="duele", final=True)
+        )
+        fake = _FakeClient()
+        await extract_call_insights(
+            "CA-f", store=store, emitter=hub, client=fake, defs=[only]
+        )
+        assert len(fake.calls) == 1
+        assert fake.calls[0]["question_id"] == "urgencia"
+        await hub.aclose()
+
+    asyncio.run(run())
+
+
+def test_collect_backfill_skips_eval_and_live(tmp_path):
+    async def run():
+        store = await reset_store(tmp_path / "collect.sqlite")
+        hub = reset_hub(store)
+        await hub.ensure_ready()
+        await hub.start_call("CA-live", transport="webrtc")
+        await hub.start_call("CA-eval", transport="eval")
+        await hub.end_call("CA-eval")
+        await hub.start_call("CA-done", transport="webrtc")
+        await hub.emit(
+            make_event("transcript.user", "CA-done", text="hola", final=True)
+        )
+        await hub.end_call("CA-done")
+        pending = [
+            t for t in asyncio.all_tasks() if t.get_name().startswith("insights")
+        ]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        ids = await collect_backfill_call_ids(store)
+        assert ids == ["CA-done"]
+        await hub.aclose()
+
+    asyncio.run(run())
+
+
+def test_backfill_runs_only_the_new_insight(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+
+    async def run():
+        store = await reset_store(tmp_path / "backfill.sqlite")
+        hub = reset_hub(store)
+        await hub.ensure_ready()
+
+        import observability.insights as insights_mod
+
+        async def _noop(_call_id, **_kwargs):
+            return "ok"
+
+        def _fake_schedule(call_id, *, store, emitter, client=None):
+            return asyncio.create_task(_noop(call_id), name=f"insights:{call_id}")
+
+        monkeypatch.setattr(insights_mod, "schedule_extract", _fake_schedule)
+
+        await store.create_insight_def(
+            name="old_label", description="Old?", values=["si", "no"]
+        )
+        new = await store.create_insight_def(
+            name="new_label", description="New?", values=["si", "no"]
+        )
+        for cid in ("CA-a", "CA-b"):
+            await hub.start_call(cid, transport="webrtc")
+            await hub.emit(
+                make_event("transcript.user", cid, text="soy mayor", final=True)
+            )
+            await hub.end_call(cid)
+
+        fake = _FakeClient()
+        result = await run_insight_backfill(new, store=store, hub=hub, client=fake)
+        assert result["status"] == "done"
+        assert result["ok"] == 2
+        assert {c["question_id"] for c in fake.calls} == {"new_label"}
+        assert len(fake.calls) == 2
+        await hub.aclose()
+
+    asyncio.run(run())
+
+
+def test_create_insight_queues_backfill(client, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    scheduled: list[str] = []
+
+    def _schedule(definition, *, store, hub, client=None):
+        scheduled.append(definition["name"])
+        return None
+
+    import observability.routes as routes_mod
+
+    monkeypatch.setattr(routes_mod, "schedule_insight_backfill", _schedule)
+    monkeypatch.setattr(routes_mod, "typesafe_configured", lambda: True)
+
+    _admin(client)
+    created = client.post(
+        "/observability/insights",
+        json={
+            "name": "persona_mayor",
+            "description": "Elderly?",
+            "values": ["si", "no"],
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["backfill"]["status"] == "queued"
+    assert scheduled == ["persona_mayor"]
