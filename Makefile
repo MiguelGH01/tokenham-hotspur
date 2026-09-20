@@ -67,9 +67,9 @@ help:
 	@echo "                    server/run-logs/recordings/)"
 	@echo "                    on PowerShell from server/: .\\run-twilio.ps1"
 	@echo "make run-eval     - run the bot as a headless eval server (ws://localhost:7860), for running one scenario yourself"
-	@echo "make evals        - run every scenario under server/evals/PR-*, restarting the bot fresh before each"
-	@echo "                    one so Flow/context state never leaks between scenarios"
-	@echo "                    (full logs written to server/eval-runs/<scenario>.eval.log + .debug.log)"
+	@echo "make evals        - alias of make eval: every GREEN scenario in $(EVALS_DIR)/"
+	@echo "                    (fresh bot per scenario so Flow/context state never leaks;"
+	@echo "                    logs under server/eval-runs/<run-timestamp>/)"
 	@echo "make tunnel       - ngrok the bot's port and print the ready-to-paste wss:// dashboard endpoint"
 	@echo "make guard        - refuse/wait if a scored run is dialling: run it before restarting the endpoint"
 	@echo "make cost         - euros and seconds per recorded call, with p50/p95 (list prices, see call_cost.py)"
@@ -233,6 +233,9 @@ concurrency:
 
 concurrency-bot-stop:
 	@pkill -f "bot.py -t twilio --port $(CONCURRENCY_PORT)" 2>/dev/null || true
+
+# Help still says `make evals`; keep that name working. The suite is `eval`.
+evals: eval
 
 # -k so a pre-Run-All check reports every failure, not just the first one.
 eval:

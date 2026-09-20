@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from pydantic import BaseModel, Field
-from starlette.responses import Response as StarletteResponse
+from starlette.responses import FileResponse, Response as StarletteResponse
 
 import reception_notices
 from observability.auth import (
@@ -392,6 +392,14 @@ def mount_observability_routes(app: FastAPI) -> None:
     # only — this port is what `make tunnel` exposes, and a notice changes which
     # appointments the agent will offer.
     reception_notices.mount_notices_routes(app, write_guard=require_admin)
+
+    # Browsers ask the origin (not /console/) for a tab icon. Serve the mark so
+    # both the Pipecat client at / and the centralita at /console/ show it.
+    @app.get("/favicon.ico", include_in_schema=False)
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        icon = CONSOLE_DIR / "favicon.svg"
+        return FileResponse(icon, media_type="image/svg+xml")
 
     # Same origin as the API and the WebRTC offer endpoint: no CORS, no build.
     # Auth routes above must be registered before this mount.

@@ -1,184 +1,216 @@
-# pipecat-quickstart
+<p align="center">
+  <img src="server/observability/console/healthcheck.svg" alt="healthcheck" width="280">
+</p>
 
-A Pipecat AI voice agent built with a cascade pipeline (STT → LLM → TTS).
+<h1 align="center">healthcheck</h1>
 
-- **Pipeline**: cascade — Soniox STT → LLM → ElevenLabs TTS (Deepgram via `STT_PROVIDER` / `TTS_PROVIDER`)
-- **Voice agent switch**: `VOICE_AGENT=carloslabs` (default Pipecat) or `elevenagent` (ElevenLabs ConvAI bridge under `elevenagent/`). Same Prosper `/ws` URL and same observability console. With elevenagent, the console reads conversation transcripts and tool calls from the ElevenLabs ConvAI API (live poll + batch on open), not only from local SQLite.
-- **LLM**: `cloudflare` by default; `helmcode`, `gemini` and `openai` selectable with `LLM_PROVIDER`
-- **Conversation**: Pipecat Flows graph in `server/flows/` (identify → slot → confirm → goodbye)
-- **Transports**: Twilio-shaped WebSocket (what the challenge harness dials), WebRTC for the
-  browser, and a headless `eval` transport
+<p align="center">
+  <strong>Tokenham Hotspur</strong> · HackSpain 2026<br>
+  Recepcionista de voz para Clínica Arenal
+</p>
 
-- **Bot Type**: Web
-- **Transport(s)**: SmallWebRTC, Daily (WebRTC)
-- **Pipeline**: Cascade
-  - **STT**: Deepgram
-  - **LLM**: OpenAI Responses
-  - **TTS**: Cartesia
+---
 
-## Setup
+**healthcheck** es el agente de voz de [Tokenham Hotspur](https://github.com/MiguelGH01/tokenham-hotspur) para el hackathon [HackSpain](https://hackspain.getprosperapp.com/). Atiende las llamadas de citas de **Clínica Arenal**: identifica a quien llama, consulta la ficha y la agenda reales, y reserva, mueve o cancela — o rechaza y escala cuando no toca citar.
 
-| Thing | Where it comes from |
+La voz es una pieza de un sistema más grande: reglas de la clínica en código, un envío por llamada, y una centralita web para ver el turno, las conversaciones y por qué el agente hizo lo que hizo.
+
+```
+Llamada → STT → agente (Flows) → TTS
+                 ↘ clinic API (solo lectura)
+                 ↘ submit de la acción
+                 ↘ consola /console/
+```
+
+## Cómo usarlo
+
+Todo se lanza desde la **raíz del repo**. `make help` lista los mismos comandos.
+
+### 1. Requisitos
+
+| Qué | Dónde sale |
 |---|---|
-| [uv](https://docs.astral.sh/uv/) | `brew install uv`. It installs the right Python (3.12) for you. |
-| Team API key (`pk-…`) and dashboard login | The organisers' desk. One key per team — ask a teammate, don't request a new one: rotating it breaks everyone else. |
-| Soniox API key | [console.soniox.com](https://console.soniox.com/) (`SONIOX_API_KEY`) — carloslabs only |
-| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`). For `VOICE_AGENT=elevenagent` also set `ELEVEN_AGENT_ID` (ConvAI agent). |
-| [Node.js](https://nodejs.org/) 20+ | Only when `VOICE_AGENT=elevenagent` (Python spawns `elevenagent/` for you). |
-| Deepgram API key | Only if you set `STT_PROVIDER=deepgram` or `TTS_PROVIDER=deepgram` |
-| An LLM key | Cloudflare / Helmcode / Gemini / OpenAI — carloslabs only |
-| [ngrok](https://ngrok.com/) account | Only for real calls from the dashboard. Free tier is enough. |
+| [uv](https://docs.astral.sh/uv/) | `brew install uv` — instala Python 3.12 |
+| Clave de equipo (`pk-…`) y login del dashboard | Mesa de organización. Una clave por equipo: si la rotas, se cae el resto |
+| LLM | Cloudflare (por defecto), o Helmcode / Gemini / OpenAI con `LLM_PROVIDER` |
+| STT | Soniox (`SONIOX_API_KEY`) o Deepgram |
+| TTS | ElevenLabs (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`) o Deepgram |
+| [ngrok](https://ngrok.com/) | Solo para llamadas reales desde el dashboard. El plan gratis basta |
+| Node.js 20+ | Solo si `VOICE_AGENT=elevenagent` |
 
-1. **Navigate to server directory**:
+### 2. Entorno
 
 ```bash
 cd server
 uv sync
-cp .env.example .env    # then fill in CLINIC_API_KEY, SONIOX_API_KEY, ELEVENLABS_* and your LLM key
+cp .env.example .env
 ```
 
-`.env` is git-ignored. Never commit keys.
+Rellena al menos:
 
-## 2. Run the tests (no keys, no network)
+- `CLINIC_API_KEY` — la `pk-…` del equipo
+- la clave del LLM que uses (`CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`, o la del proveedor que pongas en `LLM_PROVIDER`)
+- `SONIOX_API_KEY` si el STT es Soniox
+- `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` si el TTS es ElevenLabs
+
+`.env` está en `.gitignore`. No lo subas.
+
+Opcional:
+
+- `VOICE_AGENT=carloslabs` (defecto, pipeline Pipecat) o `elevenagent` (puente ConvAI en `elevenagent/`)
+- `TYPESAFE_API_KEY` — banderas rojas en llamada y la pestaña Insights de la consola
+- `NGROK_DOMAIN` — dominio reservado para que el `wss://` no cambie al reiniciar
+
+### 3. Tests (sin red, sin claves)
 
 ```bash
-cd server
-uv run pytest
+make test          # desde la raíz; equivale a cd server && uv run pytest tests/
 ```
 
-These cover the pure logic: slot picking, national-id validation, submission, and the LLM
-stall guard. They should all pass on a fresh clone.
+Cubren la lógica pura: huecos, DNI/NIE, envío, consola, reglas de la clínica.
 
-## 3. Talk to it in the browser
+### 4. Consola web (la app)
 
-The quickest way to hear the bot, with no tunnel or dashboard involved.
+La centralita vive en [http://localhost:7860/console/](http://localhost:7860/console/). Mismo origen que el bot: Overview, Conversations, Insights, avisos de recepción, y **Place test call**.
 
 ```bash
-make run-webrtc         # from the repo root
+make console-seed  # turno sintético, para que Overview no esté vacío
+make console       # arranca el bot y abre la consola
 ```
 
-Open <http://localhost:7860>, allow the microphone, and connect.
+En el login:
 
-## 4. Headless evals
+- `admin` — centralita
+- `PR01` … `PR12` — horario de ese médico
 
-Scripted conversations played against the running bot in text mode — fast, and no audio needed.
-They call the real clinic API, so `.env` must be filled in.
-
-Scenarios live in one folder per challenge problem: `server/evals/PR-01/`, `PR-03/`, … Each
-file is one published practice case, and passes when the bot makes the expected tool calls with
-the expected arguments.
-
-Run all of them, with a fresh bot before each one so no conversation state leaks between
-scenarios:
+Otras utilidades:
 
 ```bash
-make evals              # from the repo root; logs in server/eval-runs/
+make console-reset                         # borra la SQLite de demo
+make console CONSOLE_DB=data/centralita.sqlite   # lee la base “de verdad”
 ```
 
-`make evals` starts its own bot on port 7860, so stop `make run-twilio` / `make run-webrtc`
-first — otherwise the scenarios are played against whatever is already listening there.
+Ctrl-C para el bot.
 
-Run a single scenario by hand:
+### 5. Hablar con el agente en el navegador
+
+Sin túnel ni dashboard. El cliente WebRTC de Pipecat queda en [http://localhost:7860](http://localhost:7860).
+
+```bash
+make run-webrtc    # micrófono en el navegador
+```
+
+Permite el micro y conecta. El log va a `server/bot.log` y a `server/run-logs/webrtc-<timestamp>/`.
+
+### 6. Evals (conversaciones scriptadas)
+
+Escenarios en texto contra el bot, sin audio. Llamán a la API de la clínica: `.env` tiene que estar completo.
+
+Los YAML están en `server/evals/` (un fichero por caso). Cada run levanta un bot fresco en el puerto 7861 para que no se mezcle el estado entre escenarios.
+
+```bash
+make eval                          # todos los escenarios GREEN
+make eval-one S=simple_booking_chloe
+make evals-parallel JOBS=4         # los mismos, en paralelo
+```
+
+Un escenario a mano:
 
 ```bash
 # terminal 1
-cd server
-uv run bot.py -t eval
+make run-eval                      # bot headless en :7860
 
 # terminal 2
 cd server
-PYTHONPATH=. uv run pipecat eval run evals/PR-01/simple_booking_chloe.yaml -v
+PYTHONPATH=. uv run pipecat eval run evals/simple_booking_chloe.yaml -v
 ```
 
-Restart terminal 1 before the next scenario: the bot keeps its conversation between runs.
-(`make run-eval` is listed in `make help` but has no recipe yet — use the command above.)
+Reinicia el terminal 1 antes del siguiente escenario: el bot conserva la conversación.
 
-## 5. Real calls from the dashboard
+`make evals` es un alias de `make eval`. No lo lances a la vez que `make run` / `make console`: compiten por el puerto.
 
-This is the path that gets scored. The harness dials your machine over a WebSocket, so your
-laptop has to be reachable from the internet for the whole run.
+### 7. Llamadas reales (lo que puntúa)
 
-### Shortcut: everything at once
+El harness de Prosper marca tu máquina por WebSocket. Tiene que ser alcanzable desde internet durante todo el run (Run All abre **10** sockets a la vez).
+
+#### Atajo: todo a la vez
 
 ```bash
-make run                # bot + ngrok tunnel + open http://localhost:7860/console/
+make run
 ```
 
-One process on port 7860 (Prosper `/ws`, WebRTC Place-test-call, and the console). Ctrl-C stops
-the bot and the tunnel. Paste the `wss://…/ws` line ngrok prints into the dashboard.
+Un proceso en el puerto 7860 (Prosper `/ws`, WebRTC de Place-test-call, y la consola) más el túnel ngrok. Ctrl-C para el bot y el túnel. Copia la línea `wss://…/ws` que imprime ngrok en **Settings → Integration** del dashboard.
 
-### 5.1 Start the bot (manual)
+Por defecto el Makefile usa el dominio reservado `NGROK_DOMAIN`. Para otro:
 
 ```bash
-make run-twilio         # from the repo root; keep this terminal open
+make run NGROK_DOMAIN=tu-dominio.ngrok-free.dev
 ```
 
-Wait for `Uvicorn running on http://localhost:7860`. The boot log prints `VOICE_AGENT=carloslabs`
-or `VOICE_AGENT=elevenagent`. If you want a log file to search later:
+#### A mano
+
+```bash
+make run-twilio     # deja este terminal abierto; espera "Uvicorn running on http://localhost:7860"
+make tunnel         # en otro terminal; pega el wss:// en el dashboard
+```
+
+El log de arranque dice `VOICE_AGENT=carloslabs` o `elevenagent`. Para guardar log:
 
 ```bash
 make run-twilio 2>&1 | tee /tmp/bot.log
 ```
 
-To use the ElevenLabs ConvAI bridge instead of the Pipecat cascade, set in `server/.env`:
+Antes de reiniciar el endpoint en medio de un scored run:
+
+```bash
+make guard          # espera / se niega si hay un run en curso
+make guard FORCE=1  # salta la comprobación
+```
+
+#### ElevenLabs ConvAI
+
+En `server/.env`:
 
 ```bash
 VOICE_AGENT=elevenagent
-ELEVEN_AGENT_ID=your_agent_id
+ELEVEN_AGENT_ID=tu_agent_id
 ```
 
-Python starts `elevenagent/` on port 3000, proxies Prosper `/ws` and `/tools/*` through 7860, and
-feeds the same observability console. Place-test-call (WebRTC) also bridges to that agent when
-`VOICE_AGENT=elevenagent`. Point ElevenLabs tool webhooks at
-`https://your-ngrok-host/tools/…` (same host as the Prosper endpoint, not `:3000`).
-Details: [elevenagent/README.md](elevenagent/README.md).
+Python arranca `elevenagent/` en el puerto 3000, proxifica `/ws` y `/tools/*` por 7860, y alimenta la misma consola. Con elevenagent, la consola lee transcripts y tools de la API ConvAI de ElevenLabs (poll en vivo y un batch al abrir), no solo de la SQLite local. Place-test-call también puentea a ese agente. Las tools de ElevenLabs deben apuntar a `https://tu-host-ngrok/tools/…` (el mismo host que Prosper, no `:3000`). Detalle: [elevenagent/README.md](elevenagent/README.md).
 
-Evals always use carloslabs regardless of `VOICE_AGENT`.
+Los evals usan siempre carloslabs, da igual `VOICE_AGENT`.
 
-### 5.2 Open the tunnel
-
-## Project Structure
-
-```
-├── Makefile                 # run-webrtc, run-twilio, tunnel
-├── scripts/tunnel.sh        # starts ngrok and prints the wss:// endpoint
-├── docs/                    # requirements, platform API, agent process map
-└── server/
-    ├── bot.py               # entry point: pipeline, transports, per-call wiring
-    ├── flow/                # conversation graph: prompts, tools, nodes
-    ├── clinic/              # clinic API client and static catalogue
-    ├── booking.py           # slot selection rules
-    ├── national_id.py       # DNI/NIE validation
-    ├── submission.py        # one submission per call, guaranteed
-    ├── gateway_llm.py       # LLM service that survives a stalled stream
-    ├── evals/               # scripted scenarios for `pipecat eval`
-    ├── tests/               # pytest suite
-    └── .env.example         # every environment variable the bot reads
-```
-
-## Deployment
-
-The bot runs on your machine behind the tunnel (section 5); that is the only path the challenge
-needs. The scaffold's Pipecat Cloud files (`Dockerfile`, `pcc-deploy.toml`) were removed: the
-image could not load `clinic.json`, which lives in the repo root outside the `server/` build
-context. To deploy to the cloud, restore them from git history and move `clinic.json` into
-`server/` first.
-
-## Building with an AI coding agent
-
-Extending this bot with Claude Code, Codex, or another AI coding assistant? Give it live, accurate Pipecat context instead of stale training data with the **Pipecat Context Hub** — a local index of Pipecat docs, examples, and API source your agent queries over MCP:
+### 8. Otros comandos
 
 ```bash
-# The Context Hub ships with the CLI
-uv tool install "pipecat-ai[cli]"
-pipecat context-hub install
+make cost            # € y segundos por llamada grabada (p50/p95)
+make oracle          # cobertura offline de los casos publicados
+make oracle-fetch    # refresca el roster de organización
+make oracle-check    # el juez no debe rechazar ninguna respuesta publicada
+make concurrency     # N sockets Twilio locales (N=20 por defecto; Run All abre 10)
+make transform-logs  # normaliza logs sueltos en server/run-logs/
 ```
 
-`install` registers the MCP server with each coding agent it finds and builds the index — a few minutes and about 900 MB the first time. MCP servers load at session start, so do this before opening your coding session, and note the server won't start against an empty index. See the [Pipecat Context Hub docs](https://docs.pipecat.ai/api-reference/context-hub) for the full setup.
+## Estructura
 
-## Learn More
+```
+├── Makefile                      # run, console, eval, tunnel, …
+├── scripts/tunnel.sh             # ngrok → wss://…/ws listo para pegar
+├── clinic.json                   # catálogo estático de la clínica
+├── docs/                         # requisitos, API, mapa del agente
+├── elevenagent/                  # puente ConvAI (opcional)
+└── server/
+    ├── bot.py                    # pipeline, transports, arranque
+    ├── flows/                    # grafo de la conversación
+    ├── observability/console/    # centralita (esta es la web app)
+    ├── evals/                    # escenarios de `make eval`
+    ├── tests/
+    └── .env.example
+```
 
-- [Pipecat Documentation](https://docs.pipecat.ai/)
-- [Pipecat GitHub](https://github.com/pipecat-ai/pipecat)
-- [Pipecat Examples](https://github.com/pipecat-ai/pipecat-examples)
-- [Discord Community](https://discord.gg/pipecat)
+## Docs
+
+- [Índice](docs/INDEX.md)
+- [Qué construimos](docs/requirements/01-product.md)
+- [Operaciones (claves, túnel, dashboard)](docs/requirements/08-operations.md)
+- [Mapa del agente](docs/agent/README.md)

@@ -2379,9 +2379,9 @@ function showOnly(which) {
   $("#viewLogin").hidden = which !== "login";
   $("#shellAdmin").hidden = which !== "admin";
   $("#shellDoctor").hidden = which !== "doctor";
-  document.title = which === "admin" ? "Arenal Centralita"
-    : which === "doctor" ? "Mi horario · Clínica Arenal"
-    : "Clínica Arenal";
+  document.title = which === "admin" ? "healthcheck"
+    : which === "doctor" ? "healthcheck · horario"
+    : "healthcheck";
   if (which !== "doctor") {
     stopCalPoll();
     inboxOpen = false;
