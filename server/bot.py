@@ -73,7 +73,7 @@ from booking import MADRID
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
 from emergency_watch import EmergencyWatch
-from flows.common import GREETING
+from flows.common import GREETING, HOLDING_LINE, localized
 from flows.rails import RAILS
 from flows.reception import create_reception_node
 from liveness import SilenceWatchdog, is_backchannel
@@ -615,6 +615,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         # Placed before the LLM so both frames it emits travel downstream correctly.
         watchdog = SilenceWatchdog(
             silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
+            # flow_manager is assigned below, before this can ever fire (a
+            # StartFrame arrives well after flow setup) — same lazy-closure
+            # pattern as is_active below.
+            filler=lambda: localized(HOLDING_LINE, flow_manager.state.get("language")),
             rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
             max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "0")),
             is_active=lambda: flow_started,

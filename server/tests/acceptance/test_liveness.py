@@ -227,3 +227,28 @@ def test_a_turn_the_model_never_answers_is_asked_for_again():
         run(watch._maybe_nudge())
     assert _filler_count(pushed) == 3
     assert _rerun_count(pushed) == 2
+
+
+def test_a_callable_filler_is_resolved_at_speak_time_not_at_construction():
+    """bot.py passes a lambda reading the call's pinned language, which can
+    change (via pin_language) between one nudge and the next."""
+    language = {"current": "en"}
+    clock = _Clock()
+    watch, pushed = _watchdog(
+        clock, silence_secs=6.0, filler=lambda: "Un momento" if language["current"] == "es" else "One moment"
+    )
+
+    def fillers():
+        return [frame.text for frame in pushed if isinstance(frame, TTSSpeakFrame)]
+
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert fillers() == ["One moment"]
+
+    language["current"] = "es"
+    watch._armed_at = None
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert fillers() == ["One moment", "Un momento"]

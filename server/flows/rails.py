@@ -249,7 +249,7 @@ async def answer_clinic_question(args, flow_manager: FlowManager):
 
 
 def _schema(name: str, description: str, handler, properties=None, required=None) -> FlowsFunctionSchema:
-    if name in TOOL_PROGRESS:
+    if name in TOOL_PROGRESS["en"]:
         handler = announce(name)(handler)
     return FlowsFunctionSchema(
         name=name,

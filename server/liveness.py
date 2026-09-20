@@ -174,7 +174,7 @@ class SilenceWatchdog(FrameProcessor):
         self,
         *,
         silence_secs: float = DEFAULT_SILENCE_SECS,
-        filler: str = DEFAULT_FILLER,
+        filler: str | Callable[[], str] = DEFAULT_FILLER,
         max_reruns: int = DEFAULT_MAX_RERUNS,
         rerun_after_secs: float = DEFAULT_RERUN_AFTER_SECS,
         poll_secs: float = 0.5,
@@ -296,7 +296,8 @@ class SilenceWatchdog(FrameProcessor):
         # last filler".
         self._fillers_sent += 1
         self._awaiting_filler_voice = True
-        await self.push_frame(TTSSpeakFrame(text=self._filler))
+        text = self._filler() if callable(self._filler) else self._filler
+        await self.push_frame(TTSSpeakFrame(text=text))
         if decision.rerun:
             self._reruns_sent += 1
             await self.push_frame(LLMRunFrame())

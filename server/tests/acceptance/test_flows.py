@@ -73,7 +73,7 @@ def test_a_tool_speaks_a_fixed_line_before_it_runs():
     manager = SimpleNamespace(state={}, worker=SimpleNamespace(queue_frames=queue_frames))
     assert asyncio.run(lookup({}, manager)) == "ran"
     assert isinstance(spoken[0], TTSSpeakFrame)
-    assert spoken[0].text == TOOL_PROGRESS["search_patient"]
+    assert spoken[0].text == TOOL_PROGRESS["en"]["search_patient"]
     assert {fn.name for fn in create_identify_node()["functions"]} >= {
         "search_patient",
         "start_registration",
@@ -961,3 +961,50 @@ def test_a_slot_already_offered_is_skipped_on_the_next_search():
     assert manager.state["offers"][first["offer_id"]]["slot"].startswith("2026-10-05")
     assert second["status"] == "offer"
     assert manager.state["offers"][second["offer_id"]]["slot"].startswith("2026-10-06")
+
+
+def test_tool_progress_lines_follow_the_pinned_language():
+    """flows.rails.pin_language sets state["language"]; the filler speak_tool
+    queues before running a tool must switch with it, not stay in English."""
+    from flows.common import TOOL_PROGRESS, speak_tool
+
+    for language in ("en", "es"):
+        spoken = []
+
+        async def queue_frames(frames):
+            spoken.extend(frames)
+
+        manager = SimpleNamespace(
+            state={"language": language}, worker=SimpleNamespace(queue_frames=queue_frames)
+        )
+        asyncio.run(speak_tool(manager, "search_patient"))
+        assert spoken[0].text == TOOL_PROGRESS[language]["search_patient"]
+
+
+def test_tool_progress_falls_back_to_english_for_an_unlocalized_language():
+    from flows.common import TOOL_PROGRESS, speak_tool
+
+    spoken = []
+
+    async def queue_frames(frames):
+        spoken.extend(frames)
+
+    manager = SimpleNamespace(
+        state={"language": "eu"}, worker=SimpleNamespace(queue_frames=queue_frames)
+    )
+    asyncio.run(speak_tool(manager, "search_patient"))
+    assert spoken[0].text == TOOL_PROGRESS["en"]["search_patient"]
+
+
+def test_role_message_requires_pinning_before_switching_language():
+    from flows.common import ROLE_MESSAGE
+
+    assert "pin_language" in ROLE_MESSAGE
+
+
+def test_holding_line_follows_the_pinned_language():
+    from flows.common import HOLDING_LINE, localized
+
+    assert localized(HOLDING_LINE, "es") == HOLDING_LINE["es"]
+    assert localized(HOLDING_LINE, "eu") == HOLDING_LINE["en"]
+    assert localized(HOLDING_LINE, None) == HOLDING_LINE["en"]
