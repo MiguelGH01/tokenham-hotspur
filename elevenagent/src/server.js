@@ -42,6 +42,7 @@ wss.on("connection", (prosper) => {
   let callObserved = false;
   let firstWordEmitted = false;
   let startedAtMs = Date.now();
+  let elevenConversationId = null;
   const pendingAudio = [];
   const bargeIn = createBargeInGate();
 
@@ -49,7 +50,7 @@ wss.on("connection", (prosper) => {
     if (closing) return;
     closing = true;
     if (callObserved && callId) {
-      observer.callEnded(callId);
+      observer.callEnded(callId, { conversationId: elevenConversationId });
       callObserved = false;
     }
     if (callId) unregisterCall(callId);
@@ -90,6 +91,8 @@ wss.on("connection", (prosper) => {
               console.error(JSON.stringify({ type: "audio_format_error", call_id: callId, input: meta.user_input_audio_format, output: meta.agent_output_audio_format }));
               return closeBoth(1011, "ElevenLabs agent audio must be ulaw_8000 in both directions");
             }
+            const bound = observer.handleElevenEvent(callId, event);
+            if (bound.conversationId) elevenConversationId = bound.conversationId;
           } else if (event.type === "audio" && event.audio_event?.audio_base_64) {
             if (bargeIn.shouldForwardAudio(event.audio_event.event_id)) {
               if (!firstWordEmitted) {

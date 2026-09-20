@@ -44,6 +44,53 @@ test("handleElevenEvent maps user and agent transcripts", async () => {
   assert.ok(kinds.includes("metrics.first_word"));
 });
 
+test("handleElevenEvent binds conversation_id and maps webhook tools", async () => {
+  const posts = [];
+  const observer = createObserver({
+    obsIngestUrl: "http://ingest.test/internal/obs/events",
+    obsIngestToken: "tok",
+    fetchImpl: async (_url, init) => {
+      posts.push(JSON.parse(init.body));
+      return { ok: true, status: 200 };
+    },
+  });
+
+  const bound = observer.handleElevenEvent("CA-1", {
+    type: "conversation_initiation_metadata",
+    conversation_initiation_metadata_event: { conversation_id: "conv_abc" },
+  });
+  assert.equal(bound.conversationId, "conv_abc");
+
+  observer.handleElevenEvent("CA-1", {
+    type: "agent_tool_response",
+    agent_tool_response: {
+      tool_name: "transfer_to_number",
+      tool_call_id: "tc-1",
+      status: "success",
+      is_error: false,
+    },
+  });
+  observer.handleElevenEvent("CA-1", {
+    type: "agent_tool_response",
+    agent_tool_response: {
+      tool_name: "book",
+      tool_call_id: "tc-book",
+      status: "success",
+      is_error: false,
+    },
+  });
+
+  await new Promise((r) => setTimeout(r, 40));
+  const kinds = posts.map((p) => p.kind);
+  assert.ok(kinds.includes("eleven.bound"));
+  const boundPost = posts.find((p) => p.kind === "eleven.bound");
+  assert.equal(boundPost.payload.conversation_id, "conv_abc");
+  const toolCalls = posts.filter((p) => p.kind === "tool.called");
+  assert.equal(toolCalls.length, 1);
+  assert.equal(toolCalls[0].payload.name, "transfer_to_number");
+  assert.equal(toolCalls[0].payload.request_id, "tc-1");
+});
+
 test("SUBMIT_VERBS and TOOL_TO_NODE cover the six actions", () => {
   assert.equal(SUBMIT_VERBS.book, "BOOK");
   assert.equal(SUBMIT_VERBS.escalate, "ESCALATE");

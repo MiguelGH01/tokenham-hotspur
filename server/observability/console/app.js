@@ -196,6 +196,16 @@ const API = {
     if (!r.ok) throw new Error("delete insight " + r.status);
     return r.json();
   },
+  async recomputeInsights(id) {
+    const r = await fetch("/observability/calls/" + encodeURIComponent(id) + "/insights", {
+      method: "POST",
+    });
+    if (r.ok) return r.json();
+    let detail = "";
+    try { detail = String((await r.json()).detail || ""); } catch { /* ignore */ }
+    if (r.status === 401) detail = "Admin session required.";
+    throw new Error(detail || "recompute " + r.status);
+  },
   async login(key) {
     const r = await fetch("/auth/login", {
       method: "POST",
@@ -257,9 +267,31 @@ function fromSummary(s) {
   c.submitted = !!s.submitted;
   if (s.patient_name) c.fields.patient = s.patient_name;
   if (s.patient_id) c.fields.patient_id = s.patient_id;
+  if (s.call_summary_title) c.label = s.call_summary_title;
+  if (s.eleven_conversation_id) c.elevenConversationId = s.eleven_conversation_id;
+  if (Array.isArray(s.tool_names) && s.tool_names.length) c.toolNames = s.tool_names;
   if (s.primary_action) c.primaryAction = s.primary_action;
   if (s.primary_reason) c.primaryReason = s.primary_reason;
   return c;
+}
+
+function twinCall(callId, evTs) {
+  const existing = state.calls.get(callId);
+  if (existing) return existing;
+  const id = String(callId || "");
+  for (const c of state.calls.values()) {
+    if (c.elevenConversationId && c.elevenConversationId === id) return c;
+  }
+  if (!id.startsWith("conv_")) return null;
+  const t = evTs || simNow();
+  for (const c of state.calls.values()) {
+    const webrtc = c.test || String(c.id).startsWith("CA-webrtc") || c.transport === "webrtc";
+    if (!webrtc) continue;
+    if (Math.abs((c.startedAt || t) - t) > 120000) continue;
+    c.elevenConversationId = id;
+    return c;
+  }
+  return null;
 }
 
 /* One projection for both replayed history and the live socket. */
@@ -294,12 +326,20 @@ function applyEvent(c, ev, live) {
       c.stream.push({ t: "tool", name: p.name, args: p.args || {}, ts: t, open: true, fresh: live }); break;
     case "tool.returned": {
       const rule = (p.reason_codes || [])[0] || null;
+      let found = false;
       for (let i = c.stream.length - 1; i >= 0; i--) {
         const it = c.stream[i];
         if (it.t === "tool" && it.name === p.name && it.open) {
           Object.assign(it, { open: false, status: p.status, next: p.next_node, why: p.justification, rule });
+          found = true;
           break;
         }
+      }
+      if (!found) {
+        c.stream.push({
+          t: "tool", name: p.name, args: p.args || {}, ts: t, open: false,
+          status: p.status, next: p.next_node, why: p.justification, rule, fresh: live
+        });
       }
       const nxt = p.next_node;
       if (nxt && nxt !== c.node) {
@@ -457,7 +497,8 @@ function traceRow(item){
       if(item.rule) l1.appendChild(el("span","pill rule", item.rule));
     }
     body.appendChild(l1);
-    if(item.why) body.appendChild(el("div","why", item.why));
+    const why = toolWhy(item);
+    if(why) body.appendChild(el("div","why", why));
     w.appendChild(body);
     return w;
   }
@@ -495,8 +536,17 @@ function traceRow(item){
   return null;
 }
 
+function toolWhy(item){
+  if(!item || !item.why) return null;
+  if(item.status === "ok" || item.status === "success") return null;
+  const text = String(item.why).trim();
+  if(!text || text.startsWith("{") || text.startsWith("[")) return null;
+  return text;
+}
+
 function nodeFor(item){
   if(item.t==="bot"||item.t==="user"||item.t==="interim") return bubble(item);
+  if(item.t==="tool") return traceRow(item);
   if(!state.trace) return null;
   return traceRow(item);
 }
@@ -1338,7 +1388,7 @@ function renderWhy(c){
     const e = el("div","empty"); e.appendChild(el("b",null,"Nothing on the line"));
     e.appendChild(el("span",null,"Every transition here is produced by a tool result, so a selected call always has a reason for each step."));
     host.appendChild(e); return; }
-  $("#whyCount").textContent = c.trail.length + " steps";
+  $("#whyCount").textContent = "";
 
   /* the line */
   const s0 = el("div","sect");
@@ -1359,6 +1409,34 @@ function renderWhy(c){
     s0.appendChild(h);
   }
   host.appendChild(s0);
+
+  const tools = (c.stream || []).filter((it) => it.t === "tool");
+  $("#whyCount").textContent = tools.length
+    ? tools.length + " tool" + (tools.length === 1 ? "" : "s")
+    : (c.trail.length + " steps");
+  const sTools = el("div","sect");
+  const ht = el("h3",null,"Tool calls");
+  ht.appendChild(el("span","n", tools.length ? String(tools.length) : ""));
+  sTools.appendChild(ht);
+  if (!tools.length) {
+    sTools.appendChild(el("div","guard","ElevenLabs did not record any tool calls on this conversation."));
+  } else {
+    tools.forEach((it) => {
+      const row = el("div","ntc-row");
+      const tone = it.status === "error" ? "bad" : it.open ? "warn" : "ok";
+      row.appendChild(el("span","pill " + tone, it.name));
+      const body = el("div","body");
+      const args = Object.entries(it.args || {}).map(([k, v]) =>
+        k + "=" + (v === null ? "null" : Array.isArray(v) ? "[" + v.join(",") + "]" : String(v))).join("  ");
+      if (args) body.appendChild(el("div","what", args));
+      const why = toolWhy(it);
+      if (it.open) body.appendChild(el("div","when", "in flight"));
+      else if (why) body.appendChild(el("div","when", why));
+      row.appendChild(body);
+      sTools.appendChild(row);
+    });
+  }
+  host.appendChild(sTools);
 
   /* decision trail */
   const s1 = el("div","sect");
@@ -1429,6 +1507,52 @@ function renderWhy(c){
   host.appendChild(s3);
 }
 
+function recomputeButton(c){
+  const b = el("button","btn", c._insightBusy ? "Running Jev…" : "Recalculate");
+  b.type = "button";
+  b.style.marginTop = "8px";
+  b.disabled = !!c._insightBusy;
+  b.addEventListener("click", () => recomputeCallInsights(c));
+  return b;
+}
+
+async function recomputeCallInsights(c){
+  if (!c || c._insightBusy) return;
+  if (!insightDefs.length) {
+    try { await loadInsights(); } catch (err) { console.error(err); }
+  }
+  if (!insightDefs.length) { setView("insights"); return; }
+  c._insightBusy = true;
+  insightDefs.forEach((d) => {
+    c.insights[d.name] = {
+      insightId: d.id,
+      name: d.name,
+      description: d.description || "",
+      status: "pending",
+    };
+  });
+  renderInsightPane(c);
+  try {
+    const detail = await API.recomputeInsights(c.id);
+    hydrateCall(c, detail);
+    c._loaded = true;
+    renderLine(c);
+    c._drawn = 0;
+    renderStream(c);
+    renderWhy(c);
+  } catch (err) {
+    insightDefs.forEach((d) => {
+      const cur = c.insights[d.name];
+      if (cur && cur.status === "pending") {
+        cur.status = "failed";
+        cur.error = String(err.message || err);
+      }
+    });
+  }
+  c._insightBusy = false;
+  renderInsightPane(c);
+}
+
 function renderInsightPane(c){
   const host = $("#insightPane");
   if(!host) return;
@@ -1444,12 +1568,13 @@ function renderInsightPane(c){
   }
   const items = Object.values(c.insights || {});
   if(countEl) countEl.textContent = items.length ? items.length + " label" + (items.length>1?"s":"") : "";
+  const defined = insightDefs.length > 0;
 
   if(c.status === "live" && !items.length){
     host.appendChild(el("div","guard","Insights are extracted when the call ends."));
     return;
   }
-  if(!items.length){
+  if(!items.length && !defined){
     const e = el("div","empty");
     e.appendChild(el("b",null,"No insights yet"));
     const link = el("button","btn", "Define insights");
@@ -1461,6 +1586,17 @@ function renderInsightPane(c){
     host.appendChild(e);
     return;
   }
+  if(!items.length && defined){
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"No insights yet"));
+    e.appendChild(el("span",null,"Labels are defined. Run Jev on this conversation."));
+    e.appendChild(recomputeButton(c));
+    host.appendChild(e);
+    return;
+  }
+  const bar = el("div","ins-toolbar");
+  bar.appendChild(recomputeButton(c));
+  host.appendChild(bar);
   items.sort((a,b) => String(a.name).localeCompare(String(b.name))).forEach((ins) => {
     const card = el("div","ins-card" + (ins.status === "failed" ? " is-fail" : ""));
     if(ins.fresh){ card.classList.add("enter"); ins.fresh = false; }
@@ -1520,7 +1656,6 @@ function renderLine(c){
   const b = el("div");
   const id = el("div","id");
   id.appendChild(el("span","tp", c.transport));
-  id.appendChild(el("span",null,c.id));
   if(c.test) id.appendChild(el("span","testchip","test"));
   if(c.ringing) id.appendChild(el("span","ringtag","ringing"));
   b.appendChild(id);
@@ -1528,6 +1663,14 @@ function renderLine(c){
   const meta = el("div","meta");
   meta.appendChild(el("span","nodechip", c.node || "—"));
   if(o) meta.appendChild(el("span","pill "+(o==="ESCALATE"?"esc":o==="NO_ACTION"?"none":"ok"), o));
+  const names = [];
+  (c.toolNames || []).forEach((name) => {
+    if (name && !names.includes(name)) names.push(name);
+  });
+  names.slice(0, 4).forEach((name) => {
+    meta.appendChild(el("span","pill", name));
+  });
+  if (names.length > 4) meta.appendChild(el("span","pill", "+" + (names.length - 4)));
   meta.appendChild(el("span","el", c.status==="live" ? dur(simNow()-c.startedAt) : dur(c.endedAt-c.startedAt)));
   b.appendChild(meta);
   n.appendChild(b);
@@ -1780,27 +1923,38 @@ const MACHINE = new Set(["tool","patch","queue","post"]);
 const CONN = ["Requesting microphone","Opening the audio channel","Bot answered"];
 
 /* =================================================================== views */
+function hydrateCall(c, detail) {
+  c.stream = []; c.trail = []; c.actions = []; c.fields = c.fields || {};
+  c.insights = {};
+  (detail.events || []).forEach((ev) => applyEvent(c, ev, false));
+  const call = detail.call || {};
+  c.node = call.node || c.node;
+  if (call.patient_name) c.fields.patient = call.patient_name;
+  if (call.patient_id) c.fields.patient_id = call.patient_id;
+  c.primaryAction = call.primary_action || c.primaryAction;
+  c.primaryReason = call.primary_reason || c.primaryReason;
+  const fromEvents = (detail.events || [])
+    .filter((ev) => ev.kind === "tool.called" && ev.payload && ev.payload.name)
+    .map((ev) => ev.payload.name);
+  if (fromEvents.length) c.toolNames = fromEvents;
+}
+
 async function select(id) {
   state.sel = id;
   const c = state.calls.get(id);
   lineEls.forEach((n, k) => n.classList.toggle("sel", k === id));
   $("#convTtl").textContent = c ? (c.fields.patient || c.label || "identifying…") : "No line selected";
   $("#convSub").textContent = c
-    ? c.id + " · " + c.transport + " · " + (c.from || "no caller id") + " · " + (c.status === "live" ? "live" : "ended")
+    ? c.transport + " · " + (c.from || "no caller id") + " · " + (c.status === "live" ? "live" : "ended")
     : "pick a line on the switchboard";
   if (!c) return;
-  if (!c._loaded) {
+  const reload = !c._loaded || c.status !== "live";
+  if (reload) {
     const detail = await API.call(id);
     if (detail) {
-      c.stream = []; c.trail = []; c.actions = []; c.fields = c.fields || {};
-      (detail.events || []).forEach((ev) => applyEvent(c, ev, false));
-      const call = detail.call || {};
-      c.node = call.node || c.node;
-      if (call.patient_name) c.fields.patient = call.patient_name;
-      if (call.patient_id) c.fields.patient_id = call.patient_id;
-      c.primaryAction = call.primary_action || c.primaryAction;
-      c.primaryReason = call.primary_reason || c.primaryReason;
+      hydrateCall(c, detail);
       c._loaded = true;
+      renderLine(c);
     }
   }
   c._drawn = 0;
@@ -1942,7 +2096,7 @@ function onSnapshot(msg) {
 }
 function onEvent(ev) {
   if (!ev || !ev.call_id) return;
-  let c = state.calls.get(ev.call_id);
+  let c = twinCall(ev.call_id, ts(ev.ts));
   if (!c) {
     c = blankCall(ev.call_id);
     c.ringing = true;
@@ -1965,6 +2119,18 @@ function onEvent(ev) {
   if (state.sel === c.id) { appendStream(c); renderWhy(c); }
   if (ev.kind === "call.ended" || ev.kind === "submit.posted" || ev.kind === "call.started") {
     API.shift().then((s) => { mapShift(s); lastKpiSig = ""; lastDrill = null; refreshAll(); }).catch(() => {});
+    if (ev.kind === "call.ended") {
+      API.calls().then((d) => {
+        const keepSel = state.sel;
+        replaceCalls(d.calls || []);
+        if (keepSel && state.calls.has(keepSel)) select(keepSel);
+        else if (keepSel) {
+          const still = [...state.calls.values()].find((c) =>
+            c.elevenConversationId === keepSel || c.id === keepSel);
+          if (still) select(still.id);
+        }
+      }).catch(() => {});
+    }
   } else {
     refreshAll();
   }
@@ -2705,6 +2871,7 @@ async function bootAdmin() {
   renderTally();
   setView("overview");
   connect();
+  loadInsights();
 }
 
 /* ===================================================================== boot */

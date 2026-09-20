@@ -353,3 +353,100 @@ def test_end_call_runs_extract_with_mock(tmp_path, monkeypatch):
         await hub.aclose()
 
     asyncio.run(run())
+
+
+def test_turns_from_events_keeps_speech_only():
+    from observability.insights import turns_from_events
+
+    turns = turns_from_events(
+        [
+            {"kind": "call.started", "payload": {}},
+            {"kind": "transcript.bot", "payload": {"text": "Hola"}},
+            {"kind": "tool.called", "payload": {"name": "search_patient"}},
+            {"kind": "transcript.user", "payload": {"text": "Quiero cita"}},
+            {"kind": "transcript.bot", "payload": {"text": "  "}},
+        ]
+    )
+    assert turns == [
+        {"role": "assistant", "text": "Hola"},
+        {"role": "user", "text": "Quiero cita"},
+    ]
+
+
+def test_extract_accepts_turns_when_store_is_empty(tmp_path, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+
+    async def run():
+        store = await reset_store(tmp_path / "el.sqlite")
+        hub = reset_hub(store)
+        await hub.ensure_ready()
+        await store.create_insight_def(
+            name="persona_mayor", description="Elderly?", values=["si", "no"]
+        )
+        fake = _FakeClient()
+        status = await extract_call_insights(
+            "conv_only",
+            store=store,
+            emitter=hub,
+            client=fake,
+            turns=[{"role": "user", "text": "tengo 80"}],
+        )
+        assert status == "ok"
+        assert fake.calls[0]["state"]["conversation"] == [
+            {"role": "user", "text": "tengo 80"}
+        ]
+        kinds = [e["kind"] for e in await store.list_events("conv_only")]
+        assert "insight.extracted" in kinds
+        await hub.aclose()
+
+    asyncio.run(run())
+
+
+def test_recompute_endpoint_runs_jev(client, monkeypatch):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-key")
+    fake = _FakeClient()
+
+    from observability.insights import extract_call_insights as real_extract
+    import observability.routes as routes_mod
+
+    async def _extract(call_id, *, store, emitter, client=None, turns=None):
+        return await real_extract(
+            call_id, store=store, emitter=emitter, client=fake, turns=turns
+        )
+
+    monkeypatch.setattr(routes_mod, "extract_call_insights", _extract)
+
+    _admin(client)
+    created = client.post(
+        "/observability/insights",
+        json={
+            "name": "persona_mayor",
+            "description": "Elderly?",
+            "values": ["si", "no"],
+        },
+    )
+    assert created.status_code == 200
+
+    async def seed():
+        hub = get_hub()
+        await hub.start_call("CA-re", transport="webrtc")
+        await hub.emit(
+            make_event("transcript.user", "CA-re", text="soy mayor", final=True)
+        )
+
+    asyncio.run(seed())
+
+    r = client.post("/observability/calls/CA-re/insights")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "ok"
+    kinds = [e["kind"] for e in body["events"]]
+    assert "insight.extracted" in kinds
+    assert fake.calls and fake.calls[-1]["question_id"] == "persona_mayor"
+
+
+def test_recompute_requires_defs(client):
+    _admin(client)
+    r = client.post("/observability/calls/CA-missing/insights")
+    assert r.status_code == 422
+    assert r.json()["detail"] == "no_insights_defined"

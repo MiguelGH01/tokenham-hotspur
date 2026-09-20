@@ -43,7 +43,7 @@ RUN_URL := http://localhost:$(RUN_PORT)/console/
 TUNNEL_LOG ?= /tmp/hackspain-tunnel.log
 TUNNEL_PID_FILE ?= /tmp/hackspain-tunnel.pid
 
-.PHONY: help console console-seed console-reset run run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop evals-parallel transform-logs
+.PHONY: help console console-seed console-reset run run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test insights-backfill concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop evals-parallel transform-logs
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
@@ -80,6 +80,7 @@ help:
 	@echo "                      --case <case-id> --audit audit-logs/audit-<call>.ndjson"
 	@echo "                    (set NGROK_DOMAIN=your-reserved-domain to keep the URL fixed across restarts)"
 	@echo "make test         - run the server's pytest suite (unit + acceptance)"
+	@echo "make insights-backfill - run Jev on every stored / ElevenLabs conversation"
 	@echo "make concurrency  - dial $(N) concurrent sockets at a local telephony bot and report"
 	@echo "                    (N=20 default; Run All opens 10, PR-02's biggest burst 20)"
 	@echo "make eval         - run every GREEN eval scenario in $(EVALS_DIR)/"
@@ -149,6 +150,9 @@ run-eval:
 
 test:
 	cd $(SERVER_DIR) && uv run pytest tests/
+
+insights-backfill:
+	cd $(SERVER_DIR) && uv run python scripts/backfill_insights.py
 
 ifndef EVAL_RUN_DIR
 EVAL_RUN_DIR := eval-runs/$(shell date +%Y%m%d-%H%M%S)
