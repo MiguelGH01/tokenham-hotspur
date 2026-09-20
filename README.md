@@ -1,8 +1,6 @@
-# Clínica Arenal voice receptionist
+# pipecat-quickstart
 
-A phone receptionist for the HackSpain "El Turno" challenge, built with
-[Pipecat](https://docs.pipecat.ai/). It answers a call, identifies the patient, finds the
-earliest matching appointment through the clinic API, and submits the booking.
+A Pipecat AI voice agent built with a cascade pipeline (STT → LLM → TTS).
 
 - **Pipeline**: cascade — Soniox STT → LLM → ElevenLabs TTS (Deepgram via `STT_PROVIDER` / `TTS_PROVIDER`)
 - **Voice agent switch**: `VOICE_AGENT=carloslabs` (default Pipecat) or `elevenagent` (ElevenLabs ConvAI bridge under `elevenagent/`). Same Prosper `/ws` URL and same observability console.
@@ -11,10 +9,14 @@ earliest matching appointment through the clinic API, and submits the booking.
 - **Transports**: Twilio-shaped WebSocket (what the challenge harness dials), WebRTC for the
   browser, and a headless `eval` transport
 
-Requirements and the platform contract live in [docs/](docs/INDEX.md). This file is only about
-getting the bot running and testing it.
+- **Bot Type**: Web
+- **Transport(s)**: SmallWebRTC, Daily (WebRTC)
+- **Pipeline**: Cascade
+  - **STT**: Deepgram
+  - **LLM**: OpenAI Responses
+  - **TTS**: Cartesia
 
-## What you need
+## Setup
 
 | Thing | Where it comes from |
 |---|---|
@@ -27,7 +29,7 @@ getting the bot running and testing it.
 | An LLM key | Cloudflare / Helmcode / Gemini / OpenAI — carloslabs only |
 | [ngrok](https://ngrok.com/) account | Only for real calls from the dashboard. Free tier is enough. |
 
-## 1. Set up
+1. **Navigate to server directory**:
 
 ```bash
 cd server
@@ -135,80 +137,7 @@ Evals always use carloslabs regardless of `VOICE_AGENT`.
 
 ### 5.2 Open the tunnel
 
-One-time setup: `brew install ngrok`, then `ngrok config add-authtoken <token>`. Reserve a free
-static domain at dashboard.ngrok.com → Domains, so your endpoint survives restarts. Without one
-the URL changes every time and you have to update the dashboard again.
-
-```bash
-make tunnel NGROK_DOMAIN=your-reserved-domain.ngrok-free.dev    # second terminal, keep it open
-```
-
-It prints the endpoint ready to paste:
-
-```
-Dashboard endpoint (Settings -> Integration):
-  wss://your-reserved-domain.ngrok-free.dev/ws
-```
-
-<http://127.0.0.1:4040> shows the tunnel status and every incoming request.
-
-### 5.3 Point the dashboard at it
-
-Log in at <https://hackspain.getprosperapp.com> with the team credentials, then
-**Settings → Integration**:
-
-- **Endpoint**: the `wss://…/ws` line from the previous step. The scheme and the `/ws` path matter.
-- **Headers**: leave empty.
-
-Saving replaces the whole configuration, and the new endpoint applies to the *next* run — a run
-that is already queued keeps the old one.
-
-### 5.4 Make one practice call first
-
-Press **Call** beside any published case. Practice calls score nothing and have a 30-second
-cooldown. Watch the bot's terminal:
-
-| You should see | Meaning |
-|---|---|
-| `Generating TTS [Clínica Arenal, how can I help you? ]` | The call connected and the bot greeted |
-| `User started speaking` | The bot can hear the caller |
-| `Submitted BOOK for call …` | The booking was posted |
-
-If a practice call does not end in `Submitted BOOK`, fix that before spending a scored run.
-
-### 5.5 Run All
-
-**Run All** is the scored run: private cases across every open problem, points on the
-leaderboard. Before pressing it:
-
-- It opens **ten calls at the same time** and takes around 18 minutes. Keep the bot and the
-  tunnel up throughout — a dropped connection fails that case.
-- Every call is capped at three minutes. The bot force-submits at 150 seconds.
-- After it finishes there is a **15-minute cooldown** before the next one. Cancelling is safe.
-- Close anything heavy on your machine. Ten concurrent pipelines each run VAD and a
-  turn-detection model locally.
-
-Afterwards:
-
-```bash
-grep -c "stalled" /tmp/bot.log                                  # calls the stall guard rescued
-grep -E "Submitted|forcing submission|ERROR" /tmp/bot.log       # outcome of every call
-```
-
-## Troubleshooting
-
-| Symptom | Cause and fix |
-|---|---|
-| `make: *** No rule to make target 'run-twilio'` | You are in `server/`. The Makefile is in the repo root. |
-| Your code change has no effect | The bot does not hot-reload. Stop it with Ctrl+C and start it again. |
-| Dashboard shows "Connection lost" within seconds | The tunnel is down, or the endpoint is missing `wss://` or `/ws`. Check <http://127.0.0.1:4040> for a `GET /ws → 101`. |
-| Bot greets, then never reacts; no `User started speaking` in the log | Audio input died. This happened with `RNNoiseFilter` (pyrnnoise 0.4.3 crashes against av 17 on the first frame), which is why noise suppression is off in `bot()`. Test any audio filter on a real call before relying on it. |
-| Bot goes silent mid-call | The LLM gateway opened a response stream and then stopped sending. `server/gateway_llm.py` cuts a stream that is silent for 4 seconds and retries once; look for `LLM stream stalled` in the log. |
-| `Submitted NO_ACTION … patient_not_found` | The caller was never identified: either the call ended first (see the two rows above), or three lookups failed. |
-| `forcing submission` in the log | The call hit 150 seconds. Usually slow turn-taking rather than a crash. |
-| Several calls fail only during Run All | Suspect LLM concurrency: the `helmcode` gateway allows 5 concurrent requests per key and Run All holds 10 calls open. Not yet confirmed as a cause; switching `LLM_PROVIDER` to `gemini` or `openai` rules it out. |
-
-## Project structure
+## Project Structure
 
 ```
 ├── Makefile                 # run-webrtc, run-twilio, tunnel

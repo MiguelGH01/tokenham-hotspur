@@ -90,6 +90,10 @@ def location_ids() -> list[str]:
     return [loc["id"] for loc in load_catalog()["locations"]]
 
 
+def provider_names() -> list[str]:
+    return [p["name"] for p in load_catalog()["providers"]]
+
+
 def closure_days() -> frozenset[str]:
     return frozenset(load_catalog()["calendar"]["closure_days"])
 

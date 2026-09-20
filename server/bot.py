@@ -8,7 +8,18 @@ Run the bot using::
 
 import asyncio
 import os
+import sys
 import uuid
+import wave
+
+# Piped logs (PowerShell Tee-Object / cmd redirection) switch stdout to
+# cp1252 on Windows; Pipecat's runner banner then dies on box-drawing glyphs.
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8", errors="replace")
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -28,6 +39,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.audio_buffer_processor import AudioBufferProcessor
 from pipecat.runner.types import (
     EvalRunnerArguments,
     RunnerArguments,
@@ -66,11 +78,12 @@ from booking import MADRID
 from call_metrics import build_observer, call_ended, call_started
 from clients.clinic_client import ClinicClient, DryRunSubmit
 from clinic_catalog import load_catalog
+from emergency_watch import EmergencyWatch
 from eval_judge import helmcode_judge
-from flows.common import GREETING
+from flows.common import GREETING, HOLDING_LINE, localized
+from flows.rails import RAILS
 from flows.reception import create_reception_node
-from krisp_model import ensure_filter_model, existing_filter_model_path
-from liveness import SilenceWatchdog
+from liveness import SilenceWatchdog, is_backchannel
 from llm_deadline import FirstTokenDeadlineLLM
 from observability.emit import emit_node_entered
 from observability.hub import get_hub
@@ -78,9 +91,77 @@ from observability.observer import TraceObserver
 import reception_notices
 from resolution import resolve_fallback
 from submission import CallSubmission
+from ws_probes import quiet_empty_websocket_probes
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
-ensure_filter_model()
+quiet_empty_websocket_probes()
+
+# pipecat.runner.run.main() defaults the stderr sink to DEBUG (TRACE with -v), which logs
+# every live STT transcription and TTS utterance — i.e. patient name/DNI/phone/health reason
+# in plaintext. Real calls default to INFO; opt into DEBUG explicitly when triaging locally.
+# The eval Makefile targets set LOG_LEVEL=DEBUG themselves since eval personas are synthetic.
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# Process log files (loguru), independent of PowerShell tee. Same tree as recordings.
+LOG_DIR = os.getenv("LOG_DIR", "run-logs")
+_LOG_FILE: str | None = None
+
+
+# A single process can run several calls concurrently (one asyncio task per
+# websocket), all sharing this one global logger and these same log files --
+# without a per-call tag, their lines interleave and there is no way to tell
+# afterwards which call a given line belongs to (server/scripts/dashboard/
+# real_parser.py used to just assume calls never overlap). run_bot() below
+# binds call_id into every line for a call's lifetime via logger.contextualize;
+# {extra[call_id]} here is what prints it, and the default covers lines logged
+# before any call_id is bound (startup, or a second concurrent call's own
+# contextualize scope not yet entered).
+logger.configure(extra={"call_id": "-"})
+_LOG_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | call={extra[call_id]} | "
+    "{name}:{function}:{line} - {message}"
+)
+
+
+def _attach_log_sinks() -> str:
+    """Stderr plus a file under LOG_DIR. Safe to call again after logger.remove()."""
+    global _LOG_FILE
+    os.makedirs(LOG_DIR, exist_ok=True)
+    if _LOG_FILE is None:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        _LOG_FILE = os.path.join(LOG_DIR, f"bot-{stamp}.log")
+    logger.remove()
+    logger.add(sys.stderr, level=LOG_LEVEL, format=_LOG_FORMAT)
+    logger.add(_LOG_FILE, level=LOG_LEVEL, encoding="utf-8", enqueue=True, format=_LOG_FORMAT)
+    logger.add(
+        os.path.join(LOG_DIR, "bot.log"),
+        level=LOG_LEVEL,
+        encoding="utf-8",
+        enqueue=True,
+        rotation="20 MB",
+        retention=10,
+        format=_LOG_FORMAT,
+    )
+    return _LOG_FILE
+
+
+# Opt-in: recording a live call is a compliance decision, not just a debugging convenience,
+# so it defaults off. Recordings are call audio only (post-STT/TTS raw PCM), never touched by
+# the LOG_LEVEL redaction above or below — treat this directory like patient data at rest.
+RECORD_CALLS = os.getenv("RECORD_CALLS", "").strip().lower() in {"1", "true", "yes"}
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "run-logs/recordings")
+
+
+def _save_call_recording(call_id: str, audio: bytes, sample_rate: int, num_channels: int) -> None:
+    if not audio:
+        return
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    path = os.path.join(RECORDINGS_DIR, f"{call_id}.wav")
+    with wave.open(path, "wb") as wf:
+        wf.setnchannels(num_channels)
+        wf.setsampwidth(2)  # pipecat audio frames are 16-bit PCM
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio)
+    logger.info("Call {}: saved recording to {}", call_id, path)
 
 # The platform cuts a call after ~30-35s without audible agent audio (SC-silence-cut) and
 # the simulated caller takes a median of 11s (max measured 42.5s) to answer. Counted from when
@@ -88,27 +169,51 @@ ensure_filter_model()
 REPROMPT_AFTER_SILENCE_SECS = 16.0
 
 
-def _audio_in_filter() -> BaseAudioFilter | None:
-    """Krisp VIVA noise-reduction on inbound audio.
+def _needs_disconnect_grace(state: dict) -> bool:
+    """A live, undecided proposal this call read back may still be in flight.
 
-    The ``.kef`` is resolved at process startup (see ``ensure_filter_model``).
+    Pipecat runs each transport event handler as its own task (see
+    ``BaseObject._call_event_handler``), with no coordination with the
+    pipeline's current turn. A caller's last words ("no", "yes") can still be
+    in STT/LLM/tool flight — nothing has called set_book / set_cancel /
+    set_no_action yet — when the socket drops, so closing the submission right
+    there can race ahead of that turn and fall back to the read-back
+    offer/cancellation instead of what the caller actually decided.
+    Skipped once the active request already decided something: a call that
+    already booked or cancelled one thing must not wait on a later, separate
+    request that happens to still be open.
     """
-    model_path = existing_filter_model_path()
-    api_key = os.getenv("KRISP_VIVA_API_KEY")
-    if not model_path:
+    submission = state.get("submission")
+    return bool(submission) and not submission.actions and bool(state.get("proposal"))
+
+
+def _audio_in_filter() -> BaseAudioFilter | None:
+    """Pipecat RNNoise on inbound audio (PR-12)."""
+    try:
+        from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
+        from pyrnnoise import RNNoise
+    except Exception as exc:
+        logger.warning("RNNoiseFilter unavailable ({})", exc)
         return None
+    if RNNoise is None:
+        logger.warning("pyrnnoise is not installed")
+        return None
+    # pyrnnoise 0.4.3 still calls Graph(rate=); audiolab 0.5.2 only accepts sample_rate=.
+    from audiolab.av import Graph
 
-    from pipecat.audio.filters.krisp_viva_filter import KrispVivaFilter
+    original = Graph.__init__
+    if not getattr(original, "_accepts_rate_alias", False):
 
-    kwargs: dict = {}
-    if model_path:
-        kwargs["model_path"] = model_path
-    if api_key:
-        kwargs["api_key"] = api_key
-    level = os.getenv("KRISP_NOISE_SUPPRESSION_LEVEL")
-    if level:
-        kwargs["noise_suppression_level"] = int(level)
-    return KrispVivaFilter(**kwargs)
+        def __init__(self, *args, **kwargs):
+            if "sample_rate" not in kwargs and "rate" in kwargs:
+                kwargs["sample_rate"] = kwargs.pop("rate")
+            else:
+                kwargs.pop("rate", None)
+            original(self, *args, **kwargs)
+
+        __init__._accepts_rate_alias = True
+        Graph.__init__ = __init__
+    return RNNoiseFilter()
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
@@ -165,11 +270,7 @@ def _connected_at(allow_override: bool) -> datetime:
 
 
 def _reprompt(context: LLMContext) -> str:
-    """Repeat the bot's last message so silence never outlasts the platform's window.
-
-    The whole message, not just its closing question: a caller who missed the offer cannot
-    answer a bare "Does that work for you?".
-    """
+    """Repeat the bot's last message so silence never outlasts the platform's window."""
     spoken = [
         m["content"]
         for m in context.get_messages()
@@ -447,316 +548,359 @@ def _stt_settings() -> DeepgramSTTService.Settings:
 
 def build_stt():
     provider = os.getenv("STT_PROVIDER", "soniox")
-    if provider == "deepgram":
-        return DeepgramSTTService(
-            api_key=os.getenv("DEEPGRAM_API_KEY"),
-            settings=_stt_settings(),
+    if provider == "soniox":
+        return SonioxSTTService(
+            api_key=os.environ["SONIOX_API_KEY"],
+            settings=SonioxSTTService.Settings(
+                model=os.getenv("SONIOX_MODEL") or os.getenv("SONIOX_STT_MODEL", "stt-rt-v5"),
+                language_hints=[Language.EN, Language.ES, Language.CA],
+                context=" ".join(_stt_keyterms()),
+            ),
         )
-    return SonioxSTTService(
-        api_key=os.environ["SONIOX_API_KEY"],
-        settings=SonioxSTTService.Settings(
-            model=os.getenv("SONIOX_MODEL", "stt-rt-v5"),
-            language_hints=[Language.ES, Language.CA, Language.EN, Language.EU, Language.GL],
-            enable_language_identification=True,
-        ),
+    return DeepgramSTTService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        settings=_stt_settings(),
     )
 
 
 _ELEVENLABS_V3_MODELS = frozenset({"eleven_v3", "eleven_v3_conversational"})
 
 
-def build_tts(*, telephony: bool = False):
-    provider = os.getenv("TTS_PROVIDER", "elevenlabs")
-    if provider == "deepgram":
-        return DeepgramTTSService(
-            api_key=os.getenv("DEEPGRAM_API_KEY"),
-            # Telephony is 8 kHz end to end, so asking the synthesiser for 8 kHz
-            # avoids a resample per call — one less thing competing for the CPU when
-            # a Run All holds ten calls open at once.
-            sample_rate=int(os.getenv("DEEPGRAM_TTS_SAMPLE_RATE", "8000" if telephony else "0"))
-            or None,
-            settings=DeepgramTTSService.Settings(
-                voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
-                speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
-            ),
+def build_tts(telephony: bool):
+    provider = os.getenv("TTS_PROVIDER", "deepgram")
+    sample_rate = int(
+        os.getenv(
+            "TTS_SAMPLE_RATE",
+            "8000" if telephony else "0",
         )
-    model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5")
-    voice = os.environ["ELEVENLABS_VOICE_ID"]
-    language = os.getenv("ELEVENLABS_LANGUAGE", "es")
-    # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are not
-    # a real model: the classic TTS WebSocket accepts the socket then returns no audio.
-    use_dialogue = model in _ELEVENLABS_V3_MODELS or ("v3" in model and "ttv" not in model)
-    if use_dialogue:
-        if model not in _ELEVENLABS_V3_MODELS:
+    ) or None
+    if provider == "elevenlabs":
+        voice = os.getenv("ELEVENLABS_VOICE_ID")
+        if not voice:
+            raise RuntimeError(
+                "ELEVENLABS_VOICE_ID is required. Pick a voice id from the ElevenLabs library."
+            )
+        model = os.getenv("ELEVENLABS_MODEL", "eleven_flash_v2_5").strip()
+        language = os.getenv("ELEVENLABS_LANGUAGE")
+        # v3 only speaks through Text-to-Dialogue. Names like eleven_flash_v3 are
+        # not a WebSocket TTS model: that socket accepts them and then emits no
+        # audio. Route any v3 id (except text-to-voice) onto the dialogue service.
+        use_dialogue = model in _ELEVENLABS_V3_MODELS or (
+            "v3" in model.lower() and "ttv" not in model.lower()
+        )
+        if use_dialogue and model not in _ELEVENLABS_V3_MODELS:
             logger.warning(
                 "ELEVENLABS_MODEL={} is not a TTS WebSocket model; using "
-                "ElevenLabsDialogueTTSService with eleven_v3_conversational. "
-                "Set eleven_v3 or eleven_v3_conversational explicitly.",
+                "ElevenLabsDialogueTTSService with eleven_v3_conversational.",
                 model,
             )
             model = "eleven_v3_conversational"
-        logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
-        return ElevenLabsDialogueTTSService(
+        settings_kw: dict = {"voice": voice, "model": model}
+        if language:
+            settings_kw["language"] = language
+        if use_dialogue:
+            from pipecat.services.elevenlabs.dialogue.tts import ElevenLabsDialogueTTSService
+
+            logger.info("TTS: ElevenLabs Text-to-Dialogue ({})", model)
+            return ElevenLabsDialogueTTSService(
+                api_key=os.environ["ELEVENLABS_API_KEY"],
+                sample_rate=sample_rate,
+                settings=ElevenLabsDialogueTTSService.Settings(**settings_kw),
+            )
+        speed = os.getenv("ELEVENLABS_TTS_SPEED")
+        if speed:
+            settings_kw["speed"] = float(speed)
+        logger.info("TTS: ElevenLabs WebSocket ({})", model)
+        return ElevenLabsTTSService(
             api_key=os.environ["ELEVENLABS_API_KEY"],
-            settings=ElevenLabsDialogueTTSService.Settings(
-                voice=voice,
-                model=model,
-                language=language,
-            ),
+            sample_rate=sample_rate,
+            settings=ElevenLabsTTSService.Settings(**settings_kw),
         )
-    logger.info("TTS: ElevenLabs WebSocket ({})", model)
-    return ElevenLabsTTSService(
-        api_key=os.environ["ELEVENLABS_API_KEY"],
-        settings=ElevenLabsTTSService.Settings(
-            voice=voice,
-            model=model,
-            language=language,
+    return DeepgramTTSService(
+        api_key=os.getenv("DEEPGRAM_API_KEY"),
+        sample_rate=sample_rate,
+        settings=DeepgramTTSService.Settings(
+            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-2-helena-en"),
+            speed=float(os.getenv("DEEPGRAM_TTS_SPEED", "1.0")),
         ),
     )
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> None:
+    # pipecat.runner.run.main() already set its own sink (DEBUG/TRACE) before this runs;
+    # override it once, process-wide, per LOG_LEVEL/RECORD_CALLS policy above.
+    log_path = _attach_log_sinks()
+
     call_id = _call_id(runner_args)
-    logger.info("Starting bot for call {}", call_id)
-    telephony = _is_twilio_session(runner_args)
-    hub = get_hub()
-    await hub.ensure_ready()
-    connected_at = _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments))
-    transport_name = _transport_name(runner_args)
-    # A browser WebRTC call is somebody testing from the console; real callers
-    # arrive over Twilio. Keeping them apart stops a tuning session from
-    # wrecking the shift's submit rate and outcome mix.
-    await hub.start_call(
-        call_id,
-        transport=transport_name,  # type: ignore[arg-type]
-        from_number=_from_number(runner_args),
-        is_test=transport_name == "webrtc",
-    )
-    await emit_node_entered(call_id, to="reception")
+    with logger.contextualize(call_id=call_id):
+        logger.info("Writing logs to {}", os.path.abspath(log_path))
+        logger.info("Starting bot for call {}", call_id)
+        telephony = _is_twilio_session(runner_args)
+        hub = get_hub()
+        await hub.ensure_ready()
+        connected_at = _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments))
+        transport_name = _transport_name(runner_args)
+        # A browser WebRTC call is somebody testing from the console; real callers
+        # arrive over Twilio. Keeping them apart stops a tuning session from
+        # wrecking the shift's submit rate and outcome mix.
+        await hub.start_call(
+            call_id,
+            transport=transport_name,  # type: ignore[arg-type]
+            from_number=_from_number(runner_args),
+            is_test=transport_name == "webrtc",
+        )
+        await emit_node_entered(call_id, to="reception")
 
-    stt = build_stt()
-    tts = build_tts(telephony=telephony)
-    llm = build_llm(call_id)
+        audio_recorder = None
+        if RECORD_CALLS:
+            audio_recorder = AudioBufferProcessor(num_channels=1, auto_start_recording=True)
 
-    context = LLMContext()
-    context_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=SileroVADAnalyzer(),
-            user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
-            # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
-            # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
-            user_turn_strategies=_user_turn_strategies(),
-        ),
-    )
+            @audio_recorder.event_handler("on_audio_data")
+            async def on_audio_data(processor, audio, sample_rate, num_channels):
+                await asyncio.to_thread(_save_call_recording, call_id, audio, sample_rate, num_channels)
 
-    user_aggregator = context_aggregator.user()
-    assistant_aggregator = context_aggregator.assistant()
+        stt = build_stt()
+        tts = build_tts(telephony)
+        llm = build_llm(call_id)
 
-    # Speaks a holding line instead of leaving dead air when the bot stalls.
-    # Placed before the LLM so both frames it emits travel downstream correctly.
-    watchdog = SilenceWatchdog(
-        silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
-        rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
-        max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "2")),
-        is_active=lambda: flow_started,
-    )
-
-    # Submits a plan the caller has just agreed to, without waiting for the
-    # model's own confirm turn (see affirmation_watch.py). Triggered by the
-    # aggregator's own turn event, wired just below.
-    affirmation_watch = AffirmationWatch()
-
-    @user_aggregator.event_handler("on_user_turn_message_added")
-    async def on_user_turn_message_added(aggregator, message):
-        """The caller's finalized turn is now in the context.
-
-        This is the moment a yes becomes actionable. The user aggregator
-        consumes the final ``TranscriptionFrame`` rather than forwarding it, so a
-        processor further down the pipeline never sees the turn a watcher would
-        exist for.
-        """
-        affirmation_watch.consider(getattr(message, "content", None))
-
-    @user_aggregator.event_handler("on_user_turn_started")
-    async def on_user_turn_started(aggregator, strategy):
-        logger.warning(
-            "USER TURN STARTED | strategy={} | bot_speaking={}",
-            type(strategy).__name__ if strategy else "unknown",
-            getattr(transport.output(), "_bot_speaking", "unknown"),
+        context = LLMContext()
+        context_aggregator = LLMContextAggregatorPair(
+            context,
+            user_params=LLMUserAggregatorParams(
+                vad_analyzer=SileroVADAnalyzer(),
+                user_idle_timeout=REPROMPT_AFTER_SILENCE_SECS,
+                # filter_incomplete_user_turns stays off: the LLM judged a bare "Hello." as an
+                # unfinished turn and went silent for 10s (16 of 21 calls in the first Run All).
+                user_turn_strategies=_user_turn_strategies(),
+            ),
         )
 
-    pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            user_aggregator,
-            watchdog,
-            llm,
-            tts,
-            transport.output(),
-            assistant_aggregator,
-        ]
-    )
+        user_aggregator = context_aggregator.user()
+        assistant_aggregator = context_aggregator.assistant()
 
-    pipeline_params = {"enable_metrics": True, "enable_usage_metrics": True}
-    if telephony:
-        pipeline_params["audio_in_sample_rate"] = 8000
-        pipeline_params["audio_out_sample_rate"] = 8000
-
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(**pipeline_params),
-        idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
-        observers=[
-            TraceObserver(hub, call_id, started_at=connected_at),
-            build_observer(call_id),
-        ],
-    )
-    runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
-    await runner.add_workers(worker)
-
-    flow_manager = FlowManager(
-        worker=worker,
-        llm=llm,
-        context_aggregator=context_aggregator,
-        transport=transport,
-    )
-    affirmation_watch.bind(flow_manager)
-    # Eval + browser WebRTC mint their own call_id; the Prosper platform never
-    # dialled them, so a real POST comes back 404 "unknown call". Dry-run the
-    # writes locally; clinic reads still hit the live API.
-    dry_submit = isinstance(runner_args, (EvalRunnerArguments, SmallWebRTCRunnerArguments))
-    client = DryRunSubmit(ClinicClient()) if dry_submit else ClinicClient()
-    submission = CallSubmission(
-        call_id,
-        client,
-        # Only asked when the call ends having decided nothing: the best ending
-        # it can still stand behind beats the ``out_of_scope`` that matches no
-        # published case. See ``resolution.py``.
-        fallback=lambda: resolve_fallback(flow_manager.state),
-    )
-    flow_manager.state.update(
-        {
-            "call_id": call_id,
-            "connected_at": connected_at,
-            "client": client,
-            "submission": submission,
-            "patient": None,
-            "offers": {},
-            "identify_attempts": 0,
-        }
-    )
-
-    @user_aggregator.event_handler("on_user_turn_idle")
-    async def on_user_turn_idle(aggregator):
-        text = _reprompt(context)
-        logger.info(
-            "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
+        # Speaks a holding line instead of leaving dead air when the bot stalls.
+        # Placed before the LLM so both frames it emits travel downstream correctly.
+        watchdog = SilenceWatchdog(
+            silence_secs=float(os.getenv("SILENCE_GUARD_SECS", "6")),
+            # flow_manager is assigned below, before this can ever fire (a
+            # StartFrame arrives well after flow setup) — same lazy-closure
+            # pattern as is_active below.
+            filler=lambda: localized(HOLDING_LINE, flow_manager.state.get("language")),
+            rerun_after_secs=float(os.getenv("SILENCE_RERUN_SECS", "18")),
+            max_reruns=int(os.getenv("SILENCE_MAX_RERUNS", "0")),
+            is_active=lambda: flow_started,
         )
-        await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
 
-    flow_started = False
-    _start_task: asyncio.Task | None = None
+        # Submits a plan the caller has just agreed to, without waiting for the
+        # model's own confirm turn (see affirmation_watch.py). Triggered by the
+        # aggregator's own turn event, wired just below.
+        affirmation_watch = AffirmationWatch()
+        # Escalates a red flag the model did not notice (see emergency_watch.py).
+        emergency_watch = EmergencyWatch(call_id)
 
-    async def start_flow():
-        nonlocal flow_started
-        if flow_started:
-            return
-        flow_started = True
-        await flow_manager.initialize(create_reception_node())
-        # Greeting is LLM-composed (developer message + run) so it flows through
-        # the normal response path: TTS on voice calls, llm_response on eval.
-        await worker.queue_frames(
+        @user_aggregator.event_handler("on_user_turn_message_added")
+        async def on_user_turn_message_added(aggregator, message):
+            """The caller's finalized turn is now in the context.
+
+            This is the moment a yes becomes actionable. The user aggregator
+            consumes the final ``TranscriptionFrame`` rather than forwarding it, so a
+            processor further down the pipeline never sees the turn a watcher would
+            exist for.
+            """
+            content = getattr(message, "content", None)
+            if is_backchannel(content):
+                messages = list(context.get_messages())
+                if messages and messages[-1].get("role") == "user":
+                    context.set_messages(messages[:-1])
+                return
+            affirmation_watch.consider(content)
+            emergency_watch.consider()
+
+        @user_aggregator.event_handler("on_user_turn_started")
+        async def on_user_turn_started(aggregator, strategy):
+            logger.warning(
+                "USER TURN STARTED | strategy={} | bot_speaking={}",
+                type(strategy).__name__ if strategy else "unknown",
+                getattr(transport.output(), "_bot_speaking", "unknown"),
+            )
+
+        pipeline = Pipeline(
             [
-                LLMMessagesAppendFrame(
-                    messages=[
-                        {
-                            "role": "developer",
-                            "content": f"Open the call with this greeting, then wait for the caller: {GREETING}",
-                        }
-                    ],
-                    run_llm=True,
-                )
+                transport.input(),
+                stt,
+                user_aggregator,
+                watchdog,
+                llm,
+                tts,
+                transport.output(),
+                *([audio_recorder] if audio_recorder is not None else []),
+                assistant_aggregator,
             ]
         )
 
-    async def start_flow_after_grace(delay: float | None = None):
-        """Greet anyway if client-ready never arrives.
+        pipeline_params = {"enable_metrics": True, "enable_usage_metrics": True}
+        if telephony:
+            pipeline_params["audio_in_sample_rate"] = 8000
+            pipeline_params["audio_out_sample_rate"] = 8000
 
-        A call whose greeting is never queued is dead air from the first second,
-        and the scorer attributes that silence to the agent. ``start_flow`` is
-        idempotent, so the normal path makes this a no-op.
-        """
-        await asyncio.sleep(
-            delay if delay is not None else float(os.getenv("FLOW_START_GRACE_SECS", "8"))
+        worker = PipelineWorker(
+            pipeline,
+            params=PipelineParams(**pipeline_params),
+            idle_timeout_secs=runner_args.pipeline_idle_timeout_secs,
+            observers=[
+                TraceObserver(hub, call_id, started_at=connected_at),
+                build_observer(call_id),
+            ],
         )
-        if not flow_started:
-            logger.warning("Client-ready never arrived; starting the flow anyway")
+        runner = WorkerRunner(handle_sigint=runner_args.handle_sigint)
+        await runner.add_workers(worker)
+
+        flow_manager = FlowManager(
+            worker=worker,
+            llm=llm,
+            context_aggregator=context_aggregator,
+            transport=transport,
+            global_functions=RAILS,
+        )
+        affirmation_watch.bind(flow_manager)
+        emergency_watch.bind(flow_manager, worker)
+        # Eval + browser WebRTC mint their own call_id; the Prosper platform never
+        # dialled them, so a real POST comes back 404 "unknown call". Dry-run the
+        # writes locally; clinic reads still hit the live API.
+        dry_submit = isinstance(runner_args, (EvalRunnerArguments, SmallWebRTCRunnerArguments))
+        client = DryRunSubmit(ClinicClient()) if dry_submit else ClinicClient()
+        submission = CallSubmission(
+            call_id,
+            client,
+            # Only asked when the call ends having decided nothing: the best ending
+            # it can still stand behind beats the ``out_of_scope`` that matches no
+            # published case. See ``resolution.py``.
+            fallback=lambda: resolve_fallback(flow_manager.state),
+        )
+        flow_manager.state.update(
+            {
+                "call_id": call_id,
+                "connected_at": connected_at,
+                "client": client,
+                "submission": submission,
+                "patient": None,
+                "offers": {},
+                "tried_slots": [],
+                "identify_attempts": 0,
+            }
+        )
+
+        hung_up = False
+
+        @user_aggregator.event_handler("on_user_turn_idle")
+        async def on_user_turn_idle(aggregator):
+            if hung_up:
+                return
+            text = _reprompt(context)
+            logger.info(
+                "Call {}: {}s of silence, re-prompting: {}", call_id, REPROMPT_AFTER_SILENCE_SECS, text
+            )
+            await worker.queue_frames([TTSSpeakFrame(text=text, append_to_context=False)])
+
+        flow_started = False
+        _start_task: asyncio.Task | None = None
+        _deliver_task: asyncio.Task | None = None
+
+        async def start_flow():
+            nonlocal flow_started
+            if flow_started:
+                return
+            flow_started = True
+            await flow_manager.initialize(create_reception_node())
+            # Fixed audio, not an LLM turn: composing the greeting costs seconds,
+            # gets barged into, and paraphrases the clinic name.
+            await worker.queue_frames(
+                [TTSSpeakFrame(text=GREETING, append_to_context=True)]
+            )
+
+        async def start_flow_after_grace(delay: float | None = None):
+            """Greet anyway if client-ready never arrives.
+
+            A call whose greeting is never queued is dead air from the first second,
+            and the scorer attributes that silence to the agent. ``start_flow`` is
+            idempotent, so the normal path makes this a no-op.
+            """
+            await asyncio.sleep(
+                delay if delay is not None else float(os.getenv("FLOW_START_GRACE_SECS", "8"))
+            )
+            if not flow_started:
+                logger.warning("Client-ready never arrived; starting the flow anyway")
+                await start_flow()
+
+        # RTVI clients (webrtc prebuilt, daily, eval) send client-ready after connecting,
+        # which interrupts and drops anything queued earlier; telephony has no RTVI client.
+        # The console's Place-test-call also has no RTVI — it must not wait the full grace.
+        @worker.rtvi.event_handler("on_client_ready")
+        async def on_client_ready(rtvi):
             await start_flow()
 
-    # RTVI clients (webrtc prebuilt, daily, eval) send client-ready after connecting,
-    # which interrupts and drops anything queued earlier; telephony has no RTVI client.
-    # The console's Place-test-call also has no RTVI — it must not wait the full grace.
-    @worker.rtvi.event_handler("on_client_ready")
-    async def on_client_ready(rtvi):
-        await start_flow()
+        @transport.event_handler("on_client_connected")
+        async def on_client_connected(transport, client):
+            nonlocal _start_task
+            logger.info("Client connected")
+            call_started(call_id)
+            reception_notices.record_active_notices(call_id)
+            emergency_watch.pick_up()
+            # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
+            # nothing else would ever start the flow and the bot would stay silent until cut off.
+            if isinstance(runner_args, WebSocketRunnerArguments):
+                await start_flow()
+                return
+            if isinstance(runner_args, SmallWebRTCRunnerArguments):
+                # Console dial has no RTVI client-ready. The default 8s grace left dead air
+                # and the caller spoke first — so the greeting never landed.
+                webrtc_grace = float(os.getenv("WEBRTC_FLOW_START_GRACE_SECS", "0.5"))
+                _start_task = asyncio.create_task(start_flow_after_grace(webrtc_grace))
+                return
+            if not flow_started:
+                _start_task = asyncio.create_task(start_flow_after_grace())
 
-    @transport.event_handler("on_client_connected")
-    async def on_client_connected(transport, client):
-        nonlocal _start_task
-        logger.info("Client connected")
-        call_started(call_id)
-        reception_notices.record_active_notices(call_id)
-        # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
-        # nothing else would ever start the flow and the bot would stay silent until cut off.
-        if isinstance(runner_args, WebSocketRunnerArguments):
-            await start_flow()
-            return
-        if isinstance(runner_args, SmallWebRTCRunnerArguments):
-            # Console dial has no RTVI client-ready. The default 8s grace left dead air
-            # and the caller spoke first — so the greeting never landed.
-            webrtc_grace = float(os.getenv("WEBRTC_FLOW_START_GRACE_SECS", "0.5"))
-            _start_task = asyncio.create_task(start_flow_after_grace(webrtc_grace))
-            return
-        if not flow_started:
-            _start_task = asyncio.create_task(start_flow_after_grace())
+        @transport.event_handler("on_client_disconnected")
+        async def on_client_disconnected(transport, client):
+            nonlocal hung_up, _deliver_task
+            hung_up = True
+            logger.info("Client disconnected")
+            call_ended(call_id)  # here, not only in the finally: teardown takes seconds and can be killed
+            await emergency_watch.aclose()
+            if _needs_disconnect_grace(flow_manager.state):
+                await asyncio.sleep(float(os.getenv("DISCONNECT_GRACE_SECS", "2")))
+            await submission.close()
+            await hub.end_call(call_id)
+            await runner.cancel()
 
-    @transport.event_handler("on_client_disconnected")
-    async def on_client_disconnected(transport, client):
-        logger.info("Client disconnected")
-        call_ended(call_id)  # here, not only in the finally: teardown takes seconds and can be killed
-        await submission.close()
-        await hub.end_call(call_id)
-        await runner.cancel()
+        async def deliver_until_accepted():
+            """Keep re-offering a decided plan for as long as the call lives.
 
-    async def deliver_until_accepted():
-        """Keep re-offering a decided plan for as long as the call lives.
+            A call with no accepted record scores nothing, and the platform can
+            refuse a submission transiently. ``flush`` only ever sends actions the
+            call has actually decided, so this cannot freeze a plan prematurely.
+            """
+            interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
+            while True:
+                await asyncio.sleep(interval)
+                if submission.needs_delivery:
+                    await submission.flush()
 
-        A call with no accepted record scores nothing, and the platform can
-        refuse a submission transiently. ``flush`` only ever sends actions the
-        call has actually decided, so this cannot freeze a plan prematurely.
-        """
-        interval = float(os.getenv("SUBMIT_RETRY_SECS", "5"))
-        while True:
-            await asyncio.sleep(interval)
-            if submission.needs_delivery:
-                await submission.flush()
+        _deliver_task = asyncio.create_task(deliver_until_accepted())
 
-    _deliver_task = asyncio.create_task(deliver_until_accepted())
-
-    try:
-        await runner.run()
-    finally:
-        call_ended(call_id)
-        if _start_task is not None:
-            _start_task.cancel()
-        _deliver_task.cancel()
-        await submission.close()
-        await hub.end_call(call_id)
-        inner = getattr(client, "_client", client)
-        if hasattr(inner, "aclose"):
-            await inner.aclose()
+        try:
+            await runner.run()
+        finally:
+            call_ended(call_id)
+            if _start_task is not None:
+                _start_task.cancel()
+            if _deliver_task is not None:
+                _deliver_task.cancel()
+            await submission.close()
+            await hub.end_call(call_id)
+            inner = getattr(client, "_client", client)
+            if hasattr(inner, "aclose"):
+                await inner.aclose()
 
 
 def _audio_kwargs() -> dict:
@@ -823,6 +967,8 @@ if __name__ == "__main__":
     from observability import mount_observability_routes
     from voice_agent import mount_voice_agent, voice_agent
 
+    path = _attach_log_sinks()
+    logger.info("Writing logs to {}", os.path.abspath(path))
     mount_observability_routes(app)
     # Importing pipecat's runner reloads ./.env with override=True, which silently undid
     # DOTENV_PATH for every key ./.env also sets. Re-apply ours on top.

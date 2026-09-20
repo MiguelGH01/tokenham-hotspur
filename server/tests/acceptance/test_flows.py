@@ -48,6 +48,38 @@ def test_reception_routes_without_losing_state():
     assert manager.state["intent"] == "register"
 
 
+def test_roster_titles_are_spoken_in_full():
+    from flows.common import spoken_provider_name
+
+    assert spoken_provider_name("Dra. Elena Iglesias") == "Doctora Elena Iglesias"
+    assert spoken_provider_name("D. Álvaro Cid") == "Don Álvaro Cid"
+
+
+def test_a_tool_speaks_a_fixed_line_before_it_runs():
+    from pipecat.frames.frames import TTSSpeakFrame
+
+    from flows.common import TOOL_PROGRESS, announce
+    from flows.identification import create_identify_node
+
+    spoken = []
+
+    async def queue_frames(frames):
+        spoken.extend(frames)
+
+    @announce("search_patient")
+    async def lookup(args, flow_manager):
+        return "ran"
+
+    manager = SimpleNamespace(state={}, worker=SimpleNamespace(queue_frames=queue_frames))
+    assert asyncio.run(lookup({}, manager)) == "ran"
+    assert isinstance(spoken[0], TTSSpeakFrame)
+    assert spoken[0].text == TOOL_PROGRESS["en"]["search_patient"]
+    assert {fn.name for fn in create_identify_node()["functions"]} >= {
+        "search_patient",
+        "start_registration",
+    }
+
+
 def test_near_names_require_clarification():
     from flows.booking import resolve_provider
 
@@ -73,6 +105,23 @@ def test_an_adult_patient_removes_the_paediatric_candidate():
 
     adult = {"date_of_birth": "1965-02-24", "insurer": "asisa", "referrals": []}
     assert [p["id"] for p in resolve_provider("Dr. Saez", patient=adult)] == ["PR03"]
+
+
+def test_extra_words_do_not_hide_a_unique_name():
+    from flows.booking import resolve_provider
+
+    assert [p["id"] for p in resolve_provider("I want Dr Ortiz please")] == ["PR01"]
+    assert [p["id"] for p in resolve_provider("Martin Saez")] == ["PR03"]
+    assert [p["id"] for p in resolve_provider("Elena Iglesias")] == ["PR05"]
+
+
+def test_a_wrong_specialty_does_not_drop_a_unique_name():
+    """The model often guesses the specialty enum. A unique spoken name still wins."""
+    from flows.booking import resolve_provider
+
+    assert [p["id"] for p in resolve_provider("Elena Iglesias", "general_practice")] == [
+        "PR05"
+    ]
 
 
 def test_a_neutral_title_still_leaves_iglesias_ambiguous():
@@ -201,6 +250,48 @@ def test_concurrent_call_isolation():
     asyncio.run(run())
 
 
+def test_prepare_registration_still_queues_register_when_directory_is_down():
+    """PR-04: /submit/register is the scored write; a 502 on /directory is not a skip."""
+    from flows.registration import prepare_registration
+    from flows.requests import begin_request
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            raise OSError("directory 502")
+
+        async def post_submission(self, action):
+            return {"record": {"actions": [action]}}
+
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": Client(),
+            "submission": CallSubmission("c", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    begin_request(manager, "register")
+    result, node = asyncio.run(
+        prepare_registration(
+            dict(
+                given_name="Ana",
+                first_surname="Test",
+                second_surname="Test",
+                national_id="12345678Z",
+                date_of_birth="1990-01-02",
+                phone="612345678",
+                email="ana@example.com",
+                insurer="sanitas",
+            ),
+            manager,
+        )
+    )
+    assert result["status"] == "needs_confirmation"
+    assert node["name"] == "registration_confirm"
+    assert manager.state["submission"].pending["action"] == "REGISTER"
+
+
 def test_provider_site_and_weekday_preserved():
     from handlers import get_earliest_slot
 
@@ -245,6 +336,41 @@ def test_provider_site_and_weekday_preserved():
     assert offer["slot"].startswith("2026-09-25")
 
 
+def test_slot_schema_doctor_is_roster_or_omitted():
+    from clinic_catalog import provider_names
+    from flows.booking import _get_earliest_slot_schema
+
+    props = _get_earliest_slot_schema().properties
+    assert props["provider_name"]["enum"] == provider_names()
+    assert "provider_name" not in _get_earliest_slot_schema().required
+    assert "unknown_doctor" in props
+
+
+def test_unknown_named_doctor_does_not_search():
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            raise AssertionError("must not query availability")
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("x", client),
+            "patient": {"patient_id": "P1", "insurer": "sanitas"},
+            "offers": {},
+        }
+    )
+    result, node = asyncio.run(
+        get_earliest_slot({"unknown_doctor": True, "specialty": "orthopaedics"}, manager)
+    )
+    assert result["status"] == "provider_not_found"
+    assert node is None
+    assert manager.state["submission"].pending["reason"] == "provider_not_found"
+
+
 def test_real_node_schemas_construct():
     from pipecat.flows import FlowsFunctionSchema
 
@@ -258,6 +384,18 @@ def test_real_node_schemas_construct():
     ):
         assert node["task_messages"]
         assert all(isinstance(f, FlowsFunctionSchema) for f in node["functions"])
+
+
+def test_registration_node_asks_every_field_in_one_turn():
+    from flows.registration import create_registration_node
+
+    prompt = create_registration_node()["task_messages"][0]["content"]
+    assert "one field at a time" in prompt
+    assert "not on file" not in prompt
+    manager = SimpleNamespace(state={"registration_seed": {"national_id": "12345678Z"}})
+    seeded = create_registration_node(manager)["task_messages"][0]["content"]
+    assert "not on file" in seeded
+    assert "12345678Z" in seeded
 
 
 def test_unpayable_and_closed_slots_rejected():
@@ -482,6 +620,107 @@ def test_identification_is_active_extracted_flow():
     assert node["functions"][0].handler is search_patient
 
 
+def test_a_valid_id_with_no_directory_row_starts_registration():
+    """PR-04: nid miss is REGISTER, not three retries and give-up."""
+    from flows.identification import search_patient
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            return [
+                dict(
+                    patient_id="P01239",
+                    national_id="99999999R",
+                    given_name="Natalia",
+                    first_surname="Munoz",
+                    has_visited_before=True,
+                )
+            ]
+
+    manager = SimpleNamespace(
+        state={
+            "identify_attempts": 0,
+            "intent": "book",
+            "client": Client(),
+            "submission": CallSubmission("x", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(
+        search_patient(
+            {
+                "stated_name": "Natalia Munoz Gonzalez",
+                "id_type": "national_id",
+                "id_value": "12345678Z",
+            },
+            manager,
+        )
+    )
+    assert result["status"] == "not_on_file"
+    assert node["name"] == "not_on_file"
+    assert {fn.name for fn in node["functions"]} >= {"start_registration", "search_patient"}
+    assert manager.state["registration_seed"]["national_id"] == "12345678Z"
+    assert "Do not call start_registration in this turn" in result["instruction"]
+
+
+def test_an_empty_directory_result_starts_registration():
+    """Any completed lookup with zero exact rows goes to register, not give-up."""
+    from flows.identification import search_patient
+
+    class Client:
+        async def search_directory(self, **kwargs):
+            return []
+
+    manager = SimpleNamespace(
+        state={
+            "identify_attempts": 0,
+            "intent": "book",
+            "client": Client(),
+            "submission": CallSubmission("x", Client()),
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(
+        search_patient(
+            {
+                "stated_name": "Joaquin Gonzalez Ortega",
+                "id_type": "phone",
+                "id_value": "783869132",
+            },
+            manager,
+        )
+    )
+    assert result["status"] == "not_on_file"
+    assert node["name"] == "not_on_file"
+    assert node["respond_immediately"] is True
+
+
+def test_spoken_identity_and_booking_cues_reuse_what_was_said():
+    from flows.booking import spoken_booking_cues
+    from flows.identification import create_identify_node, spoken_identity
+
+    ctx = [
+        {
+            "role": "user",
+            "content": (
+                "My name is Josefa Dominguez Navarro, DNI 12345678Z, "
+                "I need the GP at Arenal Sur"
+            ),
+        }
+    ]
+    manager = SimpleNamespace(get_current_context=lambda: ctx)
+    identity = spoken_identity(manager)
+    assert identity["id_value"] == "12345678Z"
+    assert "Josefa" in identity["name"]
+    cues = spoken_booking_cues(manager)
+    assert cues["specialty"] == "general_practice"
+    assert cues["site"] == "sur"
+    prompt = create_identify_node(manager)["task_messages"][0]["content"]
+    assert "12345678Z" in prompt
+    assert "Do not ask for them again" in prompt
+
+
 def test_immutable_payload_after_failed_delivery():
     class Client:
         def __init__(self):
@@ -499,3 +738,273 @@ def test_immutable_payload_after_failed_delivery():
     sub.pending["patient_id"] = "mutated"
     asyncio.run(sub.flush())
     assert client.posted[0] == client.posted[1]
+
+
+def test_gynae_empty_diary_does_not_submit_a_leftover_referral():
+    """PR-07: a full gynae diary with a stray blocked referral is no_availability."""
+    from handlers import get_earliest_slot
+
+    posted = []
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [],
+                "blocked": [{"provider_id": "PR08", "restriction": "referral_required"}],
+            }
+
+        async def post_submission(self, action):
+            posted.append(action)
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-mercedes", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(get_earliest_slot({"specialty": "gynaecology"}, manager))
+    asyncio.run(manager.state["submission"].close())
+    assert result["status"] == "no_slots" and node is None
+    assert posted[0]["action"] == "NO_ACTION"
+    assert posted[0]["reason"] == "no_availability"
+
+
+def test_derm_without_referral_still_refuses_after_an_empty_diary():
+    """PR-06-S3: deferring the gate until after /availability must not drop the reason."""
+    from handlers import get_earliest_slot
+
+    posted = []
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {"slots": [], "blocked": []}
+
+        async def post_submission(self, action):
+            posted.append(action)
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-teresa", client),
+            "patient": {
+                "patient_id": "P00004",
+                "insurer": "asisa",
+                "date_of_birth": "1980-01-01",
+                "referrals": ["physiotherapy"],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, node = asyncio.run(get_earliest_slot({"specialty": "dermatology"}, manager))
+    asyncio.run(manager.state["submission"].close())
+    assert result["status"] == "blocked" and node["name"] == "refused"
+    assert posted[0]["action"] == "NO_ACTION"
+    assert posted[0]["reason"] == "referral_required"
+
+
+def _gynae_slot(start: str) -> dict:
+    return dict(
+        provider_id="PR11",
+        provider_name="Dra. Isabel Montoro",
+        location_id="centro",
+        specialty_id="gynaecology",
+        appointment_type_id="review",
+        start_time=start,
+        payable_with=["sanitas"],
+    )
+
+
+def test_named_monday_is_not_answered_with_the_tuesday_in_the_same_window():
+    """date_from + weekday must try that Monday first, not any day in the 14-day span."""
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [
+                    _gynae_slot("2026-10-06T09:00:00+02:00"),  # Tuesday
+                    _gynae_slot("2026-10-05T09:00:00+02:00"),  # Monday
+                ],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-oct5", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert result["status"] == "offer"
+    assert manager.state["offers"]["offer-1"]["slot"].startswith("2026-10-05")
+    assert result.get("note") != "negotiated"
+
+
+def test_named_monday_negotiates_only_after_that_monday_is_empty():
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [_gynae_slot("2026-10-06T09:00:00+02:00")],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-oct5-empty", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+        },
+        get_current_context=lambda: [],
+    )
+    result, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert result["status"] == "offer"
+    assert result["note"] == "negotiated"
+    assert manager.state["offers"]["offer-1"]["slot"].startswith("2026-10-06")
+
+
+def test_a_slot_already_offered_is_skipped_on_the_next_search():
+    """A refused/retried search must not read out the same Monday again."""
+    from handlers import get_earliest_slot
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                "slots": [
+                    _gynae_slot("2026-10-05T09:00:00+02:00"),
+                    _gynae_slot("2026-10-06T09:00:00+02:00"),
+                ],
+                "blocked": [],
+            }
+
+        async def post_submission(self, action):
+            return {"received": True}
+
+    client = Client()
+    manager = SimpleNamespace(
+        state={
+            "connected_at": datetime.fromisoformat("2026-09-19T10:00:00+02:00"),
+            "client": client,
+            "submission": CallSubmission("call-skip-tried", client),
+            "patient": {
+                "patient_id": "P1",
+                "insurer": "sanitas",
+                "date_of_birth": "1980-01-01",
+                "referrals": [],
+            },
+            "offers": {},
+            "tried_slots": [],
+        },
+        get_current_context=lambda: [],
+    )
+    first, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    second, _ = asyncio.run(
+        get_earliest_slot(
+            {"specialty": "gynaecology", "date_from": "2026-10-05", "weekday": "monday"},
+            manager,
+        )
+    )
+    assert first["status"] == "offer"
+    assert manager.state["offers"][first["offer_id"]]["slot"].startswith("2026-10-05")
+    assert second["status"] == "offer"
+    assert manager.state["offers"][second["offer_id"]]["slot"].startswith("2026-10-06")
+
+
+def test_tool_progress_lines_follow_the_pinned_language():
+    """flows.rails.pin_language sets state["language"]; the filler speak_tool
+    queues before running a tool must switch with it, not stay in English."""
+    from flows.common import TOOL_PROGRESS, speak_tool
+
+    for language in ("en", "es"):
+        spoken = []
+
+        async def queue_frames(frames):
+            spoken.extend(frames)
+
+        manager = SimpleNamespace(
+            state={"language": language}, worker=SimpleNamespace(queue_frames=queue_frames)
+        )
+        asyncio.run(speak_tool(manager, "search_patient"))
+        assert spoken[0].text == TOOL_PROGRESS[language]["search_patient"]
+
+
+def test_tool_progress_falls_back_to_english_for_an_unlocalized_language():
+    from flows.common import TOOL_PROGRESS, speak_tool
+
+    spoken = []
+
+    async def queue_frames(frames):
+        spoken.extend(frames)
+
+    manager = SimpleNamespace(
+        state={"language": "eu"}, worker=SimpleNamespace(queue_frames=queue_frames)
+    )
+    asyncio.run(speak_tool(manager, "search_patient"))
+    assert spoken[0].text == TOOL_PROGRESS["en"]["search_patient"]
+
+
+def test_role_message_requires_pinning_before_switching_language():
+    from flows.common import ROLE_MESSAGE
+
+    assert "pin_language" in ROLE_MESSAGE
+
+
+def test_holding_line_follows_the_pinned_language():
+    from flows.common import HOLDING_LINE, localized
+
+    assert localized(HOLDING_LINE, "es") == HOLDING_LINE["es"]
+    assert localized(HOLDING_LINE, "eu") == HOLDING_LINE["en"]
+    assert localized(HOLDING_LINE, None) == HOLDING_LINE["en"]

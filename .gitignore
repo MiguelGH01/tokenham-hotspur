@@ -220,6 +220,14 @@ __marimo__/
 *.debug.log
 server/eval-runs/
 
+# Call/eval audio recordings (may contain real patient audio — never commit)
+*.wav
+server/run-logs/
+server/bot.log
+
+# Cached Krisp VIVA .kef models (downloaded with KRISP_VIVA_API_KEY)
+server/.krisp-models/
+
 # Node.js (client/)
 # Local Pi runtime state
 .atl/

@@ -83,10 +83,23 @@ def test_a_moved_appointment_is_submitted_as_a_reschedule():
 
 
 def test_a_cancellation_read_back_is_the_ending():
-    state = _state(intent="cancel", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    state = _state(
+        intent="cancel",
+        appointment={"appointment_id": "A1", "patient_id": "P1"},
+        proposal={"key": "A1", "revision": 0},
+    )
     assert asyncio.run(resolution.resolve_fallback(state)) == {
         "action": "CANCEL",
         "appointment_id": "A1",
+    }
+
+
+def test_a_declined_cancellation_is_not_submitted():
+    """``keep_appointment`` pops the proposal; a stale ``appointment`` alone must not cancel it."""
+    state = _state(intent="cancel", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
     }
 
 
@@ -103,7 +116,18 @@ def test_a_stale_offer_is_not_an_ending():
         proposal=None,
         offers={"offer-1": dict(OFFER)},
     )
-    assert asyncio.run(resolution.resolve_fallback(state)) == resolution.UNSCORED_REFUSAL
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
+    }
+
+
+def test_an_unfinished_reschedule_is_not_a_new_booking():
+    state = _state(intent="reschedule", appointment={"appointment_id": "A1", "patient_id": "P1"})
+    assert asyncio.run(resolution.resolve_fallback(state)) == {
+        "action": "NO_ACTION",
+        "reason": "no_availability",
+    }
 
 
 def test_cold_booking_uses_the_patients_own_diary_first():
@@ -157,6 +181,11 @@ def test_cold_booking_that_hangs_leaves_the_stated_refusal(monkeypatch):
     monkeypatch.setattr(resolution, "COLD_BOOKING_TIMEOUT_SECS", 0.01)
     state = _state(client=Client(delay=0.2))
     assert asyncio.run(resolution.resolve_fallback(state)) == resolution.UNSCORED_REFUSAL
+
+
+def test_a_booking_call_that_never_identified_is_not_out_of_scope():
+    action = asyncio.run(resolution.resolve_fallback(_state(patient=None, intent="book")))
+    assert action == {"action": "NO_ACTION", "reason": "patient_not_found"}
 
 
 def test_an_unidentified_call_states_the_unscored_refusal():
