@@ -224,6 +224,10 @@ server/eval-runs/
 # Local Pi runtime state
 .atl/
 
+# elevenagent (ElevenLabs ConvAI bridge)
+elevenagent/node_modules/
+elevenagent/.env
+
 # macOS
 .DS_Store
 

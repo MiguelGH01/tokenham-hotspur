@@ -791,6 +791,16 @@ async def _telephony_transport(runner_args: WebSocketRunnerArguments, params) ->
 
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point."""
+    from voice_agent import is_elevenagent
+
+    # Place-test-call WebRTC follows VOICE_AGENT: bridge to the ConvAI sidecar
+    # instead of the Pipecat cascade when elevenagent is selected.
+    if is_elevenagent() and isinstance(runner_args, SmallWebRTCRunnerArguments):
+        from elevenagent_webrtc import run_webrtc_elevenagent
+
+        await run_webrtc_elevenagent(runner_args, audio_kwargs=_audio_kwargs())
+        return
+
     transport_params = {
         "webrtc": lambda: TransportParams(**_audio_kwargs()),
         "twilio": lambda: FastAPIWebsocketParams(**_audio_kwargs()),
@@ -809,9 +819,12 @@ if __name__ == "__main__":
     from pipecat.runner.run import app, main
 
     from observability import mount_observability_routes
+    from voice_agent import mount_voice_agent, voice_agent
 
     mount_observability_routes(app)
     # Importing pipecat's runner reloads ./.env with override=True, which silently undid
     # DOTENV_PATH for every key ./.env also sets. Re-apply ours on top.
     load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
+    mount_voice_agent(app)
+    logger.info("Booting with VOICE_AGENT={}", voice_agent())
     main()

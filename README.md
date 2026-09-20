@@ -5,8 +5,9 @@ A phone receptionist for the HackSpain "El Turno" challenge, built with
 earliest matching appointment through the clinic API, and submits the booking.
 
 - **Pipeline**: cascade — Soniox STT → LLM → ElevenLabs TTS (Deepgram via `STT_PROVIDER` / `TTS_PROVIDER`)
-- **LLM**: `helmcode` gateway by default; `gemini` and `openai` selectable with `LLM_PROVIDER`
-- **Conversation**: Pipecat Flows graph in `server/flow/` (identify → slot → confirm → goodbye)
+- **Voice agent switch**: `VOICE_AGENT=carloslabs` (default Pipecat) or `elevenagent` (ElevenLabs ConvAI bridge under `elevenagent/`). Same Prosper `/ws` URL and same observability console.
+- **LLM**: `cloudflare` by default; `helmcode`, `gemini` and `openai` selectable with `LLM_PROVIDER`
+- **Conversation**: Pipecat Flows graph in `server/flows/` (identify → slot → confirm → goodbye)
 - **Transports**: Twilio-shaped WebSocket (what the challenge harness dials), WebRTC for the
   browser, and a headless `eval` transport
 
@@ -19,10 +20,11 @@ getting the bot running and testing it.
 |---|---|
 | [uv](https://docs.astral.sh/uv/) | `brew install uv`. It installs the right Python (3.12) for you. |
 | Team API key (`pk-…`) and dashboard login | The organisers' desk. One key per team — ask a teammate, don't request a new one: rotating it breaks everyone else. |
-| Soniox API key | [console.soniox.com](https://console.soniox.com/) (`SONIOX_API_KEY`) |
-| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`). `ELEVENLABS_MODEL=eleven_v3` or `eleven_v3_conversational` uses Text-to-Dialogue; Flash/Turbo use the normal TTS WebSocket. |
+| Soniox API key | [console.soniox.com](https://console.soniox.com/) (`SONIOX_API_KEY`) — carloslabs only |
+| ElevenLabs API key + voice ID | [elevenlabs.io](https://elevenlabs.io/) (`ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`). For `VOICE_AGENT=elevenagent` also set `ELEVEN_AGENT_ID` (ConvAI agent). |
+| [Node.js](https://nodejs.org/) 20+ | Only when `VOICE_AGENT=elevenagent` (Python spawns `elevenagent/` for you). |
 | Deepgram API key | Only if you set `STT_PROVIDER=deepgram` or `TTS_PROVIDER=deepgram` |
-| An LLM key | `HELMCODE_API_KEY` for the default provider, or a Gemini / OpenAI key |
+| An LLM key | Cloudflare / Helmcode / Gemini / OpenAI — carloslabs only |
 | [ngrok](https://ngrok.com/) account | Only for real calls from the dashboard. Free tier is enough. |
 
 ## 1. Set up
@@ -94,17 +96,42 @@ Restart terminal 1 before the next scenario: the bot keeps its conversation betw
 This is the path that gets scored. The harness dials your machine over a WebSocket, so your
 laptop has to be reachable from the internet for the whole run.
 
-### 5.1 Start the bot
+### Shortcut: everything at once
+
+```bash
+make run                # bot + ngrok tunnel + open http://localhost:7860/console/
+```
+
+One process on port 7860 (Prosper `/ws`, WebRTC Place-test-call, and the console). Ctrl-C stops
+the bot and the tunnel. Paste the `wss://…/ws` line ngrok prints into the dashboard.
+
+### 5.1 Start the bot (manual)
 
 ```bash
 make run-twilio         # from the repo root; keep this terminal open
 ```
 
-Wait for `Uvicorn running on http://localhost:7860`. If you want a log file to search later:
+Wait for `Uvicorn running on http://localhost:7860`. The boot log prints `VOICE_AGENT=carloslabs`
+or `VOICE_AGENT=elevenagent`. If you want a log file to search later:
 
 ```bash
 make run-twilio 2>&1 | tee /tmp/bot.log
 ```
+
+To use the ElevenLabs ConvAI bridge instead of the Pipecat cascade, set in `server/.env`:
+
+```bash
+VOICE_AGENT=elevenagent
+ELEVEN_AGENT_ID=your_agent_id
+```
+
+Python starts `elevenagent/` on port 3000, proxies Prosper `/ws` and `/tools/*` through 7860, and
+feeds the same observability console. Place-test-call (WebRTC) also bridges to that agent when
+`VOICE_AGENT=elevenagent`. Point ElevenLabs tool webhooks at
+`https://your-ngrok-host/tools/…` (same host as the Prosper endpoint, not `:3000`).
+Details: [elevenagent/README.md](elevenagent/README.md).
+
+Evals always use carloslabs regardless of `VOICE_AGENT`.
 
 ### 5.2 Open the tunnel
 
