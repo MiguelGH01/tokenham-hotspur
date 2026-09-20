@@ -219,6 +219,32 @@ def _is_twilio_session(runner_args: RunnerArguments) -> bool:
     )
 
 
+def _truthy_flag(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _is_test_call(runner_args: RunnerArguments) -> bool:
+    """Console Place-test-call, whether it arrived as WebRTC or as /ws media.
+
+    Remote testers cannot send WebRTC media through ngrok (UDP never leaves the
+    laptop), so the console places those calls on the same Twilio-shaped /ws
+    the harness uses and marks them with customParameters.is_test.
+    """
+    if isinstance(runner_args, SmallWebRTCRunnerArguments):
+        return True
+    call_data = getattr(runner_args, "call_data", None)
+    if not call_data:
+        return False
+    body = call_data.get("body") if isinstance(call_data, dict) else getattr(call_data, "body", None)
+    if not isinstance(body, dict):
+        return False
+    if "is_test" in body:
+        return _truthy_flag(body.get("is_test"))
+    if "isTest" in body:
+        return _truthy_flag(body.get("isTest"))
+    return False
+
+
 def _call_id(runner_args: RunnerArguments) -> str:
     call_data = getattr(runner_args, "call_data", None)
     if call_data and call_data.call_id:
@@ -636,14 +662,19 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         await hub.ensure_ready()
         connected_at = _connected_at(allow_override=isinstance(runner_args, EvalRunnerArguments))
         transport_name = _transport_name(runner_args)
-        # A browser WebRTC call is somebody testing from the console; real callers
+        is_test = _is_test_call(runner_args)
+        # A browser test call is somebody probing from the console; real callers
         # arrive over Twilio. Keeping them apart stops a tuning session from
-        # wrecking the shift's submit rate and outcome mix.
+        # wrecking the shift's submit rate and outcome mix. Remote testers send
+        # the same /ws media as the harness, so the label is is_test, not the
+        # socket type.
+        if is_test and transport_name == "twilio":
+            transport_name = "webrtc"
         await hub.start_call(
             call_id,
             transport=transport_name,  # type: ignore[arg-type]
             from_number=_from_number(runner_args),
-            is_test=transport_name == "webrtc",
+            is_test=is_test,
         )
         await emit_node_entered(call_id, to="reception")
 

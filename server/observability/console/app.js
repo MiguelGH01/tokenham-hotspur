@@ -1885,7 +1885,11 @@ function tcLive(){
   mic.id="tcBarMic"; bar.appendChild(mic);
   const mute = el("button","btn", m.muted ? "Unmute" : "Mute");
   mute.setAttribute("aria-pressed", String(m.muted));
-  mute.addEventListener("click", ()=>{ m.muted = !m.muted; tcRender(); });
+  mute.addEventListener("click", ()=>{
+    m.muted = !m.muted;
+    if (m.mic) m.mic.getTracks().forEach((t) => { t.enabled = !m.muted; });
+    tcRender();
+  });
   bar.appendChild(mute);
   const hang = el("button","btn danger","Hang up");
   hang.addEventListener("click", tcHangUp);
@@ -2123,21 +2127,31 @@ function refreshAll() {
 /* ============================================================ the live wire */
 let ws = null, wsRetry = 0;
 function connect() {
+  if ($("#shellAdmin").hidden) return;
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  ws = new WebSocket(proto + "//" + location.host + "/observability/live");
-  ws.onopen = () => { wsRetry = 0; setWire(true); };
-  ws.onclose = () => {
-    setWire(false);
+  fetch("/auth/ws-ticket").then((r) => r.ok ? r.json() : {}).then((d) => {
+    if ($("#shellAdmin").hidden) return;
+    const q = d && d.ticket ? ("?ticket=" + encodeURIComponent(d.ticket)) : "";
+    ws = new WebSocket(proto + "//" + location.host + "/observability/live" + q);
+    ws.onopen = () => { wsRetry = 0; setWire(true); };
+    ws.onclose = () => {
+      setWire(false);
+      if ($("#shellAdmin").hidden) return;
+      wsRetry = Math.min(wsRetry + 1, 6);
+      later(connect, 500 * Math.pow(2, wsRetry - 1));
+    };
+    ws.onerror = () => { try { ws.close(); } catch (_) {} };
+    ws.onmessage = (m) => {
+      let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
+      if (msg.kind === "snapshot") { onSnapshot(msg); return; }
+      if (msg.kind === "insight.backfill") { onInsightBackfill(msg.payload || {}); return; }
+      onEvent(msg);
+    };
+  }).catch(() => {
+    if ($("#shellAdmin").hidden) return;
     wsRetry = Math.min(wsRetry + 1, 6);
     later(connect, 500 * Math.pow(2, wsRetry - 1));
-  };
-  ws.onerror = () => { try { ws.close(); } catch (_) {} };
-  ws.onmessage = (m) => {
-    let msg; try { msg = JSON.parse(m.data); } catch (_) { return; }
-    if (msg.kind === "snapshot") { onSnapshot(msg); return; }
-    if (msg.kind === "insight.backfill") { onInsightBackfill(msg.payload || {}); return; }
-    onEvent(msg);
-  };
+  });
 }
 function setWire(ok) {
   const w = $("#wire"); if (!w) return;
@@ -2220,7 +2234,8 @@ function tcOpen() {
   if (modal) return;
   modal = { phase: "connecting", step: 0, callId: null, lastSteps: -1, muted: false,
             tickTimer: null, awaitingCall: false, pc: null, mic: null, audio: null,
-            analyser: null, level: 0 };
+            analyser: null, level: 0, line: null, stopCapture: null, player: null,
+            closing: false, seq: 1, streamSid: null, callSid: null };
   const scrim = el("div", "scrim");
   const box = el("div", "tc");
   box.setAttribute("role", "dialog");
@@ -2246,11 +2261,26 @@ function tcClose() {
 }
 function teardownCall() {
   if (!modal) return;
+  modal.closing = true;
+  try { if (modal.stopCapture) modal.stopCapture(); } catch (_) {}
+  try { if (modal.player) modal.player.clear(); } catch (_) {}
+  try {
+    if (modal.line && modal.line.readyState === 1) {
+      modal.line.send(JSON.stringify({
+        event: "stop",
+        sequenceNumber: String((modal.seq || 1) + 1),
+        streamSid: modal.streamSid,
+        stop: { callSid: modal.callSid }
+      }));
+    }
+  } catch (_) {}
+  try { if (modal.line) modal.line.close(); } catch (_) {}
   try { if (modal.pc) modal.pc.close(); } catch (_) {}
   try { if (modal.mic) modal.mic.getTracks().forEach((t) => t.stop()); } catch (_) {}
   try { if (modal.audioCtx) modal.audioCtx.close(); } catch (_) {}
   if (modal.audio) { modal.audio.srcObject = null; modal.audio.remove(); }
   modal.pc = null; modal.mic = null; modal.audio = null; modal.analyser = null;
+  modal.line = null; modal.stopCapture = null; modal.player = null;
 }
 
 function tcFail(title, detail, hint) {
@@ -2285,11 +2315,130 @@ function tcError() {
   m.box.appendChild(foot);
 }
 
+function isLocalHost() {
+  const h = location.hostname;
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]";
+}
+function hexId(n) {
+  const bytes = new Uint8Array(n);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function bytesToB64(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+function b64ToBytes(b64) {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+/* G.711 µ-law — same encoding the Twilio /ws path and elevenagent sidecar speak. */
+function pcm16ToMulaw(sample) {
+  const BIAS = 0x84;
+  const CLIP = 32635;
+  const sign = (sample >> 8) & 0x80;
+  if (sign) sample = -sample;
+  if (sample > CLIP) sample = CLIP;
+  sample = sample + BIAS;
+  let exponent = 7;
+  for (let mask = 0x4000; (sample & mask) === 0 && exponent > 0; exponent--, mask >>= 1) {}
+  const mantissa = (sample >> (exponent === 0 ? 4 : exponent + 3)) & 0x0F;
+  return ~(sign | (exponent << 4) | mantissa) & 0xFF;
+}
+function mulawToPcm16(mulaw) {
+  const BIAS = 0x84;
+  mulaw = ~mulaw & 0xFF;
+  const sign = mulaw & 0x80;
+  const exponent = (mulaw >> 4) & 0x07;
+  const mantissa = mulaw & 0x0F;
+  let sample = ((mantissa << 3) + BIAS) << exponent;
+  sample -= BIAS;
+  return sign ? -sample : sample;
+}
+function downsample(input, fromRate, toRate) {
+  if (fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const outLen = Math.floor(input.length / ratio);
+  const out = new Float32Array(outLen);
+  for (let i = 0; i < outLen; i++) {
+    const start = Math.floor(i * ratio);
+    const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+    let sum = 0, n = 0;
+    for (let j = start; j < end; j++) { sum += input[j]; n++; }
+    out[i] = n ? sum / n : 0;
+  }
+  return out;
+}
+function createMulawPlayer(ctx) {
+  let next = 0;
+  const sources = [];
+  return {
+    play(bytes) {
+      if (!bytes || !bytes.length || !ctx) return;
+      const f32 = new Float32Array(bytes.length);
+      for (let i = 0; i < bytes.length; i++) f32[i] = mulawToPcm16(bytes[i]) / 32768;
+      const buf = ctx.createBuffer(1, f32.length, 8000);
+      buf.getChannelData(0).set(f32);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (next < now + 0.04) next = now + 0.04;
+      src.start(next);
+      next += buf.duration;
+      sources.push(src);
+      src.onended = () => {
+        const i = sources.indexOf(src);
+        if (i >= 0) sources.splice(i, 1);
+      };
+    },
+    clear() {
+      sources.splice(0).forEach((s) => { try { s.stop(); } catch (_) {} });
+      next = 0;
+    }
+  };
+}
+function startUplink(ctx, stream, onFrame) {
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const sink = ctx.createMediaStreamDestination();
+  src.connect(proc);
+  proc.connect(sink);
+  let leftover = new Float32Array(0);
+  const inRate = ctx.sampleRate;
+  proc.onaudioprocess = (ev) => {
+    if (!modal) return;
+    const input = ev.inputBuffer.getChannelData(0);
+    const down = downsample(input, inRate, 8000);
+    const merged = new Float32Array(leftover.length + down.length);
+    merged.set(leftover);
+    merged.set(down, leftover.length);
+    let offset = 0;
+    while (offset + 160 <= merged.length) {
+      const frame = merged.subarray(offset, offset + 160);
+      const mulaw = new Uint8Array(160);
+      for (let i = 0; i < 160; i++) {
+        const s = Math.max(-1, Math.min(1, frame[i]));
+        mulaw[i] = pcm16ToMulaw((s * 32767) | 0);
+      }
+      onFrame(mulaw);
+      offset += 160;
+    }
+    leftover = merged.slice(offset);
+  };
+  return () => { try { proc.disconnect(); src.disconnect(); } catch (_) {} };
+}
+
 async function dial() {
   const m = modal;
   /* 1 — the microphone */
   try {
-    m.mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    m.mic = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true }
+    });
   } catch (err) {
     tcFail("The microphone was blocked",
       "The browser refused access to the microphone, so there is nothing to send down the line.",
@@ -2298,44 +2447,23 @@ async function dial() {
   }
   if (!modal) return;
   m.step = 1; tcRender();
-  meterFrom(m.mic);
 
-  /* 2 — the audio channel */
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new Ctx();
+  m.audioCtx = ctx;
+  try { await ctx.resume(); } catch (_) {}
+  meterFrom(m.mic, ctx);
+
+  /* 2 — the audio channel.
+     ngrok only tunnels HTTP/WebSocket. WebRTC media is UDP between the
+     tester's browser and this laptop, so remote testers hear nothing unless
+     we send the same Twilio-shaped /ws the real phone calls already use. */
   try {
-    const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-    m.pc = pc;
-    m.mic.getTracks().forEach((t) => pc.addTrack(t, m.mic));
-    pc.addTransceiver("audio", { direction: "recvonly" });
-    const audio = document.createElement("audio");
-    audio.autoplay = true;
-    document.body.appendChild(audio);
-    m.audio = audio;
-    pc.ontrack = (e) => { audio.srcObject = e.streams[0]; };
-
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await iceSettled(pc, 2500);
-
-    m.awaitingCall = true;
-    const res = await fetch("/api/offer", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
-    });
-    if (!res.ok) {
-      tcFail("The bot did not answer",
-        res.status === 404
-          ? "There is no WebRTC endpoint on this server."
-          : "The server refused the offer (http " + res.status + ").",
-        "Start the bot with:  uv run bot.py -t webrtc");
-      return;
-    }
-    const answer = await res.json();
-    if (!modal) return;
-    await pc.setRemoteDescription(answer);
+    if (isLocalHost()) await dialWebRTC();
+    else await dialWire(ctx);
   } catch (err) {
     tcFail("The audio channel did not open",
-      "The offer was sent but the connection could not be negotiated.",
+      "The line never connected, so there is nothing to listen to.",
       String(err && err.message ? err.message : err));
     return;
   }
@@ -2351,6 +2479,114 @@ async function dial() {
     }
   }, 12000);
 }
+
+function waitForLine(ws, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out opening /ws")), timeoutMs);
+    const fail = () => { clearTimeout(timer); reject(new Error("could not open /ws")); };
+    ws.addEventListener("open", () => { clearTimeout(timer); resolve(); }, { once: true });
+    ws.addEventListener("error", fail, { once: true });
+  });
+}
+
+async function dialWire(ctx) {
+  const m = modal;
+  const callSid = "CA-webrtc-" + hexId(6);
+  const streamSid = "MZ" + hexId(8);
+  m.callSid = callSid;
+  m.streamSid = streamSid;
+  m.seq = 1;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const ws = new WebSocket(proto + "//" + location.host + "/ws");
+  m.line = ws;
+  await waitForLine(ws, 8000);
+  if (!modal || modal.closing) { try { ws.close(); } catch (_) {} return; }
+  ws.send(JSON.stringify({ event: "connected", protocol: "Call", version: "1.0.0" }));
+  ws.send(JSON.stringify({
+    event: "start",
+    sequenceNumber: "1",
+    streamSid,
+    start: {
+      streamSid,
+      callSid,
+      tracks: ["inbound"],
+      mediaFormat: { encoding: "audio/x-mulaw", sampleRate: 8000, channels: 1 },
+      customParameters: { from_number: "webrtc-test", is_test: "true" }
+    }
+  }));
+  const player = createMulawPlayer(ctx);
+  m.player = player;
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    if (msg.event === "media" && msg.media && msg.media.payload) {
+      try { player.play(b64ToBytes(msg.media.payload)); } catch (_) {}
+    } else if (msg.event === "clear") {
+      player.clear();
+    }
+  };
+  ws.onclose = () => {
+    if (!modal || modal.closing) return;
+    if (modal.phase === "connecting") {
+      tcFail("The audio channel did not open",
+        "The WebSocket closed before the bot answered.",
+        "The bot must be serving /ws (make run), not only WebRTC.");
+    } else if (modal.phase === "live") {
+      tcShowResult();
+    }
+  };
+  m.awaitingCall = true;
+  m.stopCapture = startUplink(ctx, m.mic, (mulaw) => {
+    if (!modal || !modal.line || modal.line.readyState !== 1) return;
+    modal.seq += 1;
+    modal.line.send(JSON.stringify({
+      event: "media",
+      sequenceNumber: String(modal.seq),
+      streamSid: modal.streamSid,
+      media: {
+        track: "inbound",
+        chunk: String(modal.seq),
+        timestamp: String((modal.seq - 1) * 20),
+        payload: bytesToB64(mulaw)
+      }
+    }));
+  });
+}
+
+async function dialWebRTC() {
+  const m = modal;
+  const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+  m.pc = pc;
+  m.mic.getTracks().forEach((t) => pc.addTrack(t, m.mic));
+  pc.addTransceiver("audio", { direction: "recvonly" });
+  const audio = document.createElement("audio");
+  audio.autoplay = true;
+  audio.playsInline = true;
+  document.body.appendChild(audio);
+  m.audio = audio;
+  pc.ontrack = (e) => {
+    audio.srcObject = e.streams[0];
+    audio.play().catch(() => {});
+  };
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  await iceSettled(pc, 2500);
+
+  m.awaitingCall = true;
+  const res = await fetch("/api/offer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sdp: pc.localDescription.sdp, type: pc.localDescription.type })
+  });
+  if (!res.ok) {
+    throw new Error(res.status === 404
+      ? "There is no WebRTC endpoint on this server."
+      : "The server refused the offer (http " + res.status + ").");
+  }
+  const answer = await res.json();
+  if (!modal) return;
+  await pc.setRemoteDescription(answer);
+}
 function iceSettled(pc, timeoutMs) {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
@@ -2360,10 +2596,10 @@ function iceSettled(pc, timeoutMs) {
     setTimeout(done, timeoutMs);
   });
 }
-function meterFrom(streamIn) {
+function meterFrom(streamIn, existingCtx) {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
-    const ctx = new Ctx();
+    const ctx = existingCtx || new Ctx();
     const src = ctx.createMediaStreamSource(streamIn);
     const an = ctx.createAnalyser();
     an.fftSize = 512;

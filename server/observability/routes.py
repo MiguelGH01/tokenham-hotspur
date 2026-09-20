@@ -73,19 +73,36 @@ def require_provider(request: Request) -> dict[str, Any]:
     return session
 
 
-def _set_session_cookie(response: Response, session: dict[str, Any]) -> None:
+def _request_is_https(request: Request) -> bool:
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded:
+        return forwarded == "https"
+    return request.url.scheme == "https"
+
+
+def _set_session_cookie(response: Response, session: dict[str, Any], *, secure: bool = False) -> None:
+    # Lax is enough on localhost. Through ngrok the live WebSocket is a
+    # cross-site upgrade as far as some browsers are concerned, so HTTPS
+    # sessions use None+Secure or the cookie never rides the socket.
     response.set_cookie(
         key=COOKIE_NAME,
         value=session_to_cookie(session),
         httponly=True,
-        samesite="lax",
+        samesite="none" if secure else "lax",
+        secure=secure,
         max_age=_COOKIE_MAX_AGE,
         path="/",
     )
 
 
-def _clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+def _clear_session_cookie(response: Response, *, secure: bool = False) -> None:
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="none" if secure else "lax",
+        secure=secure,
+    )
 
 
 def mount_observability_routes(app: FastAPI) -> None:
@@ -112,16 +129,16 @@ def mount_observability_routes(app: FastAPI) -> None:
         await hub.ensure_ready()
 
     @app.post("/auth/login")
-    async def auth_login(body: LoginBody, response: Response):
+    async def auth_login(body: LoginBody, request: Request, response: Response):
         session = resolve_key(body.key)
         if session is None:
             raise HTTPException(status_code=401, detail="invalid_key")
-        _set_session_cookie(response, session)
+        _set_session_cookie(response, session, secure=_request_is_https(request))
         return session_response(session)
 
     @app.post("/auth/logout")
-    async def auth_logout(response: Response):
-        _clear_session_cookie(response)
+    async def auth_logout(request: Request, response: Response):
+        _clear_session_cookie(response, secure=_request_is_https(request))
         return {"ok": True}
 
     @app.get("/auth/me")
@@ -133,6 +150,22 @@ def mount_observability_routes(app: FastAPI) -> None:
             return session_response(session)
         except KeyError:
             raise HTTPException(status_code=401, detail="not_authenticated") from None
+
+    @app.get("/auth/ws-ticket")
+    async def auth_ws_ticket(request: Request):
+        """A signed ticket for the live WebSocket.
+
+        ngrok (and some browsers) drop cookies on the WebSocket upgrade. HTTP
+        still has the session cookie, so the console trades it for a ticket
+        and puts that on the socket URL.
+        """
+        session = _read_session(request)
+        if not is_admin(session):
+            raise HTTPException(status_code=401, detail="admin_required")
+        token = request.cookies.get(COOKIE_NAME)
+        if not token:
+            raise HTTPException(status_code=401, detail="admin_required")
+        return {"ticket": token}
 
     @app.get("/auth/me/calendar")
     async def auth_me_calendar(
@@ -372,6 +405,8 @@ def mount_observability_routes(app: FastAPI) -> None:
     @app.websocket("/observability/live")
     async def observability_live(websocket: WebSocket):
         session = cookie_to_session(websocket.cookies.get(COOKIE_NAME))
+        if not is_admin(session):
+            session = cookie_to_session(websocket.query_params.get("ticket"))
         if not is_admin(session):
             await websocket.close(code=1008)
             return
