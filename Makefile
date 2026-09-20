@@ -36,19 +36,28 @@ CLOCK ?=
 #   make eval-one S=pr06_age_redirect DOTENV=/tmp/env-helmcode
 DOTENV ?=
 
-.PHONY: help console console-seed console-reset run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
+# Full local platform (make run): one bot on RUN_PORT, ngrok tunnel, console open.
+RUN_PORT ?= 7860
+RUN_URL := http://localhost:$(RUN_PORT)/console/
+TUNNEL_LOG ?= /tmp/hackspain-tunnel.log
+TUNNEL_PID_FILE ?= /tmp/hackspain-tunnel.pid
+
+.PHONY: help console console-seed console-reset run run-webrtc run-twilio run-eval evals tunnel guard cost oracle oracle-fetch oracle-check test concurrency concurrency-bot-stop eval eval-all eval-spec eval-one eval-bot-stop
 
 # Concurrency readiness (PR-02). N is the burst size; Run All itself opens 10.
 N ?= 20
 CONCURRENCY_PORT ?= 7862
 
 help:
+	@echo "make run          - full platform: bot + ngrok tunnel + open console ($(RUN_URL))"
+	@echo "                    Prosper /ws + Place-test-call WebRTC on :$(RUN_PORT); Ctrl-C stops all"
 	@echo "make console      - run the bot and open the oversight console ($(CONSOLE_URL))"
 	@echo "                    CONSOLE_DB=data/centralita.sqlite to read the live database"
 	@echo "make console-seed - fill the console database with a synthetic shift to look at"
 	@echo "make console-reset - delete the console database and start the shift empty"
 	@echo "make run-webrtc   - run the bot with the local browser test UI (http://localhost:7860)"
 	@echo "make run-twilio   - run the bot as a Twilio Media Streams WebSocket server (ws://localhost:7860/ws)"
+	@echo "                    VOICE_AGENT=carloslabs (default) or elevenagent in server/.env"
 	@echo "make run-eval     - run the bot as a headless eval server (ws://localhost:7860), for running one scenario yourself"
 	@echo "make evals        - run every scenario under server/evals/PR-*, restarting the bot fresh before each"
 	@echo "                    one so Flow/context state never leaks between scenarios"
@@ -97,6 +106,30 @@ console-seed:
 console-reset:
 	@rm -f $(SERVER_DIR)/$(CONSOLE_DB) $(SERVER_DIR)/$(CONSOLE_DB)-wal $(SERVER_DIR)/$(CONSOLE_DB)-shm
 	@echo ">> removed $(SERVER_DIR)/$(CONSOLE_DB)"
+
+# One process for Prosper telephony (/ws), WebRTC Place-test-call, and /console/.
+# Tunnel runs in the background; Ctrl-C stops the bot and tears the tunnel down.
+run:
+	@echo ">> platform  $(RUN_URL)"
+	@echo ">> tunnel    ngrok → :$(RUN_PORT)/ws  (log: $(TUNNEL_LOG))"
+	@echo ">> VOICE_AGENT from server/.env (carloslabs | elevenagent)"
+	@rm -f $(TUNNEL_PID_FILE)
+	@( NGROK_DOMAIN=$(NGROK_DOMAIN) bash scripts/tunnel.sh $(RUN_PORT) /ws >$(TUNNEL_LOG) 2>&1 & \
+		echo $$! > $(TUNNEL_PID_FILE) )
+	@( for i in $$(seq 1 40); do \
+		if nc -z localhost $(RUN_PORT) 2>/dev/null; then \
+			if command -v open >/dev/null 2>&1; then open "$(RUN_URL)"; \
+			elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$(RUN_URL)"; \
+			else echo ">> open $(RUN_URL)"; fi; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done ) &
+	@trap 'echo; echo ">> stopping tunnel"; \
+		if [ -f $(TUNNEL_PID_FILE) ]; then kill $$(cat $(TUNNEL_PID_FILE)) 2>/dev/null || true; fi; \
+		pkill -f "ngrok http.*$(RUN_PORT)" 2>/dev/null || true; \
+		rm -f $(TUNNEL_PID_FILE)' EXIT INT TERM; \
+	cd $(SERVER_DIR) && uv run bot.py --port $(RUN_PORT)
 
 run-webrtc:
 	cd $(SERVER_DIR) && uv run bot.py -t webrtc
