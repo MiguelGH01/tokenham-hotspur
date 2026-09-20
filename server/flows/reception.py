@@ -2,7 +2,7 @@
 
 from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 
-from flows.common import ROLE_MESSAGE
+from flows.common import current_role_message
 from flows.identification import create_identify_node
 from flows.requests import begin_request
 from observability.emit import trace_tool
@@ -24,7 +24,7 @@ async def route_request(args, flow_manager):
 def create_reception_node():
     return NodeConfig(
         name="reception",
-        role_message=ROLE_MESSAGE,
+        role_message=current_role_message(),
         respond_immediately=False,
         task_messages=[
             {

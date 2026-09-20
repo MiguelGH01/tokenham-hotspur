@@ -49,9 +49,16 @@ def standing_slot_starts(
     *,
     slot_minutes: int,
     closure_days: frozenset[str],
+    absent_days: frozenset[str] = frozenset(),
 ) -> list[tuple[datetime, str, str]]:
-    """(start, location_id, location_name) for every bookable tick that day."""
-    if day.isoformat() in closure_days:
+    """(start, location_id, location_name) for every bookable tick that day.
+
+    ``absent_days`` is reception's own absence for this doctor, alongside the
+    clinic's closures and the leave the clinic publishes. All three mean the
+    same thing to a calendar — nothing is bookable — and they are applied in one
+    place so the doctor's week can never disagree with what the agent offers.
+    """
+    if day.isoformat() in closure_days or day.isoformat() in absent_days:
         return []
     weekday = WEEKDAYS[day.weekday()]
     leave = provider.get("leave")
@@ -110,12 +117,17 @@ def build_day_blocks(
     slot_minutes: int,
     closure_days: frozenset[str],
     infer_busy: bool = True,
+    absent_days: frozenset[str] = frozenset(),
     overlay_by_start: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """One day's blocks for the calendar UI."""
     overlays = overlay_by_start or {}
     ticks = standing_slot_starts(
-        provider, day, slot_minutes=slot_minutes, closure_days=closure_days
+        provider,
+        day,
+        slot_minutes=slot_minutes,
+        closure_days=closure_days,
+        absent_days=absent_days,
     )
     blocks: list[dict[str, Any]] = []
     for start, loc_id, loc_name in ticks:
@@ -282,9 +294,12 @@ def assemble_calendar(
     overlays: list[dict[str, Any]] | None = None,
     source: str = "availability",
 ) -> dict[str, Any]:
+    import reception_notices
+
     catalogue = load_catalog()
     slot_minutes = int(catalogue["calendar"]["slot_minutes"])
     closure_days = frozenset(catalogue["calendar"]["closure_days"])
+    absent = frozenset(reception_notices.absent_days(reception_notices.load_notices(), provider["id"]))
     kept, freed = apply_cancellations(bot_bookings, cancellations or [])
     free = free_start_keys(free_slots) | freed
     bots = bot_booking_index(kept)
@@ -294,7 +309,11 @@ def assemble_calendar(
     day = date_from
     while day <= date_to:
         ticks = standing_slot_starts(
-            provider, day, slot_minutes=slot_minutes, closure_days=closure_days
+            provider,
+            day,
+            slot_minutes=slot_minutes,
+            closure_days=closure_days,
+            absent_days=absent,
         )
         location_name = ticks[0][2] if ticks else None
         location_id = ticks[0][1] if ticks else None
@@ -303,12 +322,28 @@ def assemble_calendar(
 
             top = Counter((loc_id, loc_name) for _, loc_id, loc_name in ticks).most_common(1)[0][0]
             location_id, location_name = top
+        # An empty day is ambiguous — a day off, a closure, or reception saying
+        # you are away all read the same. Naming the reason is the difference
+        # between a calendar the doctor trusts and one they ring about.
+        note = note_detail = note_kind = None
+        if day.isoformat() in absent:
+            note, note_detail, note_kind = "No vienes", "aviso de recepción", "absent"
+        elif day.isoformat() in closure_days:
+            note, note_detail, note_kind = "Clínica cerrada", "todos los médicos", "closed"
+        elif not ticks:
+            # A day the doctor simply does not work. Saying so is what stops the
+            # other two reasons from being guessed at — and it is the ordinary
+            # case, so it is marked as such rather than as an exception.
+            note, note_detail, note_kind = "Sin consulta", "no está en tu horario", "off"
         days_out.append(
             {
                 "date": day.isoformat(),
                 "weekday": WEEKDAYS[day.weekday()],
                 "location_id": location_id,
                 "location_name": location_name,
+                "note": note,
+                "note_detail": note_detail,
+                "note_kind": note_kind,
                 "blocks": build_day_blocks(
                     day=day,
                     provider=provider,
@@ -317,6 +352,7 @@ def assemble_calendar(
                     slot_minutes=slot_minutes,
                     closure_days=closure_days,
                     infer_busy=infer_busy,
+                    absent_days=absent,
                     overlay_by_start=overlay_by_start,
                 ),
             }

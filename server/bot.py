@@ -75,6 +75,7 @@ from llm_deadline import FirstTokenDeadlineLLM
 from observability.emit import emit_node_entered
 from observability.hub import get_hub
 from observability.observer import TraceObserver
+import reception_notices
 from resolution import resolve_fallback
 from submission import CallSubmission
 
@@ -706,6 +707,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
         nonlocal _start_task
         logger.info("Client connected")
         call_started(call_id)
+        reception_notices.record_active_notices(call_id)
         # Any telephony socket, not just one detected as "twilio": with no RTVI client-ready,
         # nothing else would ever start the flow and the bot would stay silent until cut off.
         if isinstance(runner_args, WebSocketRunnerArguments):

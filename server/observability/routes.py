@@ -13,6 +13,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from starlette.responses import Response as StarletteResponse
 
+import reception_notices
 from observability.auth import (
     COOKIE_NAME,
     cookie_to_session,
@@ -292,6 +293,12 @@ def mount_observability_routes(app: FastAPI) -> None:
             logger.warning("Observability WS closed: {}", exc)
         finally:
             hub.unsubscribe(queue)
+
+    # Reception's notices ride on the console's app: same origin, same port, so
+    # the page that shows them is the page that writes them. Writing is admin
+    # only — this port is what `make tunnel` exposes, and a notice changes which
+    # appointments the agent will offer.
+    reception_notices.mount_notices_routes(app, write_guard=require_admin)
 
     # Same origin as the API and the WebRTC offer endpoint: no CORS, no build.
     # Auth routes above must be registered before this mount.
