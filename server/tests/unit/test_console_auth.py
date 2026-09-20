@@ -175,3 +175,11 @@ def test_provider_calendar_endpoint(client, monkeypatch):
 def test_admin_cannot_read_provider_calendar(client):
     client.post("/auth/login", json={"key": "admin"})
     assert client.get("/auth/me/calendar").status_code == 401
+
+
+def test_origin_serves_healthcheck_favicon(client):
+    for path in ("/favicon.ico", "/favicon.svg"):
+        r = client.get(path)
+        assert r.status_code == 200
+        assert "svg" in r.headers["content-type"]
+        assert b"#FF522E" in r.content
