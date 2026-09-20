@@ -257,6 +257,8 @@ function fromSummary(s) {
   c.submitted = !!s.submitted;
   if (s.patient_name) c.fields.patient = s.patient_name;
   if (s.patient_id) c.fields.patient_id = s.patient_id;
+  if (s.call_summary_title) c.label = s.call_summary_title;
+  if (s.eleven_conversation_id) c.elevenConversationId = s.eleven_conversation_id;
   if (s.primary_action) c.primaryAction = s.primary_action;
   if (s.primary_reason) c.primaryReason = s.primary_reason;
   return c;

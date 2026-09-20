@@ -28,6 +28,26 @@ const SUBMIT_VERBS = Object.freeze({
   escalate: "ESCALATE",
 });
 
+const PROXY_TOOLS = Object.freeze(new Set([
+  "search-patient",
+  "search_patient",
+  "nearest-site",
+  "nearest_site",
+  "find_nearest_site",
+  "book",
+  "reschedule",
+  "cancel",
+  "register",
+  "no-action",
+  "no_action",
+  "escalate",
+]));
+
+function isProxyTool(name) {
+  const raw = String(name || "");
+  return PROXY_TOOLS.has(raw) || PROXY_TOOLS.has(raw.replaceAll("_", "-"));
+}
+
 export function createObserver(config = {}) {
   const url = (config.obsIngestUrl || process.env.OBS_INGEST_URL || "").replace(/\/$/, "");
   const token = config.obsIngestToken || process.env.OBS_INGEST_TOKEN || "";
@@ -78,8 +98,10 @@ export function createObserver(config = {}) {
       });
     },
 
-    callEnded(callId) {
-      fire("call.ended", callId, {});
+    callEnded(callId, { conversationId } = {}) {
+      const body = {};
+      if (conversationId) body.conversation_id = conversationId;
+      fire("call.ended", callId, body);
     },
 
     userTranscript(callId, text, { interim = false } = {}) {
@@ -101,8 +123,10 @@ export function createObserver(config = {}) {
       fire("metrics.first_word", callId, { ms: Math.max(0, Number(ms) || 0) });
     },
 
-    toolCalled(callId, name, args = {}) {
-      fire("tool.called", callId, { name, args });
+    toolCalled(callId, name, args = {}, requestId) {
+      const payload = { name, args };
+      if (requestId) payload.request_id = requestId;
+      fire("tool.called", callId, payload);
     },
 
     toolReturned(callId, name, { status = "ok", justification, nextNode } = {}) {
@@ -132,13 +156,25 @@ export function createObserver(config = {}) {
       fire("submit.posted", callId, body);
     },
 
+    conversationBound(callId, conversationId) {
+      const id = String(conversationId || "").trim();
+      if (!id) return;
+      fire("eleven.bound", callId, { conversation_id: id });
+    },
+
     /**
      * Map an ElevenLabs ConvAI server event into CallHub emits.
-     * Returns { firstWordMs } when this was the first forwarded agent audio.
+     * Returns { firstWordMs, conversationId } when those are discovered.
      */
     handleElevenEvent(callId, event, ctx = {}) {
       if (!event || !callId) return {};
       const type = event.type;
+      if (type === "conversation_initiation_metadata") {
+        const meta = event.conversation_initiation_metadata_event || {};
+        const conversationId = meta.conversation_id;
+        if (conversationId) this.conversationBound(callId, conversationId);
+        return { conversationId: conversationId || null };
+      }
       if (type === "user_transcript") {
         const text = event.user_transcription_event?.user_transcript;
         this.userTranscript(callId, text, { interim: false });
@@ -160,7 +196,28 @@ export function createObserver(config = {}) {
         const tool = event.client_tool_call || event.client_tool_call_event || {};
         const name = tool.tool_name || tool.name;
         const params = tool.parameters || tool.tool_parameters || {};
-        if (name) this.toolCalled(callId, name, params);
+        if (name) this.toolCalled(callId, name, params, tool.tool_call_id || tool.request_id);
+        return {};
+      }
+      if (type === "agent_tool_response" || type === "agent_tool_response_full_payload") {
+        const tool =
+          event.agent_tool_response_full_payload ||
+          event.agent_tool_response ||
+          event.agent_tool_response_event ||
+          {};
+        const name = tool.tool_name || tool.name;
+        if (!name || isProxyTool(name)) return {};
+        const requestId = tool.tool_call_id || tool.request_id;
+        const params = tool.parameters || {};
+        this.toolCalled(callId, name, params, requestId);
+        const failed = tool.is_error || tool.status === "error";
+        const result = tool.full_tool_result;
+        this.toolReturned(callId, name, {
+          status: failed ? "error" : (tool.status === "success" ? "ok" : (tool.status || "ok")),
+          justification: typeof result === "string" && result.trim()
+            ? result.trim().slice(0, 400)
+            : `${name} ${tool.status || (failed ? "error" : "ok")}`,
+        });
         return {};
       }
       if (type === "audio" && event.audio_event?.audio_base_64 && !ctx.firstWordEmitted) {

@@ -8,6 +8,7 @@ Un único servicio Node.js que:
 - inyecta `current_datetime_madrid`, `caller_phone` y `call_id` como variables dinámicas;
 - ofrece los seis endpoints `/tools/*` y añade en servidor `X-Api-Key` + el `call_id` real;
 - (opcional) publica eventos al CallHub de Python vía `OBS_INGEST_URL` para la misma consola.
+- con `VOICE_AGENT=elevenagent`, la consola lista y abre conversaciones desde la API ConvAI (`GET /v1/convai/conversations`), con transcript **y** tool calls/results, no solo el SQLite local.
 
 ## Uso recomendado: desde el backend Python
 

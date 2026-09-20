@@ -3,7 +3,7 @@
 A Pipecat AI voice agent built with a cascade pipeline (STT → LLM → TTS).
 
 - **Pipeline**: cascade — Soniox STT → LLM → ElevenLabs TTS (Deepgram via `STT_PROVIDER` / `TTS_PROVIDER`)
-- **Voice agent switch**: `VOICE_AGENT=carloslabs` (default Pipecat) or `elevenagent` (ElevenLabs ConvAI bridge under `elevenagent/`). Same Prosper `/ws` URL and same observability console.
+- **Voice agent switch**: `VOICE_AGENT=carloslabs` (default Pipecat) or `elevenagent` (ElevenLabs ConvAI bridge under `elevenagent/`). Same Prosper `/ws` URL and same observability console. With elevenagent, the console reads conversation transcripts and tool calls from the ElevenLabs ConvAI API (live poll + batch on open), not only from local SQLite.
 - **LLM**: `cloudflare` by default; `helmcode`, `gemini` and `openai` selectable with `LLM_PROVIDER`
 - **Conversation**: Pipecat Flows graph in `server/flows/` (identify → slot → confirm → goodbye)
 - **Transports**: Twilio-shaped WebSocket (what the challenge harness dials), WebRTC for the

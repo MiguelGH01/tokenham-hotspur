@@ -22,6 +22,10 @@ from observability.auth import (
     session_response,
     session_to_cookie,
 )
+from observability.elevenlabs_history import (
+    elevenlabs_history_configured,
+    get_elevenlabs_history,
+)
 from observability.events import ObsEvent
 from observability.hub import get_hub
 from observability.insights import (
@@ -243,13 +247,21 @@ def mount_observability_routes(app: FastAPI) -> None:
     ):
         store = await hub.ensure_ready()
         _, bound = resolve_period_bound(period, since)
-        calls = await store.list_calls(since=bound, include=include)
+        if elevenlabs_history_configured():
+            calls = await get_elevenlabs_history().list_console_calls(
+                store, since=bound, include=include
+            )
+        else:
+            calls = await store.list_calls(since=bound, include=include)
         return {"calls": calls}
 
     @app.get("/observability/calls/{call_id}")
     async def get_call(call_id: str, _admin: dict = Depends(require_admin)):
         store = await hub.ensure_ready()
-        detail = await store.get_call(call_id)
+        if elevenlabs_history_configured():
+            detail = await get_elevenlabs_history().get_console_call(store, call_id)
+        else:
+            detail = await store.get_call(call_id)
         if not detail:
             raise HTTPException(status_code=404, detail="call_not_found")
         return detail

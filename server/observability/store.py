@@ -32,8 +32,11 @@ CREATE TABLE IF NOT EXISTS calls (
     submitted INTEGER NOT NULL DEFAULT 0,
     failed_posts INTEGER NOT NULL DEFAULT 0,
     last_justification TEXT,
-    is_test INTEGER NOT NULL DEFAULT 0
+    is_test INTEGER NOT NULL DEFAULT 0,
+    eleven_conversation_id TEXT
 );
+
+CREATE INDEX IF NOT EXISTS idx_calls_eleven_conv ON calls(eleven_conversation_id);
 
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -341,7 +344,14 @@ class ObservabilityStore:
             await self.db.execute(
                 "ALTER TABLE calls ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0"
             )
-            await self.db.commit()
+        if "eleven_conversation_id" not in cols:
+            await self.db.execute(
+                "ALTER TABLE calls ADD COLUMN eleven_conversation_id TEXT"
+            )
+        await self.db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calls_eleven_conv ON calls(eleven_conversation_id)"
+        )
+        await self.db.commit()
 
     async def open(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -401,6 +411,32 @@ class ObservabilityStore:
             (call_id, transport, from_number, started_at, 1 if is_test else 0),
         )
         await self.db.commit()
+
+    async def set_eleven_conversation_id(self, call_id: str, conversation_id: str) -> None:
+        if not call_id or not conversation_id:
+            return
+        await self.db.execute(
+            """
+            INSERT OR IGNORE INTO calls (call_id, transport, started_at, status)
+            VALUES (?, 'unknown', ?, 'live')
+            """,
+            (call_id, utc_now_iso()),
+        )
+        await self.db.execute(
+            "UPDATE calls SET eleven_conversation_id = ? WHERE call_id = ?",
+            (conversation_id, call_id),
+        )
+        await self.db.commit()
+
+    async def call_id_for_eleven_conversation(self, conversation_id: str) -> str | None:
+        if not conversation_id:
+            return None
+        cur = await self.db.execute(
+            "SELECT call_id FROM calls WHERE eleven_conversation_id = ?",
+            (conversation_id,),
+        )
+        row = await cur.fetchone()
+        return str(row["call_id"]) if row else None
 
     async def append_event(self, event: ObsEvent) -> None:
         await self.db.execute(
@@ -693,6 +729,7 @@ class ObservabilityStore:
                 "first_word_ms": summary.get("first_word_ms"),
                 "submitted": summary.get("submitted"),
                 "failed_posts": summary.get("failed_posts"),
+                "eleven_conversation_id": summary.get("eleven_conversation_id"),
             },
             "timeline": project_timeline(events),
             "decision_trail": project_decision_trail(events),
@@ -1428,6 +1465,11 @@ class ObservabilityStore:
             "failed_posts": row["failed_posts"] or 0,
             "is_test": bool(row["is_test"]) if "is_test" in row.keys() else False,
             "event_count": row["event_count"] if "event_count" in row.keys() else None,
+            "eleven_conversation_id": (
+                row["eleven_conversation_id"]
+                if "eleven_conversation_id" in row.keys()
+                else None
+            ),
         }
 
 

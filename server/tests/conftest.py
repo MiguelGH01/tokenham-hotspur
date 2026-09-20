@@ -23,6 +23,11 @@ def _no_audit_writes(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_voice_agent(monkeypatch):
+    monkeypatch.setenv("VOICE_AGENT", "carloslabs")
+
+
+@pytest.fixture(autouse=True)
 def _no_live_notices(monkeypatch, tmp_path_factory):
     absent = tmp_path_factory.mktemp("notices") / "none.json"
     monkeypatch.setenv("RECEPTION_NOTICES_PATH", str(absent))
