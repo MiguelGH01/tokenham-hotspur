@@ -54,10 +54,11 @@ let SHIFT = {
   lengthBuckets: [], busiest: null
 };
 
-/* Outcome colours: the validated status palette from the design. */
+/* Outcome colours: one warm ramp, spread across luminance so the categories stay
+   apart in greyscale (and for colour-blind viewers), not just by hue. */
 const VERB_COLOUR = {
-  BOOK: "#147A54", REGISTER: "#2563AE", CANCEL: "#C8890F",
-  RESCHEDULE: "#C8890F", NO_ACTION: "#737373", ESCALATE: "#A8201A"
+  BOOK: "#F54900", REGISTER: "#A25A02", CANCEL: "#997500",
+  RESCHEDULE: "#997500", NO_ACTION: "#57544D", ESCALATE: "#8A0009"
 };
 const VERB_NOTE = {
   BOOK: "appointment created", REGISTER: "put on file, no booking",
@@ -81,7 +82,7 @@ function mapShift(s) {
     byHour: (s.hourly || []).map((h) => [pad(h.hour), h.count]),
     outcomes: (s.mix || []).map((m) => ({
       k: m.action, n: m.count,
-      c: VERB_COLOUR[m.action] || "#737373",
+      c: VERB_COLOUR[m.action] || "#5F5C55",
       note: VERB_NOTE[m.action] || ""
     })),
     actions: (s.actions.by_verb || []).map((a) => [a.verb, a.count]),
@@ -575,8 +576,6 @@ function renderRails(){
 function renderVerbs(){
   const host=$("#verbs"); if(!host) return;
   host.innerHTML="";
-  const tone={BOOK:"#147A54",REGISTER:"#2563AE",CANCEL:"#C8890F",RESCHEDULE:"#C8890F",
-              NO_ACTION:"#737373",ESCALATE:"#A8201A"};
   if(!SHIFT.actions.length){ host.appendChild(el("div","tc-idle","Nothing submitted yet.")); return; }
   const max=Math.max(1, ...SHIFT.actions.map(a=>a[1]));
   const tot=SHIFT.actions.reduce((a,[,n])=>a+n,0) || 1;
@@ -585,7 +584,7 @@ function renderVerbs(){
     const left=el("div");
     left.appendChild(el("div","nm",k));
     const tr=el("div","tr"); const i=el("i");
-    i.style.width=(n/max*100)+"%"; i.style.background=tone[k]||"#525252";
+    i.style.width=(n/max*100)+"%"; i.style.background=VERB_COLOUR[k]||"#57544D";
     tr.appendChild(i); left.appendChild(tr);
     r.appendChild(left);
     const ct=el("span","ct",String(n));
@@ -613,7 +612,7 @@ function renderLengths(){
   d.forEach((p,i)=>{
     const h=(p[1]/max)*ih, x=PL+i*bw+gap/2, y=PT+ih-h;
     s.appendChild(svgEl("rect",{x, y, width:Math.max(1,bw-gap), height:h, rx:3,
-      fill: p[2] ? "var(--accent)" : "#B8B8B8"}));
+      fill: p[2] ? "var(--accent)" : "#C4C0B8"}));
     s.appendChild(svgEl("text",{class:"axis",x:x+(bw-gap)/2,y:H-8,"text-anchor":"middle"},p[0]));
     if(p[2]) s.appendChild(svgEl("text",{class:"axis",x:x+(bw-gap)/2,y:y-6,"text-anchor":"middle",
       fill:"var(--accent-ink)","font-weight":"600"},"median "+fmtDur(SHIFT.medianMs)));
@@ -946,7 +945,7 @@ function renderWhy(c){
       s3.appendChild(w);
     });
     const g = el("div","guard");
-    g.innerHTML = "Compiled from session state under <code style=\"font-family:'IBM Plex Mono',monospace\">"+c.id+"</code>, not from the transcript. POSTs are idempotent.";
+    g.innerHTML = "Compiled from session state under <code style=\"font-family:var(--mono)\">"+c.id+"</code>, not from the transcript. POSTs are idempotent.";
     s3.appendChild(g);
   }
   host.appendChild(s3);
