@@ -9,6 +9,7 @@ dependencies = [
     "httpx",
     "aiosqlite",
     "tzdata",
+    "typesafe-sdk",
 ]
 
 [dependency-groups]

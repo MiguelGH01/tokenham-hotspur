@@ -156,6 +156,13 @@ class CallHub:
         await self._persist(lambda: store.append_event(event))
         await self._broadcast(event)
         self._mark_shift_dirty()
+        # Fire-and-forget: hang-up must not wait on TypeSafe.
+        try:
+            from observability.insights import schedule_extract
+
+            schedule_extract(call_id, store=store, emitter=self)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Insight schedule dropped for {}: {}", call_id, exc)
         return event
 
     async def emit(self, event: ObsEvent) -> None:
@@ -258,6 +265,7 @@ class CallHub:
                         self._append_locked(call_id, stamped)
                 await store.append_event(stamped)
                 await self._broadcast(stamped)
+                # Fixtures skip live Jev extraction; events may already include insights.
             else:
                 stamped = dict(event)
                 stamped["ts"] = event.get("ts") or utc_now_iso()

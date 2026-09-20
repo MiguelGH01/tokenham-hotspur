@@ -102,6 +102,16 @@ CREATE TABLE IF NOT EXISTS provider_overlays (
 
 CREATE INDEX IF NOT EXISTS idx_overlays_provider_slot
     ON provider_overlays(provider_id, slot);
+
+CREATE TABLE IF NOT EXISTS insight_defs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    values_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_insight_defs_name ON insight_defs(name);
 """
 
 
@@ -359,6 +369,7 @@ class ObservabilityStore:
         return self._db
 
     async def clear(self) -> None:
+        # Insight defs are clinic config, not a call log — leave them alone.
         await self.db.execute("DELETE FROM events")
         await self.db.execute("DELETE FROM actions")
         await self.db.execute("DELETE FROM notifications")
@@ -727,6 +738,92 @@ class ObservabilityStore:
             }
             for r in rows
         ]
+
+    # ------------------------------------------------------------------ insights
+
+    async def list_insight_defs(self) -> list[dict[str, Any]]:
+        cur = await self.db.execute(
+            """
+            SELECT id, name, description, values_json, created_at
+            FROM insight_defs ORDER BY id ASC
+            """
+        )
+        rows = await cur.fetchall()
+        return [self._insight_def_row(r) for r in rows]
+
+    async def get_insight_def(self, insight_id: int) -> dict[str, Any] | None:
+        cur = await self.db.execute(
+            """
+            SELECT id, name, description, values_json, created_at
+            FROM insight_defs WHERE id = ?
+            """,
+            (insight_id,),
+        )
+        row = await cur.fetchone()
+        return self._insight_def_row(row) if row else None
+
+    async def create_insight_def(
+        self, *, name: str, description: str, values: list[str]
+    ) -> dict[str, Any]:
+        created_at = utc_now_iso()
+        cur = await self.db.execute(
+            """
+            INSERT INTO insight_defs (name, description, values_json, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (name, description, json.dumps(values, ensure_ascii=False), created_at),
+        )
+        await self.db.commit()
+        return {
+            "id": cur.lastrowid,
+            "name": name,
+            "description": description,
+            "values": values,
+            "created_at": created_at,
+        }
+
+    async def delete_insight_def(self, insight_id: int) -> bool:
+        cur = await self.db.execute(
+            "DELETE FROM insight_defs WHERE id = ?", (insight_id,)
+        )
+        await self.db.commit()
+        return cur.rowcount > 0
+
+    async def count_insight_defs(self) -> int:
+        cur = await self.db.execute("SELECT COUNT(*) AS n FROM insight_defs")
+        row = await cur.fetchone()
+        return int(row["n"]) if row else 0
+
+    async def transcript_turns(self, call_id: str) -> list[dict[str, str]]:
+        """Final user/bot utterances in order, shaped for a Jev state object."""
+        cur = await self.db.execute(
+            """
+            SELECT kind, payload_json FROM events
+            WHERE call_id = ? AND kind IN ('transcript.user', 'transcript.bot')
+            ORDER BY id ASC
+            """,
+            (call_id,),
+        )
+        rows = await cur.fetchall()
+        turns: list[dict[str, str]] = []
+        for row in rows:
+            payload = json.loads(row["payload_json"] or "{}")
+            text = (payload.get("text") or "").strip()
+            if not text:
+                continue
+            role = "user" if row["kind"] == "transcript.user" else "assistant"
+            turns.append({"role": role, "text": text})
+        return turns
+
+    @staticmethod
+    def _insight_def_row(row: aiosqlite.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "description": row["description"],
+            "values": json.loads(row["values_json"] or "[]"),
+            "created_at": row["created_at"],
+        }
 
     async def list_provider_bookings(
         self,

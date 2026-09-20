@@ -169,6 +169,33 @@ const API = {
     if (r.status === 401) detail = "Admin session required.";
     throw new Error(detail || "error " + r.status);
   },
+  async insights() {
+    const r = await fetch("/observability/insights");
+    if (!r.ok) throw new Error("insights " + r.status);
+    return r.json();
+  },
+  async createInsight(body) {
+    const r = await fetch("/observability/insights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (r.ok) return r.json();
+    let detail = "";
+    try {
+      const b = await r.json();
+      detail = String(b.detail || "");
+    } catch { /* ignore */ }
+    if (r.status === 401) detail = "Admin session required.";
+    throw new Error(detail || "error " + r.status);
+  },
+  async deleteInsight(id) {
+    const r = await fetch("/observability/insights/" + encodeURIComponent(id), {
+      method: "DELETE",
+    });
+    if (!r.ok) throw new Error("delete insight " + r.status);
+    return r.json();
+  },
   async login(key) {
     const r = await fetch("/auth/login", {
       method: "POST",
@@ -214,7 +241,7 @@ function blankCall(id) {
     id, transport: "unknown", from: null, test: false,
     startedAt: simNow(), endedAt: null, status: "live", ringing: false,
     node: null, label: null, stream: [], trail: [], fields: {},
-    actions: [], submitted: false, _drawn: 0, _loaded: false
+    actions: [], submitted: false, insights: {}, _drawn: 0, _loaded: false
   };
 }
 function fromSummary(s) {
@@ -305,6 +332,46 @@ function applyEvent(c, ev, live) {
     }
     case "metrics.first_word":
       c.firstWordMs = p.ms; break;
+    case "insight.pending": {
+      if (!c.insights) c.insights = {};
+      const key = p.name || String(p.insight_id);
+      c.insights[key] = {
+        insightId: p.insight_id,
+        name: p.name,
+        description: p.description || "",
+        status: "pending",
+        fresh: live,
+      };
+      break;
+    }
+    case "insight.extracted": {
+      if (!c.insights) c.insights = {};
+      const key = p.name || String(p.insight_id);
+      c.insights[key] = {
+        insightId: p.insight_id,
+        name: p.name,
+        description: p.description || (c.insights[key] && c.insights[key].description) || "",
+        status: "done",
+        choice: p.choice,
+        probabilities: p.probabilities || {},
+        confidence: p.confidence,
+        fresh: live,
+      };
+      break;
+    }
+    case "insight.failed": {
+      if (!c.insights) c.insights = {};
+      const key = p.name || String(p.insight_id);
+      c.insights[key] = {
+        insightId: p.insight_id,
+        name: p.name,
+        description: (c.insights[key] && c.insights[key].description) || "",
+        status: "failed",
+        error: p.error || "failed",
+        fresh: live,
+      };
+      break;
+    }
   }
 }
 
@@ -925,11 +992,159 @@ function setView(v){
   view = v;
   $("#viewOverview").hidden = v!=="overview";
   $("#viewCalls").hidden    = v!=="calls";
+  $("#viewInsights").hidden = v!=="insights";
   $("#viewNotices").hidden  = v!=="notices";
   document.querySelectorAll(".nav button").forEach(b =>
     b.setAttribute("aria-current", String(b.dataset.view===v)));
   if(v==="overview") renderOverview();
+  if(v==="insights") loadInsights();
   if(v==="notices") loadNotices();
+}
+
+/* ---------------------------------------------- conversation insights (admin)
+
+   Definitions live in SQLite; each hang-up runs one Jev Choice per label.
+   The page only creates and deletes — extraction is automatic. */
+
+let insightDefs = [];
+let draftValues = [];
+
+function insightStatus(text, tone){
+  const n = $("#insStatus");
+  if(!n) return;
+  n.textContent = text || "";
+  n.className = "ntc-status" + (tone ? " is-" + tone : "");
+}
+
+async function loadInsights(){
+  try{
+    const data = await API.insights();
+    insightDefs = data.insights || [];
+    renderInsightDefs();
+    insightStatus("");
+  } catch(err){
+    insightStatus(String(err.message || err), "bad");
+  }
+}
+
+function renderInsightDefs(){
+  const host = $("#insList");
+  if(!host) return;
+  host.innerHTML = "";
+  $("#insCount").textContent = insightDefs.length
+    ? insightDefs.length + " defined"
+    : "none yet";
+  if(!insightDefs.length){
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"No insights defined"));
+    e.appendChild(el("span",null,"Add a label with at least two values. After hang-up, Jev classifies every conversation."));
+    host.appendChild(e);
+    return;
+  }
+  insightDefs.forEach((d) => {
+    const row = el("div","ntc-row");
+    const body = el("div","body");
+    body.appendChild(el("div","what", d.name));
+    body.appendChild(el("div","when", d.description || ""));
+    const pills = el("div","ins-pill-row");
+    (d.values || []).forEach((v) => pills.appendChild(el("span","pill", v)));
+    body.appendChild(pills);
+    row.appendChild(body);
+    const remove = el("button","btn", "Remove");
+    remove.type = "button";
+    remove.addEventListener("click", async () => {
+      try{
+        await API.deleteInsight(d.id);
+        insightDefs = insightDefs.filter((x) => x.id !== d.id);
+        renderInsightDefs();
+        insightStatus("Removed " + d.name + ".", "ok");
+      } catch(err){
+        insightStatus(String(err.message || err), "bad");
+      }
+    });
+    row.appendChild(remove);
+    host.appendChild(row);
+  });
+}
+
+function renderDraftValues(){
+  const host = $("#insValueChips");
+  if(!host) return;
+  host.innerHTML = "";
+  draftValues.forEach((v, i) => {
+    const chip = el("span","ins-chip", v);
+    const x = el("button","ins-chip-x", "×");
+    x.type = "button";
+    x.setAttribute("aria-label", "Remove " + v);
+    x.addEventListener("click", () => {
+      draftValues.splice(i, 1);
+      renderDraftValues();
+    });
+    chip.appendChild(x);
+    host.appendChild(chip);
+  });
+}
+
+function addDraftValue(){
+  const input = $("#insValueInput");
+  const raw = (input.value || "").trim();
+  $("#insError").hidden = true;
+  if(!raw) return;
+  if(!/^[A-Za-z0-9._-]{1,64}$/.test(raw)){
+    const err = $("#insError");
+    err.hidden = false;
+    err.textContent = "Value must match [A-Za-z0-9._-]{1,64}";
+    return;
+  }
+  if(draftValues.includes(raw)){
+    input.value = "";
+    return;
+  }
+  draftValues.push(raw);
+  input.value = "";
+  renderDraftValues();
+}
+
+function openInsightDialog(){
+  draftValues = [];
+  $("#insName").value = "";
+  $("#insDescription").value = "";
+  $("#insValueInput").value = "";
+  $("#insError").hidden = true;
+  renderDraftValues();
+  $("#insDialog").showModal();
+}
+
+function wireInsightUi(){
+  const addBtn = $("#insAdd");
+  if(!addBtn) return;
+  addBtn.addEventListener("click", openInsightDialog);
+  $("#insCancel").addEventListener("click", () => $("#insDialog").close());
+  $("#insValueAdd").addEventListener("click", addDraftValue);
+  $("#insValueInput").addEventListener("keydown", (e) => {
+    if(e.key === "Enter"){ e.preventDefault(); addDraftValue(); }
+  });
+  $("#insSave").addEventListener("click", async () => {
+    const err = $("#insError");
+    err.hidden = true;
+    const name = ($("#insName").value || "").trim();
+    const description = ($("#insDescription").value || "").trim();
+    if(draftValues.length < 2){
+      err.hidden = false;
+      err.textContent = "Add at least two values.";
+      return;
+    }
+    try{
+      const created = await API.createInsight({ name, description, values: draftValues.slice() });
+      insightDefs.push(created);
+      renderInsightDefs();
+      $("#insDialog").close();
+      insightStatus("Saved " + created.name + ".", "ok");
+    } catch(ex){
+      err.hidden = false;
+      err.textContent = String(ex.message || ex);
+    }
+  });
 }
 
 /* ---------------------------------------------- reception notices (admin)
@@ -1117,6 +1332,7 @@ function fillNoticeOptions(){
 }
 
 function renderWhy(c){
+  renderInsightPane(c);
   const host = $("#why"); host.innerHTML = "";
   if(!c){ $("#whyCount").textContent=""; 
     const e = el("div","empty"); e.appendChild(el("b",null,"Nothing on the line"));
@@ -1211,6 +1427,82 @@ function renderWhy(c){
     s3.appendChild(g);
   }
   host.appendChild(s3);
+}
+
+function renderInsightPane(c){
+  const host = $("#insightPane");
+  if(!host) return;
+  host.innerHTML = "";
+  const countEl = $("#insightCount");
+  if(!c){
+    if(countEl) countEl.textContent = "";
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"No call selected"));
+    e.appendChild(el("span",null,"Hang-up classifications from Jev land here."));
+    host.appendChild(e);
+    return;
+  }
+  const items = Object.values(c.insights || {});
+  if(countEl) countEl.textContent = items.length ? items.length + " label" + (items.length>1?"s":"") : "";
+
+  if(c.status === "live" && !items.length){
+    host.appendChild(el("div","guard","Insights are extracted when the call ends."));
+    return;
+  }
+  if(!items.length){
+    const e = el("div","empty");
+    e.appendChild(el("b",null,"No insights yet"));
+    const link = el("button","btn", "Define insights");
+    link.type = "button";
+    link.style.marginTop = "8px";
+    link.addEventListener("click", () => setView("insights"));
+    e.appendChild(el("span",null,"Add labels on the Insights page; Jev classifies each call after hang-up."));
+    e.appendChild(link);
+    host.appendChild(e);
+    return;
+  }
+  items.sort((a,b) => String(a.name).localeCompare(String(b.name))).forEach((ins) => {
+    const card = el("div","ins-card" + (ins.status === "failed" ? " is-fail" : ""));
+    if(ins.fresh){ card.classList.add("enter"); ins.fresh = false; }
+    const top = el("div","ins-card-top");
+    top.appendChild(el("div","ins-card-name", ins.name || "—"));
+    if(ins.status === "pending"){
+      top.appendChild(el("span","pill", "pending"));
+    } else if(ins.status === "failed"){
+      top.appendChild(el("span","pill bad", "failed"));
+    } else {
+      top.appendChild(el("span","pill ok", String(ins.choice)));
+    }
+    card.appendChild(top);
+    if(ins.description) card.appendChild(el("div","ins-card-desc", ins.description));
+    if(ins.status === "failed"){
+      const err = ins.error === "typesafe_unconfigured"
+        ? "TYPESAFE_API_KEY is not set"
+        : String(ins.error || "failed");
+      card.appendChild(el("div","ins-card-err", err));
+    } else if(ins.status === "done"){
+      const conf = Math.round((ins.confidence || 0) * 100);
+      card.appendChild(el("div","ins-card-conf", "confidence " + conf + "%"));
+      const probs = ins.probabilities || {};
+      const keys = Object.keys(probs);
+      if(keys.length){
+        const bars = el("div","ins-bars");
+        keys.sort((a,b) => (probs[b]||0) - (probs[a]||0)).forEach((k) => {
+          const row = el("div","ins-bar-row");
+          row.appendChild(el("span","ins-bar-lab", k));
+          const track = el("div","ins-bar-track");
+          const fill = el("i");
+          fill.style.width = Math.round((probs[k]||0)*100) + "%";
+          track.appendChild(fill);
+          row.appendChild(track);
+          row.appendChild(el("span","ins-bar-pct", Math.round((probs[k]||0)*100) + "%"));
+          bars.appendChild(row);
+        });
+        card.appendChild(bars);
+      }
+    }
+    host.appendChild(card);
+  });
 }
 
 function renderLine(c){
@@ -2425,6 +2717,7 @@ $("#ntcAdd").addEventListener("click", openNoticeDialog);
 $("#ntcKind").addEventListener("change", syncNoticeFields);
 $("#ntcSave").addEventListener("click", submitNotice);
 $("#ntcCancel").addEventListener("click", () => $("#ntcDialog").close());
+wireInsightUi();
 $("#ntcToneClear").addEventListener("click", () => {
   $("#ntcToneText").value = "";
   $("#ntcToneUntil").value = "";

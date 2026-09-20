@@ -24,6 +24,10 @@ from observability.auth import (
 )
 from observability.events import ObsEvent
 from observability.hub import get_hub
+from observability.insights import (
+    MAX_INSIGHTS,
+    validate_insight_body,
+)
 from observability.store import resolve_period_bound, shift_start_iso
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -34,6 +38,12 @@ _COOKIE_MAX_AGE = 60 * 60 * 12  # half a shift day
 
 class LoginBody(BaseModel):
     key: str = Field(min_length=1)
+
+
+class InsightCreateBody(BaseModel):
+    name: str
+    description: str
+    values: list[str]
 
 
 def _read_session(request: Request) -> dict[str, Any] | None:
@@ -243,6 +253,47 @@ def mount_observability_routes(app: FastAPI) -> None:
         if not detail:
             raise HTTPException(status_code=404, detail="call_not_found")
         return detail
+
+    @app.get("/observability/insights")
+    async def list_insights(_admin: dict = Depends(require_admin)):
+        store = await hub.ensure_ready()
+        return {"insights": await store.list_insight_defs()}
+
+    @app.post("/observability/insights")
+    async def create_insight(body: InsightCreateBody, _admin: dict = Depends(require_admin)):
+        normalized, error = validate_insight_body(body.model_dump())
+        if error:
+            raise HTTPException(status_code=422, detail=error)
+        assert normalized is not None
+        store = await hub.ensure_ready()
+        count = await store.count_insight_defs()
+        if count >= MAX_INSIGHTS:
+            raise HTTPException(
+                status_code=422, detail=f"at most {MAX_INSIGHTS} insights"
+            )
+        existing = await store.list_insight_defs()
+        if any(d["name"] == normalized["name"] for d in existing):
+            raise HTTPException(status_code=422, detail="name: already exists")
+        try:
+            created = await store.create_insight_def(
+                name=normalized["name"],
+                description=normalized["description"],
+                values=normalized["values"],
+            )
+        except Exception as exc:
+            # UNIQUE race on name
+            if "UNIQUE" in str(exc).upper():
+                raise HTTPException(status_code=422, detail="name: already exists") from exc
+            raise
+        return created
+
+    @app.delete("/observability/insights/{insight_id}")
+    async def delete_insight(insight_id: int, _admin: dict = Depends(require_admin)):
+        store = await hub.ensure_ready()
+        ok = await store.delete_insight_def(insight_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="insight_not_found")
+        return {"ok": True, "id": insight_id}
 
     @app.post("/observability/fixtures/{name}/load")
     async def load_fixture(
