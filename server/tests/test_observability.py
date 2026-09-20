@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from booking import MADRID
 from observability.hub import reset_hub
 from observability.seed_shift import build_shift_events
 from observability.store import (
+    ObservabilityStore,
     period_start_iso,
     project_decision_trail,
     project_timeline,
@@ -195,6 +197,58 @@ def test_shift_summary_period_filters_calls(tmp_path, monkeypatch):
         all_time = await store.shift_summary(period="all")
         assert all_time["calls"] == 2
         assert all_time["shift_start"] is None
+        await store.close()
+
+    asyncio.run(run())
+
+
+def test_migrates_eleven_conversation_id_on_existing_db(tmp_path):
+    """An older centralita.sqlite has no eleven_conversation_id; open() must ALTER it.
+
+    CREATE TABLE IF NOT EXISTS cannot add columns, and an index on the new
+    column in the bootstrap script would fail before _migrate could run.
+    """
+    path = tmp_path / "legacy.sqlite"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE calls (
+            call_id TEXT PRIMARY KEY,
+            transport TEXT NOT NULL DEFAULT 'unknown',
+            from_number TEXT,
+            status TEXT NOT NULL DEFAULT 'live',
+            current_node TEXT,
+            patient_name TEXT,
+            patient_id TEXT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_ms INTEGER,
+            first_word_ms INTEGER,
+            primary_action TEXT,
+            primary_reason TEXT,
+            submitted INTEGER NOT NULL DEFAULT 0,
+            failed_posts INTEGER NOT NULL DEFAULT 0,
+            last_justification TEXT,
+            is_test INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO calls (call_id, started_at, status) VALUES ('CA-old', '2026-09-20T08:00:00+00:00', 'ended')"
+    )
+    conn.commit()
+    conn.close()
+
+    async def run():
+        store = ObservabilityStore(path)
+        await store.open()
+        row = await store._get_call_row("CA-old")
+        assert row is not None
+        assert "eleven_conversation_id" in row.keys()
+        await store.set_eleven_conversation_id("CA-old", "conv_abc")
+        assert await store.call_id_for_eleven_conversation("conv_abc") == "CA-old"
+        summary = store._call_summary(await store._get_call_row("CA-old"))
+        assert summary["eleven_conversation_id"] == "conv_abc"
         await store.close()
 
     asyncio.run(run())

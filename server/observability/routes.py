@@ -30,6 +30,7 @@ from observability.events import ObsEvent
 from observability.hub import get_hub
 from observability.insights import (
     MAX_INSIGHTS,
+    extract_call_insights,
     validate_insight_body,
 )
 from observability.store import resolve_period_bound, shift_start_iso
@@ -266,6 +267,25 @@ def mount_observability_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=404, detail="call_not_found")
         return detail
 
+    @app.post("/observability/calls/{call_id}/insights")
+    async def recompute_call_insights(
+        call_id: str, _admin: dict = Depends(require_admin)
+    ):
+        store = await hub.ensure_ready()
+        defs = await store.list_insight_defs()
+        if not defs:
+            raise HTTPException(status_code=422, detail="no_insights_defined")
+        status = await extract_call_insights(call_id, store=store, emitter=hub)
+        if status == "skipped_eval":
+            raise HTTPException(status_code=422, detail="eval_transport")
+        if elevenlabs_history_configured():
+            detail = await get_elevenlabs_history().get_console_call(store, call_id)
+        else:
+            detail = await store.get_call(call_id)
+        if not detail:
+            raise HTTPException(status_code=404, detail="call_not_found")
+        return {"status": status, **detail}
+
     @app.get("/observability/insights")
     async def list_insights(_admin: dict = Depends(require_admin)):
         store = await hub.ensure_ready()
@@ -343,10 +363,16 @@ def mount_observability_routes(app: FastAPI) -> None:
         queue = hub.subscribe()
         try:
             shift = await store.shift_summary(since=shift_start_iso())
+            if elevenlabs_history_configured():
+                snapshot_calls = await get_elevenlabs_history().list_console_calls(
+                    store, since=shift_start_iso(), include="all"
+                )
+            else:
+                snapshot_calls = await store.list_calls(since=shift_start_iso())
             await websocket.send_json(
                 {
                     "kind": "snapshot",
-                    "calls": await store.list_calls(since=shift_start_iso()),
+                    "calls": snapshot_calls,
                     "shift": shift,
                     "protocol_nodes": hub.protocol_nodes,
                 }

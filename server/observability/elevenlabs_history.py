@@ -48,12 +48,18 @@ TOOL_TO_NODE: dict[str, str] = {
 
 SUBMIT_VERBS: dict[str, str] = {
     "book": "BOOK",
+    "submit_book": "BOOK",
     "register": "REGISTER",
+    "submit_register": "REGISTER",
     "reschedule": "RESCHEDULE",
+    "submit_reschedule": "RESCHEDULE",
     "cancel": "CANCEL",
+    "submit_cancel": "CANCEL",
     "no-action": "NO_ACTION",
     "no_action": "NO_ACTION",
+    "submit_no_action": "NO_ACTION",
     "escalate": "ESCALATE",
+    "submit_escalate": "ESCALATE",
 }
 
 _SOURCE_TRANSPORT: dict[str, str] = {
@@ -269,18 +275,24 @@ class ElevenLabsConvAI:
 
 def _tool_names_from_detail(detail: dict[str, Any]) -> list[str]:
     names: list[str] = []
+    seen: set[str] = set()
     for turn in detail.get("transcript") or []:
-        for call in turn.get("tool_calls") or []:
-            name = call.get("tool_name")
-            if name:
-                names.append(str(name))
+        for bucket in (turn.get("tool_calls"), turn.get("tool_results")):
+            for call in bucket or []:
+                name = call.get("tool_name")
+                if name and str(name) not in seen:
+                    seen.add(str(name))
+                    names.append(str(name))
     return names
 
 
 def as_list_item(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a list row or a conversation GET into the list-item shape."""
     if payload.get("start_time_unix_secs") is not None:
-        return payload
+        item = dict(payload)
+        if not item.get("tool_names"):
+            item["tool_names"] = _tool_names_from_detail(payload)
+        return item
     metadata = payload.get("metadata") or {}
     initiation = payload.get("conversation_initiation_client_data") or {}
     source = metadata.get("conversation_initiation_source") or (
@@ -346,8 +358,24 @@ def conversation_to_summary(
         "is_test": False,
         "event_count": item.get("message_count"),
         "call_summary_title": item.get("call_summary_title") or None,
+        "tool_names": tool_names,
         "source": "elevenlabs",
     }
+
+
+def _looks_like_markup(text: str) -> bool:
+    head = text.lstrip()[:80].lower()
+    return head.startswith("<") or "<!doctype" in head or "<html" in head
+
+
+def _tool_justification(result: dict[str, Any], name: str, status: str) -> str | None:
+    if not (result.get("is_error") or status == "error"):
+        return None
+    err = str(result.get("error_type") or "error")
+    raw = str(result.get("result_value") or result.get("raw_error_message") or "").strip()
+    if not raw or _looks_like_markup(raw) or raw.startswith("{") or raw.startswith("["):
+        return f"{name} failed ({err})"
+    return raw.splitlines()[0][:200]
 
 
 def conversation_to_events(detail: dict[str, Any], call_id: str) -> list[ObsEvent]:
@@ -375,6 +403,7 @@ def conversation_to_events(detail: dict[str, Any], call_id: str) -> list[ObsEven
     events.append(started)
 
     last_node: str | None = None
+    pending_calls: set[str] = set()
     for turn in detail.get("transcript") or []:
         offset = turn.get("time_in_call_secs") or 0
         ts = _iso_from_unix(start + int(offset))
@@ -405,6 +434,7 @@ def conversation_to_events(detail: dict[str, Any], call_id: str) -> list[ObsEven
             )
             called["ts"] = ts
             events.append(called)
+            pending_calls.add(str(request_id or name))
             node = _tool_node(name)
             if node and node != last_node:
                 entered = make_event("node.entered", call_id, to=node)
@@ -421,14 +451,19 @@ def conversation_to_events(detail: dict[str, Any], call_id: str) -> list[ObsEven
             status = "error" if is_error else str(result.get("status") or "ok")
             if status in {"success"}:
                 status = "ok"
-            result_value = result.get("result_value")
-            justification = None
-            if isinstance(result_value, str) and result_value.strip():
-                justification = result_value.strip()[:400]
-            elif result_value is not None:
-                justification = json.dumps(result_value, ensure_ascii=False)[:400]
-            if not justification:
-                justification = f"{name} returned {status}"
+            justification = _tool_justification(result, name, status)
+            rid = str(result.get("request_id") or name)
+            if rid not in pending_calls:
+                called = make_event(
+                    "tool.called",
+                    call_id,
+                    name=name,
+                    args={},
+                    request_id=result.get("request_id"),
+                )
+                called["ts"] = ts
+                events.append(called)
+            pending_calls.discard(rid)
             returned = make_event(
                 "tool.returned",
                 call_id,
@@ -448,11 +483,85 @@ def conversation_to_events(detail: dict[str, Any], call_id: str) -> list[ObsEven
     return events
 
 
+def _ts_epoch(iso: str | None) -> float | None:
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+_MATCH_START_SECS = 120.0
+_MATCH_DURATION_MS = 8_000
+
+
+def _looks_like_unbound_local(row: dict[str, Any]) -> bool:
+    cid = str(row.get("call_id") or "")
+    if not cid or cid.startswith("conv_"):
+        return False
+    if row.get("eleven_conversation_id"):
+        return False
+    if cid.startswith("CA-"):
+        return True
+    if row.get("is_test"):
+        return True
+    return (row.get("transport") or "") in {"webrtc", "unknown"}
+
+
+def _pair_score(local_row: dict[str, Any], el_summary: dict[str, Any]) -> float | None:
+    local_start = _ts_epoch(local_row.get("started_at"))
+    el_start = _ts_epoch(el_summary.get("started_at"))
+    if local_start is None or el_start is None:
+        return None
+    gap = abs(local_start - el_start)
+    if gap > _MATCH_START_SECS:
+        return None
+    # A stub that never got hang-up stays "live" and its clock keeps running
+    # (20 min vs the real 29 s). Start time is the signal; duration is not.
+    if local_row.get("status") == "live" or el_summary.get("status") == "live":
+        return gap
+    local_dur = local_row.get("duration_ms")
+    el_dur = el_summary.get("duration_ms")
+    if local_dur and el_dur and abs(int(local_dur) - int(el_dur)) > _MATCH_DURATION_MS:
+        return None
+    return gap
+
+
+def _overlay_local(summary: dict[str, Any], local_row: dict[str, Any]) -> dict[str, Any]:
+    """Copy submit/patient fields; keep the ElevenLabs title and conversation id."""
+    summary["_bound_call_id"] = local_row["call_id"]
+    summary["submitted"] = bool(local_row.get("submitted"))
+    summary["failed_posts"] = local_row.get("failed_posts") or 0
+    summary["patient_name"] = local_row.get("patient_name") or summary.get("patient_name")
+    summary["patient_id"] = local_row.get("patient_id")
+    summary["primary_action"] = local_row.get("primary_action") or summary.get(
+        "primary_action"
+    )
+    summary["pending_action"] = summary["primary_action"]
+    summary["primary_reason"] = local_row.get("primary_reason")
+    summary["is_test"] = bool(local_row.get("is_test") or summary.get("is_test"))
+    summary["from_number"] = local_row.get("from_number") or summary.get("from_number")
+    transport = local_row.get("transport")
+    if transport and transport != "unknown":
+        summary["transport"] = transport
+    if local_row.get("first_word_ms") is not None:
+        summary["first_word_ms"] = local_row["first_word_ms"]
+    if local_row.get("current_node"):
+        summary["current_node"] = local_row["current_node"]
+    return summary
+
+
 def merge_summaries(
     local: list[dict[str, Any]],
     eleven: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Overlay local submit/patient fields onto ElevenLabs conversation rows."""
+    """Overlay local submit/patient fields onto ElevenLabs conversation rows.
+
+    A Place-test-call creates a local ``CA-webrtc-…`` row and ElevenLabs a
+    ``conv_…`` row. If ``eleven.bound`` missed, they still collapse when start
+    time and duration line up — the ElevenLabs title is the one we keep.
+    """
     local_by_el: dict[str, dict[str, Any]] = {}
     local_by_id: dict[str, dict[str, Any]] = {}
     for row in local:
@@ -471,39 +580,96 @@ def merge_summaries(
         )
         if local_row:
             used_local.add(local_row["call_id"])
-            summary["submitted"] = bool(local_row.get("submitted"))
-            summary["failed_posts"] = local_row.get("failed_posts") or 0
-            summary["patient_name"] = local_row.get("patient_name") or summary.get(
-                "patient_name"
-            )
-            summary["patient_id"] = local_row.get("patient_id")
-            summary["primary_action"] = local_row.get("primary_action") or summary.get(
-                "primary_action"
-            )
-            summary["pending_action"] = summary["primary_action"]
-            summary["primary_reason"] = local_row.get("primary_reason")
-            summary["is_test"] = bool(local_row.get("is_test"))
-            summary["from_number"] = local_row.get("from_number") or summary.get(
-                "from_number"
-            )
-            transport = local_row.get("transport")
-            if transport and transport != "unknown":
-                summary["transport"] = transport
-            if local_row.get("first_word_ms") is not None:
-                summary["first_word_ms"] = local_row["first_word_ms"]
-            if local_row.get("current_node"):
-                summary["current_node"] = local_row["current_node"]
+            _overlay_local(summary, local_row)
         merged.append(summary)
 
+    unbound = [
+        row for row in local if row["call_id"] not in used_local and _looks_like_unbound_local(row)
+    ]
+    for local_row in unbound:
+        best_i: int | None = None
+        best_score: float | None = None
+        for i, summary in enumerate(merged):
+            if summary.get("_bound_call_id"):
+                continue
+            conv_id = summary.get("eleven_conversation_id")
+            if not conv_id or summary["call_id"] != conv_id:
+                continue
+            score = _pair_score(local_row, summary)
+            if score is None:
+                continue
+            if best_score is None or score < best_score:
+                best_score = score
+                best_i = i
+        if best_i is None:
+            continue
+        used_local.add(local_row["call_id"])
+        _overlay_local(merged[best_i], local_row)
+
+    merged_el_ids = {
+        str(s.get("eleven_conversation_id"))
+        for s in merged
+        if s.get("eleven_conversation_id")
+    }
+    merged_ids = {s["call_id"] for s in merged}
+
     for row in local:
-        if row["call_id"] in used_local:
+        cid = row["call_id"]
+        if cid in used_local or cid in merged_ids:
             continue
-        if any(s["call_id"] == row["call_id"] for s in merged):
+        # Poller opened a second row under the ConvAI id; the titled line
+        # already represents that conversation.
+        if cid in merged_el_ids:
             continue
+        if row.get("status") == "live":
+            ghost = False
+            for summary in merged:
+                if _pair_score(row, summary) is not None:
+                    ghost = True
+                    break
+            if ghost:
+                continue
         merged.append(row)
 
     merged.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return merged
+
+
+async def match_local_call(store: ObservabilityStore, detail: dict[str, Any]) -> str | None:
+    """Find the Place-test-call / sidecar row that belongs to this ConvAI conversation."""
+    conv_id = str(detail.get("conversation_id") or "")
+    if conv_id:
+        mapped = await store.call_id_for_eleven_conversation(conv_id)
+        if mapped:
+            return mapped
+    prosper = prosper_call_id_from(detail)
+    if prosper:
+        row = await store._get_call_row(prosper)
+        if row:
+            return prosper
+    metadata = detail.get("metadata") or {}
+    start = int(metadata.get("start_time_unix_secs") or 0)
+    duration_secs = int(metadata.get("call_duration_secs") or 0)
+    if not start:
+        return None
+    el_summary = {
+        "started_at": _iso_from_unix(start),
+        "duration_ms": duration_secs * 1000 if duration_secs else None,
+    }
+    since = _iso_from_unix(max(0, start - int(_MATCH_START_SECS)))
+    locals_ = await store.list_calls(since=since, include="all")
+    best_id: str | None = None
+    best_score: float | None = None
+    for row in locals_:
+        if not _looks_like_unbound_local(row):
+            continue
+        score = _pair_score(row, el_summary)
+        if score is None:
+            continue
+        if best_score is None or score < best_score:
+            best_score = score
+            best_id = row["call_id"]
+    return best_id
 
 
 def _events_from_detail_payload(detail: dict[str, Any]) -> list[ObsEvent]:
@@ -624,13 +790,46 @@ class ElevenLabsHistory:
     ) -> list[dict[str, Any]]:
         local = await store.list_calls(since=since, include="all")
         try:
-            eleven = await self._ensure_client().list_conversations(
-                after_unix=iso_to_unix(since)
-            )
+            # ConvAI history is the switchboard source. Do not clip it to the
+            # 08:00 shift bound — overnight and pre-shift calls are exactly
+            # what the ElevenLabs dashboard is showing.
+            eleven = await self._ensure_client().list_conversations()
         except Exception as exc:
             logger.warning("ElevenLabs conversation list failed; using local store: {}", exc)
             return _filter_include(local, include)
+        logger.info("ElevenLabs listed {} conversations for the console", len(eleven))
         merged = merge_summaries(local, eleven)
+        merged_el_ids = {
+            str(s.get("eleven_conversation_id"))
+            for s in merged
+            if s.get("eleven_conversation_id")
+        }
+        merged_ids = {s["call_id"] for s in merged}
+        for row in local:
+            cid = str(row.get("call_id") or "")
+            if row.get("status") != "live":
+                continue
+            if cid in merged_ids:
+                continue
+            ghost = cid in merged_el_ids
+            if not ghost:
+                ghost = any(_pair_score(row, summary) is not None for summary in merged)
+            if not ghost:
+                continue
+            try:
+                from observability.hub import get_hub
+
+                await get_hub().end_call(cid)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("elevenlabs ghost hangup skipped: {}", exc)
+        for row in merged:
+            bound = row.pop("_bound_call_id", None)
+            conv_id = row.get("eleven_conversation_id")
+            if bound and conv_id and bound != conv_id:
+                try:
+                    await store.set_eleven_conversation_id(str(bound), str(conv_id))
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("elevenlabs bind heal skipped: {}", exc)
         return _filter_include(merged, include)
 
     async def get_console_call(
@@ -743,15 +942,17 @@ class ElevenLabsHistory:
         from observability.hub import get_hub
 
         raw = await self._ensure_client().get_conversation(conversation_id)
+        hub = get_hub()
+        store = await hub.ensure_ready()
         call_id = (
             preferred_call_id
             or prosper_call_id_from(raw)
+            or await store.call_id_for_eleven_conversation(conversation_id)
+            or await match_local_call(store, raw)
             or str(raw.get("conversation_id") or conversation_id)
         )
         self._bindings[call_id] = conversation_id
         events = conversation_to_events(raw, call_id)
-        hub = get_hub()
-        store = await hub.ensure_ready()
         await store.set_eleven_conversation_id(call_id, conversation_id)
         existing = await store.list_events(call_id)
         seen = {_fingerprint(e) for e in existing}
@@ -781,6 +982,10 @@ class ElevenLabsHistory:
                 continue
             await hub.emit(event)
             seen.add(_fingerprint(event))
+        if call_id != conversation_id:
+            ghost = await store._get_call_row(conversation_id)
+            if ghost and ghost["status"] == "live":
+                await hub.end_call(conversation_id)
 
 
 def _filter_include(rows: list[dict[str, Any]], include: str) -> list[dict[str, Any]]:

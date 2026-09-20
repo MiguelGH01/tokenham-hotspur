@@ -36,8 +36,6 @@ CREATE TABLE IF NOT EXISTS calls (
     eleven_conversation_id TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_calls_eleven_conv ON calls(eleven_conversation_id);
-
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     call_id TEXT NOT NULL,

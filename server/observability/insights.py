@@ -78,34 +78,98 @@ def typesafe_configured() -> bool:
     return bool(os.getenv("TYPESAFE_API_KEY", "").strip())
 
 
+def turns_from_events(events: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Final user/bot utterances, shaped for a Jev ``conversation`` state."""
+    turns: list[dict[str, str]] = []
+    for event in events:
+        kind = event.get("kind")
+        text = str((event.get("payload") or {}).get("text") or "").strip()
+        if not text:
+            continue
+        if kind == "transcript.user":
+            turns.append({"role": "user", "text": text})
+        elif kind == "transcript.bot":
+            turns.append({"role": "assistant", "text": text})
+    return turns
+
+
+async def load_insight_turns(call_id: str, store: InsightStore) -> list[dict[str, str]]:
+    """Local SQLite transcript, then ElevenLabs ConvAI if the call never landed here."""
+    try:
+        turns = await store.transcript_turns(call_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Insight extract: local transcript {}: {}", call_id, exc)
+        turns = []
+    if turns:
+        return turns
+
+    from observability.elevenlabs_history import (
+        conversation_to_events,
+        elevenlabs_history_configured,
+        get_elevenlabs_history,
+    )
+
+    if not elevenlabs_history_configured():
+        return []
+
+    history = get_elevenlabs_history()
+    conv_id = None
+    try:
+        row = await store._get_call_row(call_id)
+    except Exception:
+        row = None
+    if row is not None:
+        try:
+            conv_id = row["eleven_conversation_id"]
+        except (KeyError, IndexError, TypeError):
+            conv_id = None
+    conv_id = conv_id or history.conversation_id_for(call_id)
+    if not conv_id and str(call_id).startswith("conv_"):
+        conv_id = call_id
+    if not conv_id:
+        return []
+    try:
+        raw = await history._ensure_client().get_conversation(str(conv_id))
+    except Exception as exc:
+        logger.warning("Insight extract: ElevenLabs transcript {}: {}", call_id, exc)
+        return []
+    return turns_from_events(conversation_to_events(raw, call_id))
+
+
 async def extract_call_insights(
     call_id: str,
     *,
     store: InsightStore,
     emitter: InsightEmitter,
     client: Any | None = None,
-) -> None:
+    turns: list[dict[str, str]] | None = None,
+) -> str:
     """Run one Jev Choice per insight definition; emit pending/extracted/failed.
 
     Never raises into the call path — extraction is fire-and-forget after hang-up.
+    Returns a status token: ``ok``, ``skipped_eval``, ``no_defs``,
+    ``unconfigured``, or ``no_transcript``.
     """
     try:
         row = await store._get_call_row(call_id)
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Insight extract: cannot read call {}: {}", call_id, exc)
-        return
+        row = None
 
     transport = (row["transport"] if row else None) or "unknown"
     if transport == "eval":
-        return
+        return "skipped_eval"
 
     try:
         defs = await store.list_insight_defs()
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Insight extract: cannot list defs: {}", exc)
-        return
+        return "no_defs"
     if not defs:
-        return
+        return "no_defs"
+
+    if turns is None:
+        turns = await load_insight_turns(call_id, store)
 
     for d in defs:
         await emitter.emit(
@@ -129,12 +193,9 @@ async def extract_call_insights(
                     error="typesafe_unconfigured",
                 )
             )
-        return
+        return "unconfigured"
 
-    try:
-        turns = await store.transcript_turns(call_id)
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Insight extract: transcript {}: {}", call_id, exc)
+    if not turns:
         for d in defs:
             await emitter.emit(
                 make_event(
@@ -145,7 +206,7 @@ async def extract_call_insights(
                     error="transcript_unavailable",
                 )
             )
-        return
+        return "no_transcript"
 
     state = {"conversation": turns}
     own_client = client is None
@@ -167,6 +228,7 @@ async def extract_call_insights(
                 await client.aclose()
             except Exception:  # pragma: no cover
                 pass
+    return "ok"
 
 
 async def _extract_one(

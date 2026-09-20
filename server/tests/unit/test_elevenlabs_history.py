@@ -10,6 +10,7 @@ import pytest
 
 from observability.elevenlabs_history import (
     ElevenLabsConvAI,
+    ElevenLabsHistory,
     conversation_to_events,
     conversation_to_summary,
     merge_detail,
@@ -113,6 +114,9 @@ def test_conversation_to_events_includes_speech_and_tools():
     assert search["payload"]["request_id"] == "req-1"
     book = next(e for e in events if e["kind"] == "tool.called" and e["payload"]["name"] == "book")
     assert book["payload"]["args"]["patient_id"] == "P1"
+    book_back = next(e for e in events if e["kind"] == "tool.returned" and e["payload"]["name"] == "book")
+    assert book_back["payload"]["status"] == "ok"
+    assert not book_back["payload"].get("justification")
     started = events[0]
     assert started["payload"]["from_number"] == "+34600111222"
     assert started["payload"]["transport"] == "twilio"
@@ -141,7 +145,60 @@ def test_conversation_to_summary_from_list_row():
     assert summary["transport"] == "webrtc"
     assert summary["duration_ms"] == 42_000
     assert summary["call_summary_title"] == "Booking for Ana"
+    assert summary["tool_names"] == ["search-patient", "book"]
     assert datetime.fromisoformat(summary["started_at"]).tzinfo == UTC
+
+
+def test_conversation_to_events_split_turns_and_html_error():
+    events = conversation_to_events(
+        {
+            "conversation_id": "conv_split",
+            "status": "done",
+            "metadata": {"start_time_unix_secs": 1_700_000_000, "call_duration_secs": 12},
+            "transcript": [
+                {
+                    "role": "agent",
+                    "time_in_call_secs": 2,
+                    "message": None,
+                    "tool_calls": [
+                        {
+                            "request_id": "req-html",
+                            "tool_name": "search_patient",
+                            "params_as_json": '{"name": "Ana"}',
+                            "type": "webhook",
+                        }
+                    ],
+                },
+                {
+                    "role": "agent",
+                    "time_in_call_secs": 4,
+                    "message": "",
+                    "tool_results": [
+                        {
+                            "request_id": "req-html",
+                            "tool_name": "search_patient",
+                            "result_value": "<!DOCTYPE html><html>404 ngrok</html>",
+                            "is_error": True,
+                            "error_type": "timeout",
+                        }
+                    ],
+                },
+            ],
+        },
+        "conv_split",
+    )
+    kinds = [e["kind"] for e in events]
+    assert kinds.count("tool.called") == 1
+    assert kinds.count("tool.returned") == 1
+    returned = next(e for e in events if e["kind"] == "tool.returned")
+    assert returned["payload"]["status"] == "error"
+    assert "failed" in returned["payload"]["justification"]
+    assert "<html" not in returned["payload"]["justification"].lower()
+
+
+def test_conversation_to_summary_extracts_tools_from_get_payload():
+    summary = conversation_to_summary(_detail(), call_id="CA-real")
+    assert summary["tool_names"] == ["search-patient", "book"]
 
 
 def test_merge_summaries_prefers_local_call_id_and_submit():
@@ -183,6 +240,96 @@ def test_merge_summaries_prefers_local_call_id_and_submit():
     assert by_id["CA-real"]["from_number"] == "+34600111222"
     assert "conv_other" in by_id
     assert "conv_abc" not in by_id
+
+
+def test_merge_summaries_collapses_unbound_webrtc_stub():
+    local = [
+        {
+            "call_id": "CA-webrtc-deadbeef",
+            "transport": "webrtc",
+            "started_at": "2023-11-14T22:13:20+00:00",
+            "ended_at": "2023-11-14T22:14:02+00:00",
+            "status": "ended",
+            "duration_ms": 42_000,
+            "submitted": False,
+            "is_test": True,
+        }
+    ]
+    eleven = [
+        {
+            "conversation_id": "conv_abc",
+            "start_time_unix_secs": 1_700_000_000,
+            "call_duration_secs": 42,
+            "status": "done",
+            "call_summary_title": "New Patient Registration",
+            "tool_names": [],
+        }
+    ]
+    merged = merge_summaries(local, eleven)
+    assert [row["call_id"] for row in merged] == ["conv_abc"]
+    assert merged[0]["call_summary_title"] == "New Patient Registration"
+    assert merged[0]["_bound_call_id"] == "CA-webrtc-deadbeef"
+    assert merged[0]["is_test"] is True
+    assert merged[0]["transport"] == "webrtc"
+
+
+def test_merge_summaries_drops_poller_ghost_under_conv_id():
+    local = [
+        {
+            "call_id": "CA-webrtc-deadbeef",
+            "eleven_conversation_id": "conv_abc",
+            "transport": "webrtc",
+            "started_at": "2023-11-14T22:13:20+00:00",
+            "ended_at": "2023-11-14T22:13:49+00:00",
+            "status": "ended",
+            "duration_ms": 29_000,
+            "is_test": True,
+        },
+        {
+            "call_id": "conv_abc",
+            "transport": "unknown",
+            "started_at": "2023-11-14T22:13:21+00:00",
+            "status": "live",
+            "is_test": False,
+        },
+    ]
+    eleven = [
+        {
+            "conversation_id": "conv_abc",
+            "start_time_unix_secs": 1_700_000_000,
+            "call_duration_secs": 29,
+            "status": "done",
+            "call_summary_title": "New Patient Registration",
+        }
+    ]
+    merged = merge_summaries(local, eleven)
+    assert [row["call_id"] for row in merged] == ["CA-webrtc-deadbeef"]
+    assert merged[0]["call_summary_title"] == "New Patient Registration"
+
+
+def test_merge_summaries_collapses_live_stub_despite_clock_drift():
+    local = [
+        {
+            "call_id": "CA-webrtc-stuck",
+            "transport": "unknown",
+            "started_at": "2023-11-14T22:13:20+00:00",
+            "status": "live",
+            "duration_ms": 1_209_000,
+            "is_test": False,
+        }
+    ]
+    eleven = [
+        {
+            "conversation_id": "conv_abc",
+            "start_time_unix_secs": 1_700_000_000,
+            "call_duration_secs": 29,
+            "status": "done",
+            "call_summary_title": "New Patient Registration",
+        }
+    ]
+    merged = merge_summaries(local, eleven)
+    assert [row["call_id"] for row in merged] == ["conv_abc"]
+    assert merged[0]["_bound_call_id"] == "CA-webrtc-stuck"
 
 
 def test_merge_detail_keeps_local_submit_and_uses_eleven_speech():
@@ -255,6 +402,40 @@ def test_client_list_and_get_with_mock_transport():
         got = await client.get_conversation("conv_abc")
         assert got["conversation_id"] == "conv_abc"
         await client.aclose()
+
+    asyncio.run(run())
+
+
+class _FakeConvAI:
+    def __init__(self) -> None:
+        self.after_unix = "unset"
+
+    async def list_conversations(self, *, after_unix=None, max_pages=15):
+        self.after_unix = after_unix
+        return [
+            {
+                "conversation_id": "conv_overnight",
+                "start_time_unix_secs": 1_700_000_000,
+                "call_duration_secs": 12,
+                "status": "done",
+                "message_count": 4,
+                "tool_names": ["submit_book"],
+            }
+        ]
+
+
+def test_list_console_calls_includes_elevenlabs_history_outside_shift(tmp_path):
+    async def run():
+        store = await reset_store(tmp_path / "console.sqlite")
+        fake = _FakeConvAI()
+        history = ElevenLabsHistory(client=fake)
+        listed = await history.list_console_calls(
+            store, since="2026-09-20T06:00:00+00:00", include="all"
+        )
+        assert fake.after_unix is None
+        assert listed[0]["call_id"] == "conv_overnight"
+        assert listed[0]["primary_action"] == "BOOK"
+        await store.close()
 
     asyncio.run(run())
 

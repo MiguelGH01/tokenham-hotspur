@@ -209,12 +209,21 @@ async def ingest_obs_event(body: IngestEventBody) -> dict[str, str]:
         return {"ok": "started"}
 
     if kind == "call.ended":
-        conversation_id = payload.get("conversation_id")
+        conversation_id = str(payload.get("conversation_id") or "").strip()
         await hub.end_call(call_id)
+        if conversation_id:
+            try:
+                store = await hub.ensure_ready()
+                await store.set_eleven_conversation_id(call_id, conversation_id)
+                from observability.elevenlabs_history import get_elevenlabs_history
+
+                get_elevenlabs_history().bind(call_id, conversation_id)
+            except Exception:
+                logger.debug("elevenlabs hangup bind skipped")
         try:
             from observability.elevenlabs_history import get_elevenlabs_history
 
-            get_elevenlabs_history().schedule_final_fetch(call_id, conversation_id)
+            get_elevenlabs_history().schedule_final_fetch(call_id, conversation_id or None)
         except Exception:
             logger.debug("elevenlabs final fetch not scheduled")
         return {"ok": "ended"}
