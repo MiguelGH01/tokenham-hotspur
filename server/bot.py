@@ -83,6 +83,7 @@ from eval_judge import helmcode_judge
 from flows.common import GREETING, HOLDING_LINE, localized
 from flows.rails import RAILS
 from flows.reception import create_reception_node
+from krisp_model import ensure_filter_model, existing_filter_model_path
 from liveness import SilenceWatchdog, is_backchannel
 from llm_deadline import FirstTokenDeadlineLLM
 from observability.emit import emit_node_entered
@@ -95,6 +96,7 @@ from ws_probes import quiet_empty_websocket_probes
 
 load_dotenv(os.getenv("DOTENV_PATH") or ".env", override=True)
 quiet_empty_websocket_probes()
+ensure_filter_model()
 
 # pipecat.runner.run.main() defaults the stderr sink to DEBUG (TRACE with -v), which logs
 # every live STT transcription and TTS utterance — i.e. patient name/DNI/phone/health reason
@@ -188,32 +190,26 @@ def _needs_disconnect_grace(state: dict) -> bool:
 
 
 def _audio_in_filter() -> BaseAudioFilter | None:
-    """Pipecat RNNoise on inbound audio (PR-12)."""
-    try:
-        from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
-        from pyrnnoise import RNNoise
-    except Exception as exc:
-        logger.warning("RNNoiseFilter unavailable ({})", exc)
+    """Krisp VIVA noise-reduction on inbound audio.
+
+    The ``.kef`` is resolved at process startup (see ``ensure_filter_model``).
+    """
+    model_path = existing_filter_model_path()
+    api_key = os.getenv("KRISP_VIVA_API_KEY")
+    if not model_path:
         return None
-    if RNNoise is None:
-        logger.warning("pyrnnoise is not installed")
-        return None
-    # pyrnnoise 0.4.3 still calls Graph(rate=); audiolab 0.5.2 only accepts sample_rate=.
-    from audiolab.av import Graph
 
-    original = Graph.__init__
-    if not getattr(original, "_accepts_rate_alias", False):
+    from pipecat.audio.filters.krisp_viva_filter import KrispVivaFilter
 
-        def __init__(self, *args, **kwargs):
-            if "sample_rate" not in kwargs and "rate" in kwargs:
-                kwargs["sample_rate"] = kwargs.pop("rate")
-            else:
-                kwargs.pop("rate", None)
-            original(self, *args, **kwargs)
-
-        __init__._accepts_rate_alias = True
-        Graph.__init__ = __init__
-    return RNNoiseFilter()
+    kwargs: dict = {}
+    if model_path:
+        kwargs["model_path"] = model_path
+    if api_key:
+        kwargs["api_key"] = api_key
+    level = os.getenv("KRISP_NOISE_SUPPRESSION_LEVEL")
+    if level:
+        kwargs["noise_suppression_level"] = int(level)
+    return KrispVivaFilter(**kwargs)
 
 
 def _is_twilio_session(runner_args: RunnerArguments) -> bool:
