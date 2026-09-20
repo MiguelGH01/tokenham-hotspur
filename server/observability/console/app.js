@@ -51,8 +51,22 @@ let SHIFT = {
   from: "—", calls: 0, submitted: 0, failedPosts: 0,
   medianMs: null, p95Ms: null, ttfwP50: null, ttfwP95: null,
   byHour: [], outcomes: [], actions: [], funnel: [], reasons: [], rails: [],
-  lengthBuckets: [], busiest: null
+  lengthBuckets: [], busiest: null, grain: "hour", period: "today"
 };
+
+const PERIODS = [
+  {id:"today", title:"Today's shift", range: "today"},
+  {id:"week",  title:"Last week",     range: "last 7 days"},
+  {id:"month", title:"Last month",    range: "last month"},
+  {id:"year",  title:"Last year",     range: "last year"},
+  {id:"all",   title:"All time",      range: "all recorded calls"}
+];
+let adminPeriod = "today";
+let periodReq = 0;
+
+function periodMeta(id) {
+  return PERIODS.find((p) => p.id === id) || PERIODS[0];
+}
 
 /* Outcome colours: one warm ramp, spread across luminance so the categories stay
    apart in greyscale (and for colour-blind viewers), not just by hue. */
@@ -67,9 +81,15 @@ const VERB_NOTE = {
 };
 
 function mapShift(s) {
-  const start = new Date(s.shift_start);
+  const start = s.shift_start ? new Date(s.shift_start) : null;
+  const buckets = (s.volume && s.volume.buckets) || s.hourly || [];
+  const grain = (s.volume && s.volume.grain) || "hour";
   SHIFT = {
-    from: pad(start.getHours()) + ":" + pad(start.getMinutes()),
+    from: start && !isNaN(start.getTime())
+      ? pad(start.getHours()) + ":" + pad(start.getMinutes())
+      : "—",
+    grain,
+    period: s.period || adminPeriod,
     calls: s.calls,
     submitted: s.submit.posted_calls,
     submitRate: s.submit.rate,
@@ -78,8 +98,8 @@ function mapShift(s) {
     p95Ms: s.duration.p95_ms,
     ttfwP50: s.first_word.p50_ms,
     ttfwP95: s.first_word.p95_ms,
-    busiest: s.busiest_hour,
-    byHour: (s.hourly || []).map((h) => [pad(h.hour), h.count]),
+    busiest: s.busiest_label || (s.busiest_hour != null ? pad(s.busiest_hour) : null),
+    byHour: buckets.map((h) => [h.label || pad(h.hour), h.count]),
     outcomes: (s.mix || []).map((m) => ({
       k: m.action, n: m.count,
       c: VERB_COLOUR[m.action] || "#5F5C55",
@@ -102,8 +122,14 @@ function mapShift(s) {
 
 /* --------------------------------------------------------------- the API */
 const API = {
-  async shift() { return (await fetch("/observability/shift")).json(); },
-  async calls() { return (await fetch("/observability/calls?include=all")).json(); },
+  async shift(period) {
+    const p = period || adminPeriod || "today";
+    return (await fetch("/observability/shift?period=" + encodeURIComponent(p))).json();
+  },
+  async calls(period) {
+    const p = period || adminPeriod || "today";
+    return (await fetch("/observability/calls?include=all&period=" + encodeURIComponent(p))).json();
+  },
   async call(id) {
     const r = await fetch("/observability/calls/" + encodeURIComponent(id));
     return r.ok ? r.json() : null;
@@ -468,12 +494,13 @@ function renderVolume(){
   const host = $("#volChart"); if(!host) return;
   host.innerHTML = "";
   const d=SHIFT.byHour, W=640, H=190, PL=30, PR=10, PT=12, PB=24;
-  if(!d.length){ host.appendChild(el("div","tc-idle","No calls yet today.")); return; }
+  if(!d.length){ host.appendChild(el("div","tc-idle","No calls in this range.")); return; }
   const iw=W-PL-PR, ih=H-PT-PB;
   const max=Math.max(10, Math.ceil(Math.max(...d.map(x=>x[1]))/10)*10);
   const x=i=>PL+(d.length===1?iw/2:i/(d.length-1)*iw), y=v=>PT+ih-(v/max)*ih;
+  const grain = SHIFT.grain || "hour";
   const s=svgEl("svg",{class:"chart",viewBox:`0 0 ${W} ${H}`,role:"img",
-    "aria-label":"Calls answered per hour across the shift"});
+    "aria-label":"Calls answered per "+grain+" across the selected range"});
   for(let t=0;t<=max;t+=10){
     s.appendChild(svgEl("line",{class:"grid",x1:PL,x2:W-PR,y1:y(t),y2:y(t)}));
     s.appendChild(svgEl("text",{class:"axis",x:PL-7,y:y(t)+3.5,"text-anchor":"end"},String(t)));
@@ -481,7 +508,11 @@ function renderVolume(){
   const pts=d.map((p,i)=>`${x(i)} ${y(p[1])}`).join(" L ");
   s.appendChild(svgEl("path",{class:"area",d:`M ${PL} ${y(0)} L ${pts} L ${x(d.length-1)} ${y(0)} Z`}));
   s.appendChild(svgEl("path",{class:"lineM",d:`M ${pts}`}));
-  d.forEach((p,i)=>s.appendChild(svgEl("text",{class:"axis",x:x(i),y:H-7,"text-anchor":"middle"},p[0])));
+  const labelStep = d.length > 16 ? Math.ceil(d.length / 10) : 1;
+  d.forEach((p,i)=>{
+    if (i % labelStep && i !== 0 && i !== d.length - 1) return;
+    s.appendChild(svgEl("text",{class:"axis",x:x(i),y:H-7,"text-anchor":"middle"},p[0]));
+  });
   /* endpoint is the only direct label — never a number on every point */
   const last=d.length-1;
   s.appendChild(svgEl("circle",{class:"pt",cx:x(last),cy:y(d[last][1]),r:4}));
@@ -499,7 +530,7 @@ function renderVolume(){
     let i=Math.round((px-PL)/iw*(d.length-1)); i=Math.max(0,Math.min(d.length-1,i));
     cross.setAttribute("x1",x(i)); cross.setAttribute("x2",x(i)); cross.setAttribute("opacity","1");
     dot.setAttribute("cx",x(i)); dot.setAttribute("cy",y(d[i][1])); dot.setAttribute("opacity","1");
-    tip.innerHTML = "<b>"+d[i][1]+"</b> calls · "+d[i][0]+":00";
+    tip.innerHTML = "<b>"+d[i][1]+"</b> calls · "+(grain==="hour" ? d[i][0]+":00" : d[i][0]);
     tip.style.left = (x(i)/W*r.width)+"px";
     tip.style.top  = (y(d[i][1])/H*r.height)+"px";
     tip.classList.add("on");
@@ -542,7 +573,7 @@ function renderOutcomes(){
 function renderFunnel(){
   const host=$("#funnel"); if(!host) return;
   host.innerHTML="";
-  if(!SHIFT.funnel.length){ host.appendChild(el("div","tc-idle","No calls yet today.")); return; }
+  if(!SHIFT.funnel.length){ host.appendChild(el("div","tc-idle","No calls in this range.")); return; }
   const top=SHIFT.funnel[0].n || 1;
   SHIFT.funnel.forEach((f,i)=>{
     const w=el("div","fstage");
@@ -682,7 +713,7 @@ function renderLive(){
     const c=state.calls.get(id);
     const tr=el("tr"); tr.setAttribute("data-call",id); tr.tabIndex=0;
     const td=(cls,txt)=>{ const d=el("td",cls); if(txt!=null) d.textContent=txt; return d; };
-    tr.appendChild(td("m", hhmmss(c.startedAt).slice(0,5)));
+    tr.appendChild(td("m", formatOpened(c.startedAt)));
     const cid=td("m"); cid.appendChild(document.createTextNode(c.id));
     if(c.test){ cid.appendChild(document.createTextNode(" ")); cid.appendChild(el("span","testchip","test")); }
     tr.appendChild(cid);
@@ -714,7 +745,7 @@ function renderRecent(){
     const c=state.calls.get(id);
     const tr=el("tr"); tr.setAttribute("data-call",id); tr.tabIndex=0;
     const td=(cls,txt)=>{ const d=el("td",cls); if(txt!=null) d.textContent=txt; return d; };
-    tr.appendChild(td("m", hhmmss(c.startedAt).slice(0,5)));
+    tr.appendChild(td("m", formatOpened(c.startedAt)));
     const cid=td("m"); cid.appendChild(document.createTextNode(c.id));
     if(c.test){ cid.appendChild(document.createTextNode(" "));
       cid.appendChild(el("span","testchip","test")); }
@@ -752,7 +783,11 @@ function renderDrill(){
   host.setAttribute("aria-labelledby","kpi-"+m.id);
   host.innerHTML = "";
   const hd = el("div","drillhead");
-  hd.appendChild(el("h2",null,m.label));
+  hd.appendChild(el("h2",null, m.id==="calls" ? (
+    adminPeriod === "today" ? "Calls this shift"
+    : adminPeriod === "all" ? "Calls"
+    : "Calls " + periodMeta(adminPeriod).title.toLowerCase()
+  ) : m.label));
   hd.appendChild(el("p",null,m.lede));
   host.appendChild(hd);
   const grid = el("div","drill");
@@ -760,8 +795,13 @@ function renderDrill(){
     const c = CARDS[key]; if(!c) return;
     const fig = el("figure","card"+(span==="full"?" full":""));
     const cap = el("figcaption");
-    cap.appendChild(el("h2",null,c.h));
-    const capText = c.cap || CAPTION[key] ? (c.cap || CAPTION[key]()) : "";
+    const heading = key==="volume"
+      ? ("Calls answered per " + (SHIFT.grain || "hour"))
+      : c.h;
+    cap.appendChild(el("h2",null,heading));
+    const capText = key==="volume"
+      ? (adminPeriod === "today" ? ((SHIFT.from || "08:00") + " – now") : periodMeta(adminPeriod).range)
+      : (c.cap || (CAPTION[key] && CAPTION[key]()));
     if(capText) cap.appendChild(el("span","cap",capText));
     if(c.head){ const d=el("div"); d.innerHTML=c.head; cap.appendChild(d.firstChild); }
     fig.appendChild(cap);
@@ -803,7 +843,7 @@ function renderKpis(){
   const host = $("#kpis"); if(!host) return;
   const total = shiftTotal(), live = liveNow();
   const acts = SHIFT.actions.reduce((a,[,n])=>a+n,0);
-  const sig = total+"|"+live+"|"+overviewMetric;
+  const sig = [adminPeriod, total, live, overviewMetric, SHIFT.grain, (SHIFT.byHour||[]).map(x=>x[1]).join(",")].join("|");
   if(sig===lastKpiSig) return;
   lastKpiSig = sig;
   host.innerHTML = "";
@@ -834,8 +874,15 @@ function renderKpis(){
     });
     host.appendChild(k);
   };
-  tile("calls","Calls this shift", String(total), null,
-    "since "+SHIFT.from+" · busiest hour 16:00", {spark:sparkline()});
+  const busy = SHIFT.busiest
+    ? (SHIFT.grain === "hour" ? "busiest hour " + SHIFT.busiest + ":00" : "busiest " + SHIFT.busiest)
+    : "no peak yet";
+  const sinceBit = adminPeriod === "today" ? "since " + SHIFT.from + " · " : periodMeta(adminPeriod).range + " · ";
+  const callsLbl = adminPeriod === "today" ? "Calls this shift"
+    : adminPeriod === "all" ? "Calls"
+    : "Calls " + periodMeta(adminPeriod).title.toLowerCase();
+  tile("calls", callsLbl, String(total), null,
+    sinceBit + busy, {spark:sparkline()});
   tile("live","On the line now", String(live), live===1?"call":"calls",
     live ? "streaming into the console" : "switchboard quiet");
   tile("submit","Submit rate","100","%",
@@ -1403,7 +1450,7 @@ const METRICS = [
 
 const CARDS = {
   volume:{h:"Calls answered per hour", cap:"08:00 – now",
-    lede:"Load, not quality. The 16:00 bar is the hour in progress.",
+    lede:"Load, not quality. Each bar is one bucket of the selected range.",
     body:'<div id="volChart"></div><div class="tip" id="volTip"></div>', fn:renderVolume},
   recent:{h:"Recent traces", cap:"open one", lede:"",
     head:'<div class="filters" id="traceFilter"><button data-f="real" aria-pressed="true">Real</button>'+
@@ -1470,12 +1517,85 @@ async function select(id) {
   if (window.innerWidth <= 900) setPane("conv");
 }
 
+function formatOpened(ms) {
+  const d = new Date(ms);
+  const hm = hhmmss(ms).slice(0, 5);
+  if (adminPeriod === "today") return hm;
+  return d.getDate() + " " + "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ")[d.getMonth()] + " " + hm;
+}
+
 function renderOverview() {
   renderKpis(); renderDrill();
-  const n = $("#shiftNow"); if (n) n.textContent = hhmmss(simNow()).slice(0, 5);
+  syncPeriodHead();
+}
+
+function syncPeriodButtons() {
+  document.querySelectorAll("#periodPicker button[data-period]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.period === adminPeriod)));
+}
+
+function syncPeriodHead() {
+  const meta = periodMeta(adminPeriod);
+  const title = $("#shiftTitle");
+  if (title) title.textContent = meta.title;
   const live = liveNow();
+  const liveTxt = live ? live + (live === 1 ? " call live" : " calls live") : "switchboard quiet";
   const l = $("#shiftLive");
-  if (l) l.textContent = live ? live + (live === 1 ? " call live" : " calls live") : "switchboard quiet";
+  if (l) l.textContent = liveTxt;
+  const range = $("#shiftRange");
+  if (!range) return;
+  if (adminPeriod === "today") {
+    range.innerHTML = "";
+    range.appendChild(document.createTextNode((SHIFT.from || "08:00") + "–"));
+    const nowEl = el("span", null, hhmmss(simNow()).slice(0, 5));
+    nowEl.id = "shiftNow";
+    range.appendChild(nowEl);
+    range.appendChild(document.createTextNode(" Europe/Madrid"));
+  } else {
+    range.textContent = meta.range + " · Europe/Madrid";
+  }
+}
+
+function replaceCalls(summaries) {
+  const next = new Map();
+  const order = [];
+  (summaries || []).forEach((s) => {
+    const c = fromSummary(s);
+    next.set(c.id, c);
+    order.push(c.id);
+  });
+  state.calls = next;
+  state.order = order;
+  if (state.sel && !state.calls.has(state.sel)) {
+    state.sel = null;
+    if (stream) stream.innerHTML = "";
+    renderWhy(null);
+  }
+  if (board) board.innerHTML = "";
+  lineEls.clear();
+  state.order.slice().reverse().forEach((id) => renderLine(state.calls.get(id)));
+  if (!state.order.length && $("#boardCount")) $("#boardCount").textContent = "0 lines";
+}
+
+async function setAdminPeriod(period) {
+  if (!period || period === adminPeriod) {
+    syncPeriodButtons();
+    return;
+  }
+  const req = ++periodReq;
+  adminPeriod = period;
+  syncPeriodButtons();
+  syncPeriodHead();
+  try {
+    const [shift, calls] = await Promise.all([API.shift(period), API.calls(period)]);
+    if (req !== periodReq) return;
+    replaceCalls(calls.calls || []);
+    mapShift(shift);
+    lastKpiSig = ""; lastDrill = null;
+    refreshAll();
+  } catch (err) {
+    console.error("Could not load period", period, err);
+  }
 }
 
 function refreshAll() {
@@ -1510,7 +1630,7 @@ function setWire(ok) {
     : "reconnecting…";
 }
 function onSnapshot(msg) {
-  if (msg.shift) mapShift(msg.shift);
+  if (msg.shift && adminPeriod === "today") mapShift(msg.shift);
   (msg.calls || []).forEach((s) => {
     const c = fromSummary(s);
     if (!state.calls.has(c.id)) { state.calls.set(c.id, c); state.order.push(c.id); }
@@ -1519,7 +1639,13 @@ function onSnapshot(msg) {
   board.innerHTML = ""; lineEls.clear();
   state.order.slice().reverse().forEach((id) => renderLine(state.calls.get(id)));
   lastKpiSig = ""; lastDrill = null;
-  refreshAll();
+  if (adminPeriod !== "today") {
+    API.shift(adminPeriod).then((s) => {
+      mapShift(s); lastKpiSig = ""; lastDrill = null; refreshAll();
+    }).catch(() => refreshAll());
+  } else {
+    refreshAll();
+  }
   if (state.sel && state.calls.has(state.sel)) select(state.sel);
 }
 function onEvent(ev) {
@@ -2219,6 +2345,9 @@ async function doLogout() {
   stopCalPoll();
   calLastSig = "";
   calBuiltWeek = null;
+  adminPeriod = "today";
+  periodReq++;
+  syncPeriodButtons();
   try { if (ws) ws.close(); } catch (_) {}
   ws = null;
   state.calls.clear();
@@ -2289,6 +2418,8 @@ async function bootAdmin() {
 /* ===================================================================== boot */
 document.querySelectorAll(".nav button").forEach((b) =>
   b.addEventListener("click", () => setView(b.dataset.view)));
+document.querySelectorAll("#periodPicker button[data-period]").forEach((b) =>
+  b.addEventListener("click", () => setAdminPeriod(b.dataset.period)));
 
 $("#ntcAdd").addEventListener("click", openNoticeDialog);
 $("#ntcKind").addEventListener("change", syncNoticeFields);
@@ -2377,7 +2508,16 @@ setInterval(() => {
   });
   const nb = $("#navBadge");
   if (nb) { const l = liveNow(); nb.textContent = String(l); nb.hidden = l === 0; }
-  if (view === "overview" && !$("#shellAdmin").hidden) refreshLive();
+  if (view === "overview" && !$("#shellAdmin").hidden) {
+    refreshLive();
+    const n = $("#shiftNow");
+    if (n && adminPeriod === "today") n.textContent = hhmmss(simNow()).slice(0, 5);
+    const l = $("#shiftLive");
+    if (l) {
+      const live = liveNow();
+      l.textContent = live ? live + (live === 1 ? " call live" : " calls live") : "switchboard quiet";
+    }
+  }
 }, 1000);
 
 (async function start() {

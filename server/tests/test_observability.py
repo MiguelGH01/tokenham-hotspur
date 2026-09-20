@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from booking import MADRID
 from observability.hub import reset_hub
 from observability.seed_shift import build_shift_events
 from observability.store import (
+    period_start_iso,
     project_decision_trail,
     project_timeline,
     reset_store,
-    shift_start_iso,
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "observability" / "fixtures"
@@ -122,7 +124,7 @@ def test_live_call_counted(tmp_path):
     async def run():
         hub, store = await _hub(tmp_path)
         await hub.start_call("CA-live-1", transport="webrtc")
-        summary = await store.shift_summary(since=shift_start_iso())
+        summary = await store.shift_summary(period="all")
         assert summary["live_calls"] >= 1
         calls = await store.list_calls(since=None)
         assert any(c["call_id"] == "CA-live-1" and c["status"] == "live" for c in calls)
@@ -142,3 +144,58 @@ def test_timeline_and_trail_projection():
     assert any(t["type"] == "submit" and t["verb"] == "BOOK" for t in timeline)
     trail = project_decision_trail(events)  # type: ignore[arg-type]
     assert any("FR-identify" in (s.get("reason_codes") or []) for s in trail)
+
+
+def test_period_start_windows(monkeypatch):
+    monkeypatch.setenv("SHIFT_START_HOUR", "8")
+    now = datetime(2026, 9, 20, 15, 30, tzinfo=MADRID)
+    today = datetime.fromisoformat(period_start_iso("today", now=now)).astimezone(MADRID)
+    assert (today.year, today.month, today.day, today.hour) == (2026, 9, 20, 8)
+    week = datetime.fromisoformat(period_start_iso("week", now=now)).astimezone(MADRID)
+    assert week.date() == today.date() - timedelta(days=7)
+    assert week.hour == 8
+    month = datetime.fromisoformat(period_start_iso("month", now=now)).astimezone(MADRID)
+    assert (month.year, month.month, month.day, month.hour) == (2026, 8, 20, 8)
+    year = datetime.fromisoformat(period_start_iso("year", now=now)).astimezone(MADRID)
+    assert (year.year, year.month, year.day, year.hour) == (2025, 9, 20, 8)
+    assert period_start_iso("all", now=now) is None
+    assert period_start_iso("nope", now=now) == period_start_iso("today", now=now)
+
+
+def test_shift_summary_period_filters_calls(tmp_path, monkeypatch):
+    monkeypatch.setenv("SHIFT_START_HOUR", "0")
+
+    async def run():
+        hub, store = await _hub(tmp_path)
+        await store.upsert_call_started(
+            "CA-old",
+            transport="eval",
+            from_number=None,
+            started_at=period_start_iso("month"),
+        )
+        await store.upsert_call_started(
+            "CA-new",
+            transport="eval",
+            from_number=None,
+            started_at=datetime.now(MADRID).isoformat(),
+        )
+
+        today = await store.shift_summary(period="today")
+        assert today["calls"] == 1
+        assert today["period"] == "today"
+        assert today["volume"]["grain"] == "hour"
+
+        month = await store.shift_summary(period="month")
+        assert month["calls"] == 2
+        assert month["volume"]["grain"] == "day"
+
+        week = await store.shift_summary(period="week")
+        assert week["calls"] == 1
+
+        all_time = await store.shift_summary(period="all")
+        assert all_time["calls"] == 2
+        assert all_time["shift_start"] is None
+        await store.close()
+
+    asyncio.run(run())
+

@@ -52,8 +52,15 @@
     <div class="dash">
       <header class="dashhead">
         <div>
-          <h1>Today's shift</h1>
-          <p>Clínica Arenal · 08:00–<span id="shiftNow">16:41</span> Europe/Madrid · <span id="shiftLive">—</span></p>
+          <h1 id="shiftTitle">Today's shift</h1>
+          <p>Clínica Arenal · <span id="shiftRange">08:00–<span id="shiftNow">16:41</span> Europe/Madrid</span> · <span id="shiftLive">—</span></p>
+        </div>
+        <div class="period" id="periodPicker" role="group" aria-label="Time range">
+          <button type="button" data-period="today" aria-pressed="true">Today's shift</button>
+          <button type="button" data-period="week" aria-pressed="false">Last week</button>
+          <button type="button" data-period="month" aria-pressed="false">Last month</button>
+          <button type="button" data-period="year" aria-pressed="false">Last year</button>
+          <button type="button" data-period="all" aria-pressed="false">All time</button>
         </div>
       </header>
 
@@ -278,6 +285,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

@@ -114,8 +114,25 @@ def test_admin_can_read_observability(client):
     client.post("/auth/login", json={"key": "admin"})
     r = client.get("/observability/shift")
     assert r.status_code == 200
-    assert "calls" in r.json()
+    body = r.json()
+    assert "calls" in body
+    assert body["period"] == "today"
+    assert body["shift_start"] is not None
+    assert "volume" in body
     assert client.get("/observability/health").status_code == 200
+
+
+def test_admin_shift_accepts_period(client):
+    client.post("/auth/login", json={"key": "admin"})
+    week = client.get("/observability/shift?period=week")
+    assert week.status_code == 200
+    assert week.json()["period"] == "week"
+    all_time = client.get("/observability/shift?period=all")
+    assert all_time.status_code == 200
+    assert all_time.json()["period"] == "all"
+    assert all_time.json()["shift_start"] is None
+    assert client.get("/observability/calls?period=month").status_code == 200
+    assert client.get("/observability/shift?period=forever").status_code == 422
 
 
 def test_logout_clears_session(client):
