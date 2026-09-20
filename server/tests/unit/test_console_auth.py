@@ -64,11 +64,49 @@ def test_session_response_includes_leave_for_pr02():
     assert body["provider"]["schedules"]
 
 
-def test_login_admin(client):
+def test_login_cookie_is_secure_behind_https_proxy(client):
+    r = client.post(
+        "/auth/login",
+        json={"key": "admin"},
+        headers={"x-forwarded-proto": "https"},
+    )
+    assert r.status_code == 200
+    header = r.headers.get("set-cookie") or ""
+    assert "Secure" in header
+    assert "samesite=none" in header.lower()
+
+
+def test_ws_ticket_requires_admin(client):
+    assert client.get("/auth/ws-ticket").status_code == 401
+    client.post("/auth/login", json={"key": "PR01"})
+    assert client.get("/auth/ws-ticket").status_code == 401
+
+
+def test_ws_ticket_returns_signed_session(client):
+    client.post("/auth/login", json={"key": "admin"})
+    r = client.get("/auth/ws-ticket")
+    assert r.status_code == 200
+    ticket = r.json()["ticket"]
+    assert ticket
+    client.cookies.clear()
+    with client.websocket_connect("/observability/live?ticket=" + ticket) as ws:
+        msg = ws.receive_json()
+        assert msg["kind"] == "snapshot"
+
+
+def test_live_socket_rejects_anonymous(client):
+    with pytest.raises(Exception):
+        with client.websocket_connect("/observability/live"):
+            pass
+
+
+def test_login_cookie_is_not_forced_secure_on_http(client):
     r = client.post("/auth/login", json={"key": "admin"})
     assert r.status_code == 200
     assert r.json() == {"role": "admin"}
     assert COOKIE_NAME in r.cookies
+    header = r.headers.get("set-cookie") or ""
+    assert "Secure" not in header
 
 
 def test_login_provider_lowercase(client):
