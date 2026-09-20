@@ -158,6 +158,24 @@ def _save_call_recording(call_id: str, audio: bytes, sample_rate: int, num_chann
 REPROMPT_AFTER_SILENCE_SECS = 16.0
 
 
+def _needs_disconnect_grace(state: dict) -> bool:
+    """A live, undecided proposal this call read back may still be in flight.
+
+    Pipecat runs each transport event handler as its own task (see
+    ``BaseObject._call_event_handler``), with no coordination with the
+    pipeline's current turn. A caller's last words ("no", "yes") can still be
+    in STT/LLM/tool flight — nothing has called set_book / set_cancel /
+    set_no_action yet — when the socket drops, so closing the submission right
+    there can race ahead of that turn and fall back to the read-back
+    offer/cancellation instead of what the caller actually decided.
+    Skipped once the active request already decided something: a call that
+    already booked or cancelled one thing must not wait on a later, separate
+    request that happens to still be open.
+    """
+    submission = state.get("submission")
+    return bool(submission) and not submission.actions and bool(state.get("proposal"))
+
+
 def _audio_in_filter() -> BaseAudioFilter | None:
     """Pipecat RNNoise on inbound audio (PR-12)."""
     try:
@@ -769,6 +787,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments) -> Non
             hung_up = True
             logger.info("Client disconnected")
             await emergency_watch.aclose()
+            if _needs_disconnect_grace(flow_manager.state):
+                await asyncio.sleep(float(os.getenv("DISCONNECT_GRACE_SECS", "2")))
             await submission.close()
             await runner.cancel()
 
