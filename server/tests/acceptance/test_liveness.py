@@ -37,6 +37,34 @@ def _decide(**overrides):
     return decide_nudge(**kwargs)
 
 
+def test_wait_acknowledgements_are_backchannels_and_yes_is_not():
+    from liveness import is_backchannel
+
+    assert is_backchannel("Mm, okay… I'll wait.")
+    assert is_backchannel("Okay, I'll wait.")
+    assert is_backchannel("Okay, yeah… no problem.")
+    assert is_backchannel("yes") is False
+    assert is_backchannel("Yes please, book that.") is False
+    assert is_backchannel("I need the soonest General Practice appointment") is False
+
+
+def test_a_filler_ack_does_not_restart_the_watchdog_clock():
+    """The caller answering 'I'll wait' used to reset the 6s timer and speak again."""
+    clock = _Clock()
+    watch, pushed = _watchdog(clock, silence_secs=6.0, rerun_after_secs=18.0)
+
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert _filler_count(pushed) == 1
+
+    ack = TranscriptionFrame(text="Okay, I'll wait.", user_id="caller", timestamp="0")
+    run(watch.process_frame(ack, FrameDirection.DOWNSTREAM))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert _filler_count(pushed) == 1
+
+
 def test_not_armed_never_speaks():
     assert _decide(armed_at=None).nudge is False
 
@@ -199,3 +227,28 @@ def test_a_turn_the_model_never_answers_is_asked_for_again():
         run(watch._maybe_nudge())
     assert _filler_count(pushed) == 3
     assert _rerun_count(pushed) == 2
+
+
+def test_a_callable_filler_is_resolved_at_speak_time_not_at_construction():
+    """bot.py passes a lambda reading the call's pinned language, which can
+    change (via pin_language) between one nudge and the next."""
+    language = {"current": "en"}
+    clock = _Clock()
+    watch, pushed = _watchdog(
+        clock, silence_secs=6.0, filler=lambda: "Un momento" if language["current"] == "es" else "One moment"
+    )
+
+    def fillers():
+        return [frame.text for frame in pushed if isinstance(frame, TTSSpeakFrame)]
+
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert fillers() == ["One moment"]
+
+    language["current"] = "es"
+    watch._armed_at = None
+    run(_caller_finished_a_turn(watch))
+    clock.advance(6.1)
+    run(watch._maybe_nudge())
+    assert fillers() == ["One moment", "Un momento"]

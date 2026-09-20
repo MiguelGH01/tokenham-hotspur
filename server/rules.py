@@ -24,6 +24,7 @@ insurer says.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -326,6 +327,44 @@ def check_patient_rules(
     return None
 
 
+def empty_diary_reason(
+    *,
+    specialty_id: str | None,
+    patient: dict | None,
+    blocked: list | None,
+) -> str:
+    """Why a search that found no slot is a refusal rather than a full diary.
+
+    ``CL-empty-full``: empty ``slots`` with nothing applicable in ``blocked`` is
+    ``no_availability`` — the PR-07 answer. ``API-avail-blocked`` still wins when
+    a standing rule actually applies to *this* request.
+
+    A leftover ``referral_required`` on a specialty the catalogue does not gate
+    (gynaecology, general practice, …) is not such a rule. Taking the first
+    ``blocked[].restriction`` anyway submits a PR-06 reason into a PR-07 case
+    and scores zero (SC-binary).
+    """
+    catalogue = load_catalog()
+    specialty = specialty_by_id(catalogue, specialty_id)
+    if (
+        specialty
+        and specialty.get("referral_required")
+        and patient
+        and not holds_referral(patient, specialty_id)
+    ):
+        return "referral_required"
+
+    restrictions = [
+        b.get("restriction")
+        for b in (blocked or [])
+        if isinstance((b or {}).get("restriction"), str)
+    ]
+    unique = {r for r in restrictions if r != "referral_required"}
+    if len(unique) == 1:
+        return next(iter(unique))
+    return "no_availability"
+
+
 def check_provider_rules(
     *,
     provider_id: str | None,
@@ -420,6 +459,139 @@ def nearest_location(
         return dlat * dlat + dlon * dlon
 
     return min(candidates, key=distance_sq)
+
+
+_POSTCODE = re.compile(r"\b(\d{5})\b")
+
+#: The three sites `/clinic` publishes. Each `pattern` is matched against
+#: accent-folded speech (neighbourhood, street, postcode, site name).
+SERVICE_LOCATIONS: tuple[dict, ...] = (
+    {
+        "id": "centro",
+        "name": "Arenal Centro",
+        "address": "Calle del Arenal 12, 28013 Madrid",
+        "latitude": 40.4178,
+        "longitude": -3.7075,
+        "postcode": "28013",
+        "pattern": r"\b(?:28013|preciados|arenal|opera|(?:puerta\s+del\s+)?sol|(?:el\s+)?(?:centro|centre|center))\b",
+    },
+    {
+        "id": "norte",
+        "name": "Arenal Norte",
+        "address": "Calle de Alberto Alcocer 24, 28036 Madrid",
+        "latitude": 40.4645,
+        "longitude": -3.6836,
+        "postcode": "28036",
+        "pattern": r"\b(?:28036|28046|alcocer|castellana|castilla|chamartin|(?:el\s+)?norte|north)\b",
+    },
+    {
+        "id": "sur",
+        "name": "Arenal Sur",
+        "address": "Avenida de las Ciudades 8, 28903 Getafe",
+        "latitude": 40.305,
+        "longitude": -3.7327,
+        "postcode": "28903",
+        "pattern": r"\b(?:2890[0-9]|getafe|ciudades|(?:el\s+)?sur|south)\b",
+    },
+)
+
+for _site in SERVICE_LOCATIONS:
+    _site["regex"] = re.compile(_site["pattern"])
+
+
+def match_service_location(spoken: str) -> dict | None:
+    """The hardcoded site whose neighbourhood regex matches the caller."""
+    if not spoken or not spoken.strip():
+        return None
+    text = fold(spoken)
+    codes = _POSTCODE.findall(text)
+    if codes:
+        wanted = int(codes[0])
+        return min(SERVICE_LOCATIONS, key=lambda site: abs(int(site["postcode"]) - wanted))
+    hits = []
+    for site in SERVICE_LOCATIONS:
+        match = site["regex"].search(text)
+        if match:
+            hits.append((len(match.group(0)), site))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: item[0], reverse=True)
+    if len(hits) == 1 or hits[0][0] > hits[1][0]:
+        return hits[0][1]
+    return None
+
+
+_LANGUAGE_ALIASES = {
+    "ca": "ca",
+    "catalan": "ca",
+    "catala": "ca",
+    "es": "es",
+    "spanish": "es",
+    "espanol": "es",
+    "castellano": "es",
+    "en": "en",
+    "english": "en",
+    "ingles": "en",
+    "gl": "gl",
+    "galician": "gl",
+    "gallego": "gl",
+    "eu": "eu",
+    "basque": "eu",
+    "euskera": "eu",
+    "euskara": "eu",
+}
+
+
+def normalize_language(spoken: str | None) -> str | None:
+    """Map a spoken language name onto the catalogue's language codes."""
+    if not spoken:
+        return None
+    key = fold(spoken).replace("-", " ").split()[0]
+    return _LANGUAGE_ALIASES.get(key)
+
+
+def language_constrains_booking(catalogue: dict, language: str | None) -> bool:
+    """Whether this language is a booking filter.
+
+    ``CL-language-default``: every provider already speaks Spanish, so pinning
+    Spanish must not shrink the roster. A language only some of them speak
+    (Catalan, English, …) is the constraint the case is testing.
+    """
+    if not language:
+        return False
+    return any(language not in (p.get("languages") or []) for p in catalogue["providers"])
+
+
+def provider_speaks(catalogue: dict, provider_id: str, language: str | None) -> bool:
+    if not language_constrains_booking(catalogue, language):
+        return True
+    provider = next((p for p in catalogue["providers"] if p["id"] == provider_id), None)
+    return provider is not None and language in (provider.get("languages") or [])
+
+
+def origin_from_spoken_place(spoken: str) -> tuple[float, float] | None:
+    """Latitude/longitude of the hardcoded site neighbourhood the caller named."""
+    site = match_service_location(spoken)
+    if site is None:
+        return None
+    return site["latitude"], site["longitude"]
+
+
+def location_from_spoken_place(
+    spoken: str,
+    specialty_id: str | None = None,
+) -> dict | None:
+    """The closest site that can serve, from a spoken street or neighbourhood.
+
+    The origin is the published coordinate of whichever hardcoded service site
+    the speech matches. Distance is then straight-line among sites that can
+    serve (PR-15), so a neighbourhood next to a site that cannot take the
+    specialty still lands on the next one that can.
+    """
+    origin = origin_from_spoken_place(spoken)
+    if origin is None:
+        return None
+    return nearest_location(specialty_id, origin)
 
 
 def today_in_madrid(now: datetime) -> date:

@@ -4,11 +4,11 @@ version = "0.1.0"
 description = "Voice AI bot built with Pipecat"
 requires-python = ">=3.11"
 dependencies = [
-    "pipecat-ai[anthropic,deepgram,elevenlabs,evals,google,openai,rnnoise,runner,silero,soniox,webrtc,websocket]>=1.11.0",
+    "pipecat-ai[anthropic,cartesia,deepgram,elevenlabs,evals,google,openai,rnnoise,runner,silero,soniox,webrtc,websocket]>=1.11.0",
     "pipecat-ai[daily]>=1.11.0; sys_platform != 'win32'",
     "httpx",
     "aiosqlite",
-    "tzdata",
+    "tzdata; sys_platform == 'win32'",
     "typesafe-sdk",
 ]
 
@@ -17,6 +17,13 @@ dev = [
     "pyright>=1.1.404,<2",
     "ruff>=0.12.11,<1",
     "pytest>=8",
+]
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'darwin'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
 [tool.ruff]

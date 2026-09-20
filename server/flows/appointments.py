@@ -8,9 +8,9 @@ and the choice is then read back and confirmed in a **later** turn before
 anything is cancelled or moved.
 """
 
-from pipecat.flows import FlowsFunctionSchema, NodeConfig
+from pipecat.flows import FlowsFunctionSchema, NodeConfig, flows_tool_options
 
-from flows.common import gated_confirmation, record_already_settled
+from flows.common import WAIT_FOR_ANSWER, announce, gated_confirmation, record_already_settled, speak_tool
 from flows.requests import prepare_proposal, proposal_status, revise_request
 from observability.emit import trace_tool
 from submission import cancel_action
@@ -39,41 +39,81 @@ async def load_appointments(manager):
     }, create_appointments_node()
 
 
-@trace_tool()
-async def select_appointment(args, flow_manager):
-    """Choose one of the returned appointments, and read it back.
+def _selected_ids(args) -> list[str]:
+    ids = []
+    for value in args.get("appointment_ids") or []:
+        if value:
+            ids.append(value)
+    if args.get("appointment_id"):
+        ids.append(args["appointment_id"])
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for appointment_id in ids:
+        if appointment_id not in seen:
+            seen.add(appointment_id)
+            ordered.append(appointment_id)
+    return ordered
 
-    An unknown id is not a booking attempt to be salvaged: it stays in this node
-    so the model asks which appointment the caller means.
+
+def _proposal_key(ids: list[str]) -> str:
+    return ids[0] if len(ids) == 1 else ",".join(ids)
+
+
+@trace_tool()
+@announce("select_appointment")
+async def select_appointment(args, flow_manager):
+    """Choose diary rows by id, and read them back.
+
+    Several ids in one call is how PR-08 cancels two upcoming appointments:
+    both ids come off this patient's diary, one readback, one later yes, two
+    CANCEL posts. An unknown id is not a booking attempt to be salvaged.
     """
     state = flow_manager.state
-    appointment = state.get("appointments", {}).get(args.get("appointment_id"))
-    if not appointment or appointment["patient_id"] != state["patient"]["patient_id"]:
+    diary = state.get("appointments", {})
+    patient_id = state["patient"]["patient_id"]
+    ids = _selected_ids(args)
+    chosen = [diary.get(appointment_id) for appointment_id in ids]
+    if not ids or any(
+        appointment is None or appointment["patient_id"] != patient_id for appointment in chosen
+    ):
         return {"status": "invalid_appointment"}, None
     revise_request(flow_manager)
-    state["appointment"] = appointment.copy()
+    state["appointment"] = chosen[0].copy()
+    state["cancel_batch"] = [appointment.copy() for appointment in chosen]
     if state["intent"] == "reschedule":
+        if len(chosen) != 1:
+            return {
+                "status": "invalid_appointment",
+                "instruction": "A move is one appointment. Select only the booking they want to change.",
+            }, None
         from flows.booking import create_slot_node
 
-        return {"status": "selected", "appointment": appointment}, create_slot_node(flow_manager)
-    prepare_proposal(flow_manager, appointment["appointment_id"])
-    return {"status": "needs_confirmation", "readback": appointment}, create_cancel_node()
+        return {"status": "selected", "appointment": chosen[0]}, create_slot_node(flow_manager)
+    prepare_proposal(flow_manager, _proposal_key(ids))
+    return {
+        "status": "needs_confirmation",
+        "readback": chosen if len(chosen) > 1 else chosen[0],
+    }, create_cancel_node()
 
 
 @trace_tool()
 async def confirm_cancellation(args, flow_manager):
     state = flow_manager.state
-    appointment = state.get("appointment")
-    if not appointment:
+    batch = state.get("cancel_batch") or (
+        [state["appointment"]] if state.get("appointment") else []
+    )
+    if not batch:
         return {"status": "invalid_appointment"}, None
+    ids = [row["appointment_id"] for row in batch]
     submission = state["submission"]
+    announce_cancel = False
     if submission.delivery_attempted:
         # A retry of what the frozen plan already carries is safe; a different
         # action cannot become this call's record any more.
-        if not submission.carries(cancel_action(appointment["appointment_id"])):
+        if not all(submission.carries(cancel_action(appointment_id)) for appointment_id in ids):
             return record_already_settled("cancellation")
     else:
-        status = proposal_status(flow_manager, appointment["appointment_id"])
+        status = proposal_status(flow_manager, _proposal_key(ids))
         if status == "stale":
             # The appointment changed after the readback: read it back again
             # from the diary rather than cancelling the one that was named.
@@ -84,27 +124,50 @@ async def confirm_cancellation(args, flow_manager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is cancelled yet: the caller has to confirm the readback out "
-                    "loud, in a turn of their own. Ask them and call confirm_cancellation "
-                    "again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_cancellation",
             flow_manager,
             instruction=(
                 "The caller's answer carries a condition, correction or question. Do not "
-                "treat it as consent to cancel. Clarify the unfinished part first; only "
-                "call confirm_cancellation again with an unqualified confirmation."
+                "treat it as consent to cancel. Clarify only the unfinished part; do not "
+                "re-read the appointment."
             ),
         )
         if blocked is not None:
             return blocked
-        submission.set_cancel(appointment["appointment_id"], appointment=appointment)
+        submission.set_cancel(ids[0], appointment=batch[0])
+        for appointment_id in ids[1:]:
+            submission.add_action(cancel_action(appointment_id))
+        announce_cancel = True
+    if announce_cancel:
+        await speak_tool(flow_manager, "confirm_cancellation")
     accepted = await submission.flush()
+    diary = {
+        appointment_id: row
+        for appointment_id, row in (state.get("appointments") or {}).items()
+        if appointment_id not in set(ids)
+    }
+    state["appointments"] = diary
+    state.pop("appointment", None)
+    state.pop("cancel_batch", None)
     from flows.common import create_completion_node
 
+    if accepted and diary:
+        # A second CANCEL cannot rewrite the first request's frozen plan.
+        root = state.setdefault("call_submission", state["submission"])
+        state["submission"] = root.new_request()
+        return {
+            "status": "accepted",
+            "remaining": list(diary.values()),
+            "instruction": (
+                "Those cancellations were received. If they asked to cancel more of the "
+                "upcoming list, select the next remaining appointment now. If they said "
+                "to keep the rest, or they are finished, call finish_call. Do not invent "
+                "an id and do not claim a cancellation you have not selected."
+            ),
+        }, create_appointments_node()
     return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, "cancellation"
     )
@@ -113,9 +176,16 @@ async def confirm_cancellation(args, flow_manager):
 def _selection_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="select_appointment",
-        description="Select an appointment ID returned from the verified patient's diary.",
-        properties={"appointment_id": {"type": "string"}},
-        required=["appointment_id"],
+        description=(
+            "Select one or more appointment IDs returned from the verified patient's "
+            "diary. To cancel two (or all remaining) upcoming bookings they asked to "
+            "drop, pass every matching id in appointment_ids in this one call."
+        ),
+        properties={
+            "appointment_id": {"type": "string"},
+            "appointment_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        required=[],
         handler=select_appointment,
         cancel_on_interruption=True,
     )
@@ -129,26 +199,60 @@ def create_cancel_node() -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Read back the selected appointment: its date, time, doctor and site. Ask "
-                    "the caller to confirm the cancellation. If confirm_cancellation returns "
-                    "needs_confirmation, the caller has not answered the readback in a turn of "
-                    "their own yet: ask them and call it again only once they have. If it "
+                    "Read back the selected appointment once: its date, time, doctor and site. "
+                    "Ask the caller to confirm the cancellation, then stop. If more than "
+                    "one appointment was selected, read each once. Do not call "
+                    "confirm_cancellation in the same turn. Do not read it again. "
+                    "If confirm_cancellation returns needs_confirmation, stay silent. If it "
                     "returns qualified_confirmation, clarify the condition, question or "
                     "correction first. If it returns expired, that appointment is no longer the "
                     "one on offer: select it again. If it returns delivery_conflict, do not "
                     "claim the cancellation and say goodbye. A correction means selecting the "
-                    "appointment again, never cancelling the one that was read out."
+                    "appointment again, never cancelling the one that was read out. If they "
+                    "decide to keep the appointment and do not want to select a different one, "
+                    "call keep_appointment — do not just say goodbye in text."
                 ),
             }
         ],
-        functions=[_confirm_cancellation_schema(), _selection_schema()],
+        functions=[_confirm_cancellation_schema(), _selection_schema(), keep_appointment],
+    )
+
+
+@flows_tool_options(cancel_on_interruption=True)
+@announce("keep_appointment")
+async def keep_appointment(flow_manager):
+    """The caller decides not to cancel the appointment that was read back."""
+    state = flow_manager.state
+    submission = state["submission"]
+    if submission.pending["action"] != "NO_ACTION":
+        return {"status": "already_confirmed"}, None
+    if not submission.actions:
+        # Nothing was decided yet: state a NO_ACTION now, or a hang-up right
+        # after this reads state["appointment"] (still set from selection) and
+        # submits CANCEL for a booking the caller just asked to keep.
+        submission.set_no_action("no_availability", provisional=False)
+    state.pop("appointment", None)
+    state.pop("cancel_batch", None)
+    # The cancellation this call read back is no longer live either way: a
+    # hang-up right after this must not let resolve_fallback rediscover it.
+    revise_request(flow_manager)
+    await submission.flush()
+    return {"status": "kept"}, NodeConfig(
+        name="kept",
+        task_messages=[
+            {
+                "role": "developer",
+                "content": "The appointment was not cancelled and stays as it was. Confirm that and say goodbye.",
+            }
+        ],
+        post_actions=[{"type": "end_conversation"}],
     )
 
 
 def _confirm_cancellation_schema() -> FlowsFunctionSchema:
     return FlowsFunctionSchema(
         name="confirm_cancellation",
-        description="Cancel the selected appointment after explicit confirmation.",
+        description="Cancel after the caller has accepted the one readback in a later turn.",
         properties={},
         required=[],
         handler=confirm_cancellation,
@@ -157,16 +261,25 @@ def _confirm_cancellation_schema() -> FlowsFunctionSchema:
 
 
 def create_appointments_node() -> NodeConfig:
+    from flows.common import finish_call
+    from flows.reception import create_reception_node
+
     return NodeConfig(
         name="appointments",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    "Use only the returned upcoming appointments. Clarify which appointment the "
-                    "caller means by date, provider or site, then select_appointment. Never "
-                    "invent an ID and never select an ambiguous appointment. If lookup failed, "
-                    "retry lookup_appointments; never claim an empty diary."
+                    "Use only the returned upcoming appointments. You cannot cancel by talking: "
+                    "call select_appointment with the diary ids, then wait for confirm_cancellation "
+                    "after they say yes. If they asked to cancel two, both, or all of the listed "
+                    "upcoming bookings, pass every matching id in appointment_ids in one "
+                    "select_appointment call — never invent an ID and never skip the lookup. "
+                    "If they named one by date, doctor or site, select only that id. If they "
+                    "said to keep the rest, or they are finished after a cancellation, call "
+                    "finish_call. If lookup failed, retry lookup_appointments; never claim an "
+                    "empty diary and never say you have no cancel tool. Use route_request for "
+                    "a new independent request."
                 ),
             }
         ],
@@ -179,9 +292,18 @@ def create_appointments_node() -> NodeConfig:
                 required=[],
                 handler=lookup_appointments,
             ),
+            FlowsFunctionSchema(
+                name="finish_call",
+                description="The caller has no more appointments to cancel.",
+                properties={},
+                required=[],
+                handler=finish_call,
+            ),
+            *create_reception_node()["functions"],
         ],
     )
 
 
+@announce("lookup_appointments")
 async def lookup_appointments(args, flow_manager):
     return await load_appointments(flow_manager)

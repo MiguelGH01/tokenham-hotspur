@@ -1,5 +1,6 @@
 """Booking conversation and catalogue-backed provider selection."""
 
+import re
 import unicodedata
 from datetime import date, datetime
 from difflib import SequenceMatcher
@@ -17,10 +18,35 @@ import audit
 import dates
 import reception_notices
 from booking import MADRID, WEEKDAYS, pick_offer, search_window
-from clinic_catalog import closure_days, load_catalog, location_ids, location_name, specialty_ids
-from flows.common import RULE_WORDS, create_goodbye_node, create_refusal_node, gated_confirmation
+from clients.clinic_client import ClinicApiError
+from clinic_catalog import (
+    closure_days,
+    load_catalog,
+    location_ids,
+    location_name,
+    provider_names,
+    specialty_ids,
+)
+from flows.common import (
+    RULE_WORDS,
+    TRIAGE_EXAMPLES,
+    WAIT_FOR_ANSWER,
+    announce,
+    create_goodbye_node,
+    create_refusal_node,
+    gated_confirmation,
+    speak_tool,
+    spoken_provider_name,
+)
 from observability.emit import trace_tool
-from rules import check_patient_rules, check_provider_rules, resolve_plan
+from rules import (
+    check_patient_rules,
+    check_provider_rules,
+    empty_diary_reason,
+    location_from_spoken_place,
+    provider_speaks,
+    resolve_plan,
+)
 from submission import book_action, reschedule_action
 
 #: The titles a caller and the roster actually use, and the gender each one
@@ -35,11 +61,69 @@ TITLE_ALIASES = {
     "doctora": "f",
 }
 
+#: Words that ride along in a spoken request but are not part of a name.
+#: Specialty and site labels are added from the catalogue at match time.
+_FILLER = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "cita",
+        "con",
+        "el",
+        "la",
+        "las",
+        "los",
+        "para",
+        "please",
+        "por",
+        "see",
+        "the",
+        "to",
+        "un",
+        "una",
+        "ver",
+        "want",
+        "with",
+        "y",
+    }
+)
+
 
 def _fold(value):
     return "".join(
         c for c in unicodedata.normalize("NFD", value.lower()) if not unicodedata.combining(c)
     ).replace(".", "")
+
+
+def spoken_booking_cues(flow_manager) -> dict:
+    """Specialty, site or doctor already in the caller's turns."""
+    from flows.identification import _user_blob
+
+    blob = _fold(_user_blob(flow_manager))
+    found: dict[str, str] = {}
+    for spec in load_catalog()["specialties"]:
+        name = _fold(spec["name"])
+        sid = spec["id"].replace("_", " ")
+        if name and name in blob:
+            found["specialty"] = spec["id"]
+        elif re.search(rf"\b{re.escape(sid)}\b", blob):
+            found["specialty"] = spec["id"]
+    if "specialty" not in found and re.search(
+        r"\bgp\b|general practitioner|medico de cabecera", blob
+    ):
+        found["specialty"] = "general_practice"
+    for loc in load_catalog()["locations"]:
+        if re.search(rf"\b{re.escape(loc['id'])}\b", blob) or _fold(loc["name"]) in blob:
+            found["site"] = loc["id"]
+    hits = []
+    for provider in load_catalog()["providers"]:
+        surname = _fold(provider["name"].split()[-1])
+        if len(surname) >= 4 and re.search(rf"\b{re.escape(surname)}\b", blob):
+            hits.append(provider)
+    if len(hits) == 1:
+        found["provider_name"] = hits[0]["name"]
+    return found
 
 
 def _title_and_tokens(value):
@@ -50,11 +134,9 @@ def _title_and_tokens(value):
     front: a surname that happens to look like one stays a surname.
     """
     gender = None
-    seen_title = False
     tokens = []
     for token in _fold(value).split():
-        if not seen_title and token in TITLE_ALIASES:
-            seen_title = True
+        if not tokens and token in TITLE_ALIASES:
             gender = TITLE_ALIASES[token]
             continue
         tokens.append(token)
@@ -77,6 +159,41 @@ def _notice_justification(notice_ids: list[str], provider_id: str | None) -> str
     if provider_id:
         return f"reception notice {named} hid slots for the requested doctor"
     return f"reception notice {named} hid some slots from this search"
+
+
+def _match_noise():
+    """Tokens that look like names in speech but come from the rest of the ask."""
+    noise = set(_FILLER)
+    catalogue = load_catalog()
+    for specialty in catalogue["specialties"]:
+        noise.update(_fold(specialty["name"]).replace("_", " ").split())
+        noise.update(_fold(specialty["id"]).replace("_", " ").split())
+    for location in catalogue["locations"]:
+        noise.update(_fold(location["name"]).split())
+        noise.add(_fold(location["id"]))
+    return noise
+
+
+def _name_tokens(value):
+    """Title gender plus the words that can actually identify a roster entry."""
+    gender, tokens = _title_and_tokens(value)
+    noise = _match_noise() | set(TITLE_ALIASES)
+    return gender, [t for t in tokens if t not in noise and len(t) > 1]
+
+
+def _token_hits_word(token, word):
+    if token == word:
+        return True
+    # Iglesia / Iglesias: one is a prefix of the other. Sáez / Sáenz is not.
+    shorter, longer = (token, word) if len(token) <= len(word) else (word, token)
+    if len(shorter) >= 5 and longer.startswith(shorter):
+        return True
+    return SequenceMatcher(None, token, word).ratio() >= 0.85
+
+
+def _name_score(tokens, provider_name):
+    words = _name_tokens(provider_name)[1]
+    return sum(1 for t in tokens if any(_token_hits_word(t, w) for w in words))
 
 
 def _specialty_can_serve(specialty_id, patient, plan, today):
@@ -117,18 +234,25 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     Returns every remaining candidate; the caller decides whether one is an
     answer or two are a question.
     """
-    spoken_gender, tokens = _title_and_tokens(name)
-    matches = []
+    spoken_gender, tokens = _name_tokens(name)
+    if not tokens:
+        return []
+    scored = []
     for provider in load_catalog()["providers"]:
-        if specialty and provider["specialty_id"] != specialty:
-            continue
         if spoken_gender and _title_and_tokens(provider["name"])[0] not in (None, spoken_gender):
             continue
-        words = _fold(provider["name"]).split()
-        if tokens and all(
-            any(SequenceMatcher(None, t, w).ratio() >= 0.85 for w in words) for t in tokens
-        ):
-            matches.append(provider)
+        score = _name_score(tokens, provider["name"])
+        if score:
+            scored.append((score, provider))
+    if not scored:
+        return []
+    best = max(score for score, _ in scored)
+    matches = [provider for score, provider in scored if score == best]
+    # A guessed specialty must not wipe a name that already identified someone.
+    if specialty:
+        in_specialty = [p for p in matches if p["specialty_id"] == specialty]
+        if in_specialty:
+            matches = in_specialty
     if len(matches) > 1 and patient is not None:
         compatible = [
             p for p in matches if _specialty_can_serve(p["specialty_id"], patient, plan, today)
@@ -138,7 +262,22 @@ def resolve_provider(name, specialty=None, *, patient=None, plan=None, today=Non
     return matches
 
 
+def _slot_fingerprint(slot: dict) -> str:
+    """Stable id for a slot we already read out, so a retry cannot offer it again."""
+    raw = slot.get("slot") or slot["start_time"]
+    start = datetime.fromisoformat(raw).astimezone(MADRID).isoformat()
+    return f"{slot['provider_id']}|{start}"
+
+
+def _remember_tried_slot(state: dict, slot: dict) -> None:
+    tried = state.setdefault("tried_slots", [])
+    key = _slot_fingerprint(slot)
+    if key not in tried:
+        tried.append(key)
+
+
 @trace_tool()
+@announce("get_earliest_slot")
 async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     """Find the earliest bookable slot, applying the rules the API cannot.
 
@@ -172,14 +311,28 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     today = state["connected_at"].astimezone(MADRID).date()
     catalogue = load_catalog()
 
-    specialty, site = args.get("specialty"), args.get("site")
+    cues = spoken_booking_cues(flow_manager)
+    specialty = args.get("specialty") or cues.get("specialty")
+    site = args.get("site") or cues.get("site")
+    near_place = (args.get("near_place") or "").strip()
     site_name = location_name(site) if site else None
+
+    if args.get("unknown_doctor") is True:
+        state["submission"].set_no_action("provider_not_found")
+        return {
+            "status": "provider_not_found",
+            "instruction": (
+                "That name is not on the clinic roster. Do not pick a nearby doctor. "
+                "If they will see nobody else, finish_without_booking."
+            ),
+        }, None
 
     # Resolved before the doctor: the plan is one of the facts that decides
     # which doctor a spoken name means.
     plan = resolve_plan(catalogue, patient, args.get("policy_name"))
 
-    provider_name = args.get("provider_name")
+    spoken = (args.get("provider_name") or cues.get("provider_name") or "").strip()
+    provider_name = spoken if spoken and spoken.lower() not in {"none", "null"} else None
     provider_id = requested_provider_id = None
     if provider_name:
         providers = resolve_provider(
@@ -216,6 +369,12 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             )
         specialty, note = age_verdict.redirect_specialty, "redirected_by_age"
 
+    if not site and near_place:
+        nearest = location_from_spoken_place(near_place, specialty)
+        if nearest is not None:
+            site = nearest["id"]
+            site_name = nearest["name"]
+
     # 2. A named doctor the plan or the roster rules out is a redirect, not a refusal.
     if provider_id:
         verdict = check_provider_rules(
@@ -233,11 +392,19 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 )
             provider_id, note = None, verdict.reason
 
-    # 3. The rules that bite before a doctor is chosen.
+    # 3. The rules that bite before a doctor is chosen. Referral is the
+    #    exception: a missing derm/physio referral is a PR-06 refusal only once
+    #    the diary has no slot to offer. Firing it first turns a full calendar
+    #    (PR-07: BOOK or no_availability) into referral_required.
     rules_verdict = check_patient_rules(
         specialty_id=specialty, location_name=site_name, patient=patient, plan=plan, today=today
     )
-    if rules_verdict and not rules_verdict.redirect_to and not rules_verdict.redirect_specialty:
+    if (
+        rules_verdict
+        and not rules_verdict.redirect_to
+        and not rules_verdict.redirect_specialty
+        and rules_verdict.reason != "referral_required"
+    ):
         state["submission"].set_no_action(rules_verdict.reason)
         return {"status": "blocked", "reason": rules_verdict.reason}, create_refusal_node(
             rules_verdict.reason
@@ -254,11 +421,14 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     if target is not None:
         # A named day is searched from itself, so "first thing on Monday the
         # twelfth of October" can still be answered when that Monday is a
-        # closure. Rolling forward drops the weekday on purpose: the caller asked
-        # for the earliest morning after the holiday, not the next Monday.
+        # closure. Pin weekday to the *resolved* day: dropping it let pick_offer
+        # take any day in the 14-day window, so a Monday the 5th of October
+        # came back as Tuesday and the model retried the same query when the
+        # caller refused. A closed named day still rolls (Fiesta → Tuesday),
+        # and the pin follows that roll rather than the spoken weekday.
         target = dates.next_open_day(target, site)
         date_from, date_to = dates.window_around(target)
-        weekday = None
+        weekday = WEEKDAYS[target.weekday()]
     else:
         date_from, date_to = search_window(connected_at)
     try:
@@ -270,6 +440,28 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             location_id=site,
             insurer=[plan["id"]] if plan else None,
         )
+    except ClinicApiError as exc:
+        if exc.status == 422:
+            # A bad window is not a full diary. Retrying the same dates 422s again.
+            logger.error("availability rejected the window: {}", exc)
+            state["submission"].set_no_action("no_availability")
+            return {
+                "status": "no_slots",
+                "instruction": (
+                    "The clinic cannot search that date window. Say nothing is available "
+                    "for that request. Do not call get_earliest_slot again with the same dates."
+                ),
+            }, None
+        logger.error("availability lookup failed: {}", type(exc).__name__)
+        return {
+            "status": "lookup_failed",
+            "instruction": (
+                "The clinic's diary could not be reached. This is a fault on our side, "
+                "not an answer about availability: do not say that nothing is free and "
+                "do not offer a rule. Apologise for the delay in one short sentence and "
+                "call get_earliest_slot again with exactly the same request."
+            ),
+        }, None
     except Exception as exc:
         # Same distinction as the directory lookup: the clinic's API being down is
         # not the same as "nothing is free". Told "no slots" the agent would name
@@ -294,25 +486,32 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     if applied_notices:
         audit.audit(state.get("call_id", "unknown"), "notice_applied", notice_ids=applied_notices)
 
-    restrictions = [
-        b.get("restriction")
+    blocked_for_request = [
+        b
         for b in availability.get("blocked", [])
         if not provider_id or b.get("provider_id") == provider_id
     ]
-    # The API names the rule it applied; the catalogue explains the ones it does
-    # not carry. Never default to no_availability while a rule is known to bite.
-    #
-    # A reception notice counts as a known rule. Without this, hiding a doctor's
-    # slots made the call end on ``no_availability`` — a statement *about the
-    # clinic*, submitted to its own platform, that the clinic's own answer
-    # contradicts: it had just offered those slots. The record has to name what
-    # actually happened, which is that reception said the doctor is away.
-    reason = next(
-        (r for r in restrictions if isinstance(r, str)),
-        (rules_verdict.reason if rules_verdict else None)
-        or ("provider_on_leave" if applied_notices else None)
-        or "no_availability",
+    # A reception notice counts as a known rule too: without this, hiding a
+    # doctor's slots made the call end on ``no_availability`` — a statement
+    # *about the clinic*, submitted to its own platform, that the clinic's own
+    # answer contradicts (it had just offered those slots). The record has to
+    # name what actually happened, which is that reception said the doctor is away.
+    provider_on_leave = bool(applied_notices) or any(
+        b.get("restriction") == "provider_on_leave" for b in blocked_for_request
     )
+
+    def _empty_reason() -> str:
+        # The API names the rule it applied; the catalogue explains the ones it
+        # does not carry. Never default to no_availability while a rule is known
+        # to bite — a reception notice included.
+        reason = empty_diary_reason(
+            specialty_id=specialty, patient=patient, blocked=blocked_for_request
+        )
+        if reason == "no_availability" and applied_notices:
+            return "provider_on_leave"
+        return reason
+
+    language = state.get("language")
     availability = {
         **availability,
         "slots": [
@@ -320,6 +519,8 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
             for s in availability["slots"]
             if (not site or s["location_id"] == site)
             and s.get("specialty_id", specialty) == specialty
+            and provider_speaks(catalogue, s["provider_id"], language)
+            and _slot_fingerprint(s) not in set(state.get("tried_slots") or ())
         ],
     }
     if state.get("intent") == "reschedule":
@@ -344,7 +545,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         }
         offer = (
             None
-            if reason == "provider_on_leave"
+            if provider_on_leave
             else pick_offer(
                 requested,
                 state["patient"],
@@ -354,7 +555,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 closed_days=closure_days(),
             )
         )
-        if offer is None and reason != "provider_on_leave":
+        if offer is None and not provider_on_leave:
             offer = pick_offer(
                 requested,
                 state["patient"],
@@ -364,6 +565,10 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 closed_days=closure_days(),
             )
         if offer is None and args.get("allow_alternative") is not True:
+            reason = _empty_reason()
+            if reason == "referral_required":
+                state["submission"].set_no_action(reason)
+                return {"status": "blocked", "reason": reason}, create_refusal_node(reason)
             state["submission"].set_no_action(reason)
             result = {
                 "status": "provider_unavailable",
@@ -392,16 +597,24 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
                 closed_days=closure_days(),
             )
     else:
-        offer = pick_offer(
-            availability,
-            state["patient"],
-            connected_at,
-            weekday,
-            part_of_day,
-            closed_days=closure_days(),
-        )
+        offer = pick_offer(availability, state["patient"], connected_at, weekday, part_of_day)
+        if offer is None and (weekday or part_of_day):
+            # PR-07: the asked window is empty. Offer the earliest slot that
+            # still respects site and specialty, never a different ask.
+            relaxed = pick_offer(availability, state["patient"], connected_at, None, part_of_day)
+            if relaxed is None:
+                relaxed = pick_offer(
+                    availability, state["patient"], connected_at, weekday, None
+                )
+            if relaxed is None:
+                relaxed = pick_offer(availability, state["patient"], connected_at, None, None)
+            if relaxed is not None:
+                offer, note = relaxed, "negotiated"
     if offer is None:
+        reason = _empty_reason()
         state["submission"].set_no_action(reason)
+        if reason == "referral_required":
+            return {"status": "blocked", "reason": reason}, create_refusal_node(reason)
         result = {"status": "no_slots", "blocked": availability.get("blocked", [])}
         if words := RULE_WORDS.get(reason):
             # The rule is already decided; this is only so the agent can say it
@@ -424,6 +637,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
     state["offer_seq"] = state.get("offer_seq", 0) + 1
     offer_id = f"offer-{state['offer_seq']}"
     state["offers"][offer_id] = offer
+    _remember_tried_slot(state, offer)
     prepare_proposal(flow_manager, offer_id)
     audit.audit(
         state.get("call_id", "unknown"),
@@ -436,7 +650,7 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         policy_id=offer["policy_id"],
     )
     summary = (
-        f"{slot['provider_name']} at {location_name(offer['location_id'])}, "
+        f"{spoken_provider_name(slot['provider_name'])} at {location_name(offer['location_id'])}, "
         f"{start.strftime('%A %d %B')} at {start.strftime('%H:%M')}"
     )
     logger.info("Offer prepared")
@@ -462,6 +676,11 @@ async def get_earliest_slot(args: FlowArgs, flow_manager: FlowManager):
         # it explains instead of presenting the redirect as the original answer.
         result["note"] = note
         result["specialty"] = specialty
+        if note == "negotiated":
+            result["instruction"] = (
+                "The window they asked for was empty. Offer this as the closest that "
+                "fits; do not present it as the original time."
+            )
     return result, create_confirm_node(flow_manager)
 
 
@@ -485,6 +704,7 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
     wanted = (
         reschedule_action(appointment["appointment_id"], offer) if reschedule else book_action(offer)
     )
+    announce_booking = False
     if submission.delivery_attempted:
         # A retry of the action the frozen plan already carries is safe — the
         # first POST may have landed. Anything else cannot become this call's
@@ -503,19 +723,16 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is booked yet: the caller has to answer the readback out "
-                    "loud, in a turn of their own. Ask them and call confirm_offer again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_offer",
             flow_manager,
             instruction=(
                 "The caller's confirmation carries a condition, correction, price question or "
-                "request to check an alternative. Do not treat it as consent. Clarify the "
-                "unfinished part first; only call confirm_offer again with an unqualified "
-                "confirmation."
+                "request to check an alternative. Do not treat it as consent. Clarify only the "
+                "unfinished part; do not re-read the appointment. Call confirm_offer only after "
+                "an unqualified yes."
             ),
         )
         if blocked is not None:
@@ -524,6 +741,9 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
             submission.set_reschedule(appointment["appointment_id"], offer)
         else:
             submission.set_book(offer)
+        announce_booking = True
+    if announce_booking:
+        await speak_tool(flow_manager, "confirm_offer")
     accepted = await submission.flush()
     return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, kind
@@ -531,10 +751,17 @@ async def confirm_offer(args: FlowArgs, flow_manager: FlowManager):
 
 
 @flows_tool_options(cancel_on_interruption=True)
+@announce("revise_search")
 async def revise_search(flow_manager: FlowManager) -> tuple[None, NodeConfig]:
     """The caller wants a different specialty, site, day or time."""
-    from flows.requests import revise_request
+    from flows.requests import live_keys, revise_request
 
+    state = flow_manager.state
+    for key in live_keys(flow_manager):
+        offer = (state.get("offers") or {}).get(key)
+        if offer:
+            _remember_tried_slot(state, offer)
+    state["submission"].clear_offer()
     revise_request(flow_manager)
     return None, create_slot_node(flow_manager)
 
@@ -547,7 +774,19 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
             "specialty": {"type": "string", "enum": specialty_ids()},
             "provider_name": {
                 "type": "string",
-                "description": "Doctor name as spoken; do not invent IDs.",
+                "enum": provider_names(),
+                "description": (
+                    "Exact roster name if the caller named a doctor on this list. "
+                    "Omit the field entirely when they did not name a doctor — that "
+                    "skips the doctor filter. Never invent a nearby spelling."
+                ),
+            },
+            "unknown_doctor": {
+                "type": "boolean",
+                "description": (
+                    "True only if they named a doctor who is not on the roster. "
+                    "Do not set this when they simply did not name anyone."
+                ),
             },
             "allow_alternative": {
                 "type": "boolean",
@@ -556,7 +795,14 @@ def _get_earliest_slot_schema() -> FlowsFunctionSchema:
             "site": {
                 "type": "string",
                 "enum": location_ids(),
-                "description": "Only if the caller asked for a site.",
+                "description": "Only if the caller named a clinic site. Never guess from the enum.",
+            },
+            "near_place": {
+                "type": "string",
+                "description": (
+                    "Street, neighbourhood or town the caller said they are at when they "
+                    "want the closest site. Pass their words; never a site id."
+                ),
             },
             "policy_name": {
                 "type": "string",
@@ -607,7 +853,11 @@ def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
     live = [key for key in flow_manager.state["offers"] if key in live_keys(flow_manager)]
     return FlowsFunctionSchema(
         name="confirm_offer",
-        description="The caller accepted the offered appointment.",
+        description=(
+            "Book the offered appointment. Call only after the caller has answered "
+            "the one readback in a later turn. Never call this in the same turn as "
+            "the offer, and never to ask them again."
+        ),
         properties={"offer_id": {"type": "string", "enum": live}},
         required=["offer_id"],
         handler=confirm_offer,
@@ -615,6 +865,7 @@ def _confirm_offer_schema(flow_manager: FlowManager) -> FlowsFunctionSchema:
     )
 
 
+@announce("resolve_date")
 async def resolve_date(args: FlowArgs, flow_manager: FlowManager):
     """Turn a named calendar date into an ISO day, in code.
 
@@ -670,24 +921,49 @@ def _target_day(args: FlowArgs, connected_at: datetime) -> date | None:
 
 def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
     patient = flow_manager.state["patient"]
+    roster = "; ".join(
+        f"{p['name']} ({p['specialty_id']})" for p in load_catalog()["providers"]
+    )
+    cues = spoken_booking_cues(flow_manager)
+    if cues:
+        already = (
+            "Already requested: "
+            + ", ".join(f"{key}={value}" for key, value in cues.items())
+            + ". Call get_earliest_slot now with those values. Do not ask for them again. "
+        )
+    else:
+        already = "Do not re-ask a specialty, doctor or site they already named. "
     return NodeConfig(
         name="find_slot",
         task_messages=[
             {
                 "role": "developer",
                 "content": (
-                    f"The patient is {patient['given_name']} {patient['first_surname']}. Find out "
-                    "which specialty or named doctor they need. Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
+                    f"The patient is {patient['given_name']} {patient['first_surname']}. {already}"
+                    "Find out which specialty or named doctor they need if that is still missing. "
+                    "Preserve named doctor and site. Clarify ambiguous surnames and obtain consent before fallback. "
+                    f"Roster — if they named a doctor, pass provider_name as one of these exact "
+                    f"strings; if they named nobody, omit provider_name so the search is not "
+                    f"filtered by doctor: {roster}. "
                     "When the caller states or confirms a specialty — for example 'the GP' — pass "
-                    "specialty. Pass provider_name whenever the caller names a doctor, and pass "
-                    "BOTH when they give both: 'Dr. Sáez, the GP' is specialty=general_practice "
-                    "AND provider_name='Sáez'. That pair is what identifies a doctor whose "
-                    "surname is ambiguous, so never drop one of the two. "
-                    "Only pass site, weekday or part_of_day if the caller asked for them. Never "
-                    "pass policy_name unless the caller named a plan out loud. Then call "
+                    "specialty. If they only described symptoms, pass the specialty from the "
+                    "triage examples. If they named a doctor, pass that roster name AND specialty "
+                    "when they gave both: 'Dr. Sáez, the GP' is specialty=general_practice AND "
+                    "provider_name='Dr. Martín Sáez'. Sáez is the GP; Sáenz is paediatrics; "
+                    "Iglesias is dermatology; Iglesia is orthopaedics. Never pick the nearby "
+                    "other name. If the name they said is not on the roster, set unknown_doctor "
+                    "true and omit provider_name. "
+                    "Only pass site, weekday or part_of_day if the caller asked for them. If they "
+                    "gave a street or neighbourhood instead of a site name, pass near_place as "
+                    "they said it and do not guess a site. Never "
+                    "pass policy_name unless the caller named a plan out loud. If coverage blocks, "
+                    "ask whether they hold another plan and only then retry with policy_name. "
+                    "Then call "
                     "get_earliest_slot. If it returns no_slots, say nothing is available for that "
                     "request; when reason_words is set, say that rule in plain words as well, and "
-                    "only ask whether they would drop a constraint when no rule applies. If it "
+                    "only ask whether they would drop a constraint when no rule applies. If the "
+                    "offer note is negotiated, say this is the closest that fits, not the window "
+                    "they first asked for. If it "
                     "returns "
                     "redirected_by_age, explain plainly that this patient belongs with the other "
                     "team and offer what came back — never call it an error. If blocked, say the "
@@ -695,7 +971,8 @@ def create_slot_node(flow_manager: FlowManager) -> NodeConfig:
                     "apologise and ask them to call back shortly. If a tool result is "
                     "CANCELLED or says the call is still running, you have no appointment to "
                     "describe: say you are just checking and call get_earliest_slot again. "
-                    "Never describe a day, a doctor or a site from memory."
+                    "Never describe a day, a doctor or a site from memory. "
+                    + TRIAGE_EXAMPLES
                 ),
             }
         ],
@@ -710,32 +987,50 @@ def create_confirm_node(flow_manager: FlowManager) -> NodeConfig:
             {
                 "role": "developer",
                 "content": (
-                    "Offer the appointment from the summary the tool returned: doctor, site, day "
-                    "and time. Ask if that works. Nothing is booked until they say yes. On yes, "
-                    "call confirm_offer. If they want something different, call revise_search. If "
+                    "Say the appointment from the summary once: doctor, site, day and time, "
+                    "including the address if they asked which site is closest. Ask if that "
+                    "works, then stop talking. Do not call confirm_offer in this turn. Nothing "
+                    "is booked until they answer. After they say yes, call confirm_offer. If they "
+                    "refuse this slot or want something different, call revise_search: that slot "
+                    "is remembered and the next search will not offer it again. If "
                     "confirm_offer returns CANCELLED, or says the call is still running, the "
                     "booking is not recorded yet: say you are finishing it off and call "
                     "confirm_offer again with the same offer_id. If it returns "
-                    "needs_confirmation, the caller has not answered you in a turn of their own "
-                    "yet: ask them to confirm out loud and call confirm_offer only once they "
-                    "have. If it returns qualified_confirmation, clarify the condition, question "
+                    "needs_confirmation, stay completely silent: you already asked. Do not "
+                    "repeat the appointment. Call confirm_offer only after they answer. "
+                    "If it returns qualified_confirmation, clarify the condition, question "
                     "or correction first. If it returns expired, that offer is no longer on the "
                     "table: call revise_search and offer what it returns. If it returns "
                     "delivery_conflict, the call's record is already settled: do not claim the "
-                    "appointment, apologise and say goodbye."
+                    "appointment, apologise and say goodbye. If they decline this appointment "
+                    "outright and do not want a different search, call finish_without_booking — "
+                    "do not just say goodbye in text."
                 ),
             }
         ],
-        functions=[_confirm_offer_schema(flow_manager), revise_search],
+        functions=[_confirm_offer_schema(flow_manager), revise_search, finish_without_booking],
     )
 
 
 @flows_tool_options(cancel_on_interruption=True)
+@announce("finish_without_booking")
 async def finish_without_booking(flow_manager: FlowManager):
     """The caller declines alternatives or ends without an appointment."""
+    from flows.requests import revise_request
+
     submission = flow_manager.state["submission"]
     if submission.pending["action"] != "NO_ACTION":
         return {"status": "already_confirmed"}, None
+    if not submission.actions:
+        # Nothing was decided yet (a plain decline of a good offer, not a rule
+        # failure another handler already recorded a reason for): state one now,
+        # or a live offer/proposal this call read back but never confirmed is
+        # rediscovered by the hang-up fallback and submitted as BOOK anyway —
+        # the caller was told no, and the record said yes.
+        submission.set_no_action("no_availability", provisional=False)
+    # The offer this call may still be holding is no longer live either way:
+    # a hang-up right after this must not let resolve_fallback find it again.
+    revise_request(flow_manager)
     await submission.flush()
     return {"status": "no_booking"}, NodeConfig(
         name="no_booking",

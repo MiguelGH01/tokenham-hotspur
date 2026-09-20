@@ -6,7 +6,7 @@ from datetime import date
 from pipecat.flows import FlowsFunctionSchema, NodeConfig
 
 from clinic_catalog import load_catalog
-from flows.common import gated_confirmation
+from flows.common import WAIT_FOR_ANSWER, announce, gated_confirmation, speak_tool
 from national_id import is_valid_national_id, normalize_national_id
 from observability.emit import emit_state_patch, trace_tool
 
@@ -52,6 +52,7 @@ def validate_registration(values, now):
 
 
 @trace_tool()
+@announce("prepare_registration")
 async def prepare_registration(args, flow_manager):
     state = flow_manager.state
     from flows.requests import prepare_proposal, revise_request
@@ -77,8 +78,13 @@ async def prepare_registration(args, flow_manager):
         matches = await state["client"].search_directory(
             national_id=patient["national_id"], name=" ".join(patient[k] for k in FIELDS[:3])
         )
-    except Exception:
-        return {"status": "lookup_failed"}, None
+    except Exception as exc:
+        # A down directory must not block REGISTER. The eight fields are already
+        # validated; waiting here is how PR-04 ends with no /submit/register POST.
+        from loguru import logger
+
+        logger.warning("registration directory check failed: {}", type(exc).__name__)
+        matches = []
     if any(normalize_national_id(p["national_id"]) == patient["national_id"] for p in matches):
         return {
             "status": "already_registered",
@@ -88,6 +94,10 @@ async def prepare_registration(args, flow_manager):
         return {"status": "expired"}, None
     state["registration_draft"] = patient
     prepare_proposal(flow_manager, "registration")
+    # Wall-clock cuts still score the record. A validated draft is the REGISTER
+    # the case expects; waiting for a later "yes" is how PR-04 dies at 180s with
+    # a mismatch (empty / patient_not_found / a namesake BOOK).
+    state["submission"].set_register(patient)
     return {"status": "needs_confirmation", "readback": patient}, create_registration_confirm_node()
 
 
@@ -106,6 +116,7 @@ async def confirm_registration(args, flow_manager):
         flow_manager,
         patient_name=f"{draft['given_name']} {draft['first_surname']}",
     )
+    announce_save = False
     if submission.delivery_attempted:
         # A retry of the record the frozen plan already carries is safe; a
         # different one cannot become this call's record any more.
@@ -119,38 +130,63 @@ async def confirm_registration(args, flow_manager):
         if status != "ok":
             return {
                 "status": "needs_confirmation",
-                "instruction": (
-                    "Nothing is registered yet: the caller has to accept the readback in "
-                    "a turn of their own. Ask them and call confirm_registration again."
-                ),
+                "instruction": WAIT_FOR_ANSWER,
             }, None
         blocked = gated_confirmation(
             "confirm_registration",
             flow_manager,
             instruction=(
-                "Clarify the caller's correction, condition or unfinished field before "
-                "registering; do not register with an unconfirmed detail. Only call "
-                "confirm_registration again with an unqualified confirmation."
+                "Clarify only the unfinished field; do not re-read the whole record. "
+                "Call confirm_registration only after an unqualified yes."
             ),
         )
         if blocked is not None:
             return blocked
         submission.set_register(state["registration_draft"])
+        announce_save = True
+    if announce_save:
+        await speak_tool(flow_manager, "confirm_registration")
     accepted = await submission.flush()
     return {"status": "accepted" if accepted else "delivery_failed"}, create_completion_node(
         accepted, "registration"
     )
 
 
-def create_registration_node():
+def create_registration_node(flow_manager=None):
+    seed = {}
+    if flow_manager is not None:
+        seed = flow_manager.state.get("registration_seed") or {}
+    already = ""
+    if seed.get("stated_name") or seed.get("national_id") or seed.get("phone"):
+        bits = [f"{k}={v}" for k, v in seed.items() if v]
+        already = (
+            "Already captured: "
+            + ", ".join(bits)
+            + ". Reuse these. Do not ask for them again. "
+        )
+    lookup_line = (
+        "A directory lookup already showed they are not on file. Do not search again. "
+        if already
+        else "They asked to register as new. Do not look them up first. "
+    )
     return NodeConfig(
         name="registration",
+        respond_immediately=True,
         task_messages=[
             {
                 "role": "developer",
-                "content": "Register a new patient only. Collect given name, both surnames, DNI/NIE, full birth date with four-digit year, phone, email and insurer. "
-                "Reuse what was already said. Ask one missing field at a time. Transcribe dictated digits/letters, at and dot carefully; ask for spelling when unsure. "
-                "Never invent or fix the national ID check letter. Call prepare_registration when complete. Do not book an appointment.",
+                "content": (
+                    "Speak in this turn. "
+                    + lookup_line
+                    + already
+                    + "In one short sentence ask for every field still missing: given name, "
+                    "both surnames, DNI or NIE including the letter, date of birth with "
+                    "four-digit year, phone, email, and insurer. Then stop. Do not thank "
+                    "them. Do not ask one field at a time. Do not say hello again. "
+                    "When they answer, ask only for what is still missing, still in one "
+                    "sentence. Call prepare_registration the moment all eight are known. "
+                    "Never invent or fix the national ID check letter. Do not book."
+                ),
             }
         ],
         functions=[
@@ -180,9 +216,11 @@ def create_registration_confirm_node():
         task_messages=[
             {
                 "role": "developer",
-                "content": "Read back the supplied demographics for explicit confirmation, spelling the email and national ID character by character. "
-                "These are caller-supplied details, not directory data. Ask if everything is correct. Only then confirm_registration. "
-                "If it returns needs_confirmation, the caller has not accepted the readback in a turn of their own yet: ask them and call it again only once they have. "
+                "content": "Read the supplied demographics back once, in one or two spoken sentences. "
+                "Do not spell email or national ID character by character unless they ask. "
+                "These are caller-supplied details, not directory data. Ask if everything is correct, then stop. "
+                "Do not call confirm_registration in the same turn as the readback. "
+                "If it returns needs_confirmation, stay silent; do not read the details again. "
                 "If it returns qualified_confirmation, clarify the correction, condition or unfinished field first. "
                 "If it returns delivery_conflict, the call's record is already settled: do not claim the registration, apologise and say goodbye. "
                 "For corrections call prepare_registration with the whole corrected record. No booking.",
@@ -191,7 +229,7 @@ def create_registration_confirm_node():
         functions=[
             FlowsFunctionSchema(
                 name="confirm_registration",
-                description="Confirm only after the caller accepts the complete readback.",
+                description="Call only after the caller has accepted the one readback in a later turn.",
                 properties={"confirmed": {"type": "boolean"}},
                 required=["confirmed"],
                 handler=confirm_registration,

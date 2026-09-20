@@ -27,6 +27,7 @@ from rules import (
     age_in_months,
     check_patient_rules,
     check_provider_rules,
+    empty_diary_reason,
     fold,
     providers_for,
     resolve_plan,
@@ -255,6 +256,77 @@ def test_nearest_site_only_considers_sites_that_can_serve(catalogue):
             assert chosen is None or fold(chosen["name"]) in serving
 
 
+def test_hardcoded_sites_match_the_catalogue(catalogue):
+    from rules import SERVICE_LOCATIONS
+
+    published = {loc["id"]: loc for loc in catalogue["locations"]}
+    assert {site["id"] for site in SERVICE_LOCATIONS} == set(published)
+    for site in SERVICE_LOCATIONS:
+        loc = published[site["id"]]
+        assert site["name"] == loc["name"]
+        assert site["address"] == loc["address"]
+        assert site["latitude"] == loc["latitude"]
+        assert site["longitude"] == loc["longitude"]
+
+
+def test_spoken_postcode_picks_the_closest_catalogue_site():
+    """A 5-digit in the address is ranked against the hardcoded service postcodes."""
+    from rules import location_from_spoken_place
+
+    centro = location_from_spoken_place("Calle de Preciados 3, 28013 Madrid")
+    assert centro is not None and centro["id"] == "centro"
+    norte = location_from_spoken_place("Paseo de la Castellana 189, 28046 Madrid")
+    assert norte is not None and norte["id"] == "norte"
+    sur = location_from_spoken_place("Calle de Madrid 54, 28902 Getafe")
+    assert sur is not None and sur["id"] == "sur"
+
+
+def test_spoken_neighbourhood_matches_a_hardcoded_site():
+    from rules import location_from_spoken_place
+
+    getafe = location_from_spoken_place("I'm in Getafe, at Calle de Madrid 54")
+    assert getafe is not None and getafe["id"] == "sur"
+    centre = location_from_spoken_place(
+        "I'm right in the centre, at Calle de Preciados 3, by Puerta del Sol"
+    )
+    assert centre is not None and centre["id"] == "centro"
+    norte = location_from_spoken_place(
+        "I'm at Paseo de la Castellana 189, at Plaza de Castilla"
+    )
+    assert norte is not None and norte["id"] == "norte"
+
+
+def test_nearest_spoken_place_skips_a_site_that_cannot_serve():
+    """Physio is only at Sur: an origin on Centro still books Sur."""
+    from rules import location_from_spoken_place
+
+    chosen = location_from_spoken_place("28013 Madrid", "physiotherapy")
+    assert chosen is not None and chosen["id"] == "sur"
+
+
+def test_castilla_books_norte_when_orthopaedics_can_serve_there():
+    from rules import location_from_spoken_place
+
+    chosen = location_from_spoken_place(
+        "Paseo de la Castellana 189, Plaza de Castilla",
+        "orthopaedics",
+    )
+    assert chosen is not None and chosen["id"] == "norte"
+
+
+def test_spanish_does_not_constrain_the_roster(catalogue):
+    from rules import language_constrains_booking, normalize_language, provider_speaks
+
+    spanish = normalize_language("español")
+    assert spanish == "es"
+    assert language_constrains_booking(catalogue, spanish) is False
+    catalan = normalize_language("Catalan")
+    assert catalan == "ca"
+    assert language_constrains_booking(catalogue, catalan) is True
+    assert provider_speaks(catalogue, "PR01", catalan) is True
+    assert provider_speaks(catalogue, "PR02", catalan) is False
+
+
 # --- the redirect list is the same list everywhere --------------------------
 
 
@@ -273,3 +345,46 @@ def test_today_in_madrid_is_a_plain_date():
     from rules import today_in_madrid
 
     assert today_in_madrid(datetime(2026, 9, 18, 23, 30)) == date(2026, 9, 18)
+
+
+# --- empty diary vs leftover blocked (PR-07) --------------------------------
+
+
+def test_empty_diary_ignores_referral_blocked_on_ungated_specialty():
+    """Gynaecology is not referral-gated; a blocked leftover must not become the reason."""
+    reason = empty_diary_reason(
+        specialty_id="gynaecology",
+        patient=patient(),
+        blocked=[{"provider_id": "PR08", "restriction": "referral_required"}],
+    )
+    assert reason == "no_availability"
+
+
+def test_empty_diary_keeps_referral_on_a_gated_specialty_without_one():
+    reason = empty_diary_reason(
+        specialty_id="dermatology",
+        patient=patient(referrals=[]),
+        blocked=[{"provider_id": "PR05", "restriction": "referral_required"}],
+    )
+    assert reason == "referral_required"
+
+
+def test_empty_diary_with_a_single_real_block_keeps_that_restriction():
+    reason = empty_diary_reason(
+        specialty_id="general_practice",
+        patient=patient(),
+        blocked=[{"provider_id": "PR02", "restriction": "provider_on_leave"}],
+    )
+    assert reason == "provider_on_leave"
+
+
+def test_empty_diary_with_mixed_blocks_is_a_full_calendar():
+    reason = empty_diary_reason(
+        specialty_id="orthopaedics",
+        patient=patient(),
+        blocked=[
+            {"provider_id": "PR03", "restriction": "provider_on_leave"},
+            {"provider_id": "PR04", "restriction": "location_hours"},
+        ],
+    )
+    assert reason == "no_availability"

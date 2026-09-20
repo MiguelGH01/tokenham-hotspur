@@ -38,7 +38,8 @@ from loguru import logger
 import audit
 import reception_notices
 from booking import pick_offer, search_window
-from clinic_catalog import closure_days, load_catalog
+from clinic_catalog import load_catalog
+from dates import closure_days
 from submission import book_action, cancel_action, register_action, reschedule_action
 
 #: The whole last-resort search, bounded. A booking nobody sends is worth less
@@ -77,7 +78,12 @@ def prepared_action(state) -> dict | None:
     """
     intent = state.get("intent")
     appointment = state.get("appointment") or {}
-    if intent == "cancel" and appointment:
+    # A live proposal is required, exactly as for BOOK below: a caller who
+    # selected an appointment and then declined the cancellation (or moved on
+    # to something else) has ``keep_appointment``/``revise_request`` pop the
+    # proposal precisely so this branch stops matching a cancellation nobody
+    # confirmed.
+    if intent == "cancel" and appointment and state.get("proposal"):
         return cancel_action(appointment["appointment_id"], appointment=appointment)
     held = live_offer(state)
     if intent == "reschedule" and appointment and held:
@@ -176,7 +182,15 @@ async def resolve_fallback(state) -> dict:
     # A patient without a plan cannot be booked to a scored ``policy_id``, and a
     # patient the directory never named cannot be booked at all: the cold
     # booking needs both halves, so anything less leaves the refusal.
-    if patient and patient.get("patient_id") and patient.get("insurer"):
+    intent = state.get("intent")
+    # A move or cancel that never confirmed is not a new booking. Cold-booking
+    # those hangs submitted BOOK on PR-08 and failed the case.
+    if (
+        intent not in {"cancel", "reschedule", "register"}
+        and patient
+        and patient.get("patient_id")
+        and patient.get("insurer")
+    ):
         try:
             offer = await asyncio.wait_for(_first_slot(state, patient), COLD_BOOKING_TIMEOUT_SECS)
         except TimeoutError:
@@ -185,5 +199,9 @@ async def resolve_fallback(state) -> dict:
         if offer is not None:
             audit.audit(call_id, "fallback_resolved", branch="cold_booking", **offer)
             return book_action(offer)
+    if intent in {"book", "register", "cancel", "reschedule"}:
+        reason = "no_availability" if patient else "patient_not_found"
+        audit.audit(call_id, "fallback_resolved", branch="clinic_request_unresolved", reason=reason)
+        return {"action": "NO_ACTION", "reason": reason}
     audit.audit(call_id, "fallback_resolved", branch="unscored_refusal", reason="out_of_scope")
     return dict(UNSCORED_REFUSAL)

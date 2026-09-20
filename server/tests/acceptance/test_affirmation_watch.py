@@ -234,3 +234,21 @@ def test_an_unbound_watcher_does_nothing():
     watch = AffirmationWatch()
     assert watch.pending_submission() is None
     watch.consider("Yes.")  # no conversation, no crash
+
+
+def test_wrapped_llm_messages_still_confirm():
+    from pipecat.processors.aggregators.llm_context import LLMSpecificMessage
+
+    manager, client = _manager(
+        user_turns=["I need a review, please.", "Yes, that one please."],
+        assistant_turns=[READBACK],
+    )
+    wrapped = [
+        LLMSpecificMessage(llm="google", message=m) for m in manager.get_current_context()
+    ]
+    manager.get_current_context = lambda: wrapped
+    watch = _watch(manager)
+    handler = watch.pending_submission()
+    assert handler is not None
+    asyncio.run(watch.submit_confirmation(handler))
+    assert [p["action"] for p in client.posted] == ["BOOK"]

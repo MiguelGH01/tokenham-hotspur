@@ -98,6 +98,37 @@ def test_cancel_route_prepares_verified_appointment_and_waits_for_new_yes():
     assert posted == [{'call_id': 'c', 'action': 'CANCEL', 'appointment_id': 'A1'}]
 
 
+def test_cancel_two_posts_both_diary_ids():
+    from flows.appointments import confirm_cancellation, select_appointment
+    from flows.identification import search_patient
+    from flows.reception import route_request
+    posted = []
+    class Client:
+        async def search_directory(self, **kwargs):
+            return [dict(patient_id='P1', national_id='12345678Z', given_name='Ana', first_surname='Test', has_visited_before=True)]
+        async def appointments(self, patient_id):
+            return [
+                dict(appointment_id='A1', patient_id=patient_id, start_time='2026-10-10T10:00:00+02:00', provider_id='PR01', location_id='centro', appointment_type_id='review'),
+                dict(appointment_id='A2', patient_id=patient_id, start_time='2026-10-12T11:00:00+02:00', provider_id='PR02', location_id='norte', appointment_type_id='review'),
+            ]
+        async def post_submission(self, payload):
+            posted.append(payload)
+    messages = [{'role': 'user', 'content': 'cancel both my appointments'}]
+    client = Client()
+    manager = SimpleNamespace(state={'submission': CallSubmission('c', client), 'client': client}, get_current_context=lambda: messages)
+    asyncio.run(route_request({'intent': 'cancel'}, manager))
+    asyncio.run(search_patient(dict(id_type='national_id', id_value='12345678Z', stated_name='Ana Test'), manager))
+    result, node = asyncio.run(select_appointment({'appointment_ids': ['A1', 'A2']}, manager))
+    assert result['status'] == 'needs_confirmation'
+    assert node['name'] == 'cancel_confirm'
+    assert not posted
+    messages.append({'role': 'user', 'content': 'yes, both'})
+    result, node = asyncio.run(confirm_cancellation({}, manager))
+    assert result['status'] == 'accepted'
+    assert [p['appointment_id'] for p in posted] == ['A1', 'A2']
+    assert all(p['action'] == 'CANCEL' for p in posted)
+
+
 def test_reschedule_submission_uses_exact_contract():
     posted = []
     class Client:
@@ -112,6 +143,21 @@ def test_reschedule_submission_uses_exact_contract():
 def test_nonaffirmative_transcript_is_not_consent():
     manager = SimpleNamespace(state={}, get_current_context=lambda: [{'role':'user', 'content':'my phone is 612345678'}])
     assert gated_confirmation('confirm', manager)[0]['reason_code'] == 'missing_confirmation'
+
+
+def test_gated_confirmation_reads_llm_specific_messages():
+    from pipecat.processors.aggregators.llm_context import LLMSpecificMessage
+
+    manager = SimpleNamespace(
+        state={},
+        get_current_context=lambda: [
+            LLMSpecificMessage(
+                llm="google",
+                message={"role": "user", "content": "Yes, that one please."},
+            )
+        ],
+    )
+    assert gated_confirmation("confirm", manager) is None
 
 
 def test_reschedule_keeps_existing_type_and_requires_later_consent():
@@ -130,9 +176,84 @@ def test_reschedule_keeps_existing_type_and_requires_later_consent():
     result, _ = asyncio.run(get_earliest_slot({'specialty':'general_practice'}, manager))
     assert manager.state['offers'][result['offer_id']]['appointment_type_id'] == 'review'
     assert asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]['status'] == 'needs_confirmation'
+    premature = asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]
+    assert premature['status'] == 'needs_confirmation'
+    assert 'Ask them' not in premature['instruction']
+    assert 'Stay completely silent' in premature['instruction']
     messages.append({'role':'user','content':'yes'})
     assert asyncio.run(confirm_offer({'offer_id':result['offer_id']}, manager))[0]['status'] == 'accepted'
     assert posted[0]['action'] == 'RESCHEDULE'
     assert posted[0]['appointment_id'] == 'A1'
     asyncio.run(revise_search(manager))
     assert result['offer_id'] in manager.state['offers']
+
+
+def test_declining_an_offer_does_not_book_it_on_hangup():
+    """confirm node had no tool for an outright decline: the model could only say
+    so in text, leaving the read-back offer live for resolve_fallback to submit
+    as BOOK on hang-up (calls b3b11767, 9ed8af6a)."""
+    from datetime import datetime
+
+    from flows.booking import finish_without_booking, get_earliest_slot
+    from resolution import resolve_fallback
+
+    class Client:
+        async def availability(self, *args, **kwargs):
+            return {
+                'slots': [dict(
+                    provider_id='PR01', provider_name='Doctor', location_id='centro',
+                    specialty_id='general_practice', appointment_type_id='review',
+                    start_time='2026-09-21T09:00:00+02:00', payable_with=['sanitas'],
+                )],
+                'blocked': [],
+            }
+        async def post_submission(self, payload):
+            return payload
+
+    client = Client()
+    state = {
+        'connected_at': datetime.fromisoformat('2026-09-19T10:00:00+02:00'),
+        'intent': 'book', 'client': client, 'offers': {},
+        'patient': {'patient_id': 'P1', 'insurer': 'sanitas', 'given_name': 'Ana', 'first_surname': 'Test'},
+    }
+    state['submission'] = CallSubmission('c', client, fallback=lambda: resolve_fallback(state))
+    messages = [{'role': 'user', 'content': 'I need a GP appointment'}]
+    manager = SimpleNamespace(state=state, get_current_context=lambda: messages)
+    asyncio.run(get_earliest_slot({'specialty': 'general_practice'}, manager))
+    assert state['proposal'] is not None
+
+    messages.append({'role': 'user', 'content': "no, I don't want it"})
+    result, _ = asyncio.run(finish_without_booking(manager))
+    assert result['status'] == 'no_booking'
+    assert state.get('proposal') is None
+
+    assert asyncio.run(state['submission'].close()) is True
+    assert state['submission'].actions == [{'action': 'NO_ACTION', 'reason': 'no_availability'}]
+
+
+def test_declining_a_cancellation_does_not_cancel_it_on_hangup():
+    from flows.appointments import keep_appointment, select_appointment
+    from resolution import resolve_fallback
+
+    class Client:
+        async def post_submission(self, payload):
+            return payload
+
+    client = Client()
+    state = {
+        'intent': 'cancel', 'client': client,
+        'appointments': {'A1': {'appointment_id': 'A1', 'patient_id': 'P1'}},
+        'patient': {'patient_id': 'P1'},
+    }
+    state['submission'] = CallSubmission('c', client, fallback=lambda: resolve_fallback(state))
+    manager = SimpleNamespace(state=state, get_current_context=lambda: [])
+    asyncio.run(select_appointment({'appointment_id': 'A1'}, manager))
+    assert state['appointment']['appointment_id'] == 'A1'
+
+    result, _ = asyncio.run(keep_appointment(manager))
+    assert result['status'] == 'kept'
+    assert state.get('appointment') is None
+    assert state.get('proposal') is None
+
+    assert asyncio.run(state['submission'].close()) is True
+    assert state['submission'].actions == [{'action': 'NO_ACTION', 'reason': 'no_availability'}]

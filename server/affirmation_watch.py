@@ -38,6 +38,7 @@ from loguru import logger
 import audit
 import confirmation
 import resolution
+from llm_messages import chat_role, chat_text
 
 
 class AffirmationWatch:
@@ -106,7 +107,7 @@ class AffirmationWatch:
         if submission is None or submission.delivery_attempted:
             return None
         messages = self._messages()
-        assistant = [str(m.get("content") or "") for m in messages if m.get("role") == "assistant"]
+        assistant = [chat_text(m) or "" for m in messages if chat_role(m) == "assistant"]
         assistant_text = assistant[-1] if assistant else ""
         utterance = user_text if user_text is not None else self._last_user_turn(messages)
         if not utterance or not confirmation.is_short_clean_yes(utterance):
@@ -131,10 +132,10 @@ class AffirmationWatch:
         return handler
 
     @staticmethod
-    def _last_user_turn(messages: list[dict]) -> str:
+    def _last_user_turn(messages: list) -> str:
         for message in reversed(messages):
-            if message.get("role") == "user":
-                return str(message.get("content") or "")
+            if chat_role(message) == "user":
+                return chat_text(message) or ""
         return ""
 
     def _confirm_handler(self, state):
