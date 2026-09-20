@@ -123,7 +123,7 @@
       <header class="dashhead">
         <div>
           <h1>Conversation insights</h1>
-          <p>Labels Jev applies when a call ends. One Choice question per label over the transcript.</p>
+          <p>Labels Jev applies to every past call when you add them, and to new calls when they end.</p>
         </div>
       </header>
 
@@ -148,6 +148,10 @@
           <div>
             <dt>Discrete values</dt>
             <dd>At least two options (e.g. <code>si</code> / <code>no</code>). Include <code>unknown</code> or <code>no_aplica</code> when the transcript may not answer.</dd>
+          </div>
+          <div>
+            <dt>Existing conversations</dt>
+            <dd>Adding a label scans every past call automatically. Recalculate on a conversation is the fallback if one was missed.</dd>
           </div>
           <div>
             <dt>After hang-up</dt>
@@ -365,6 +369,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>

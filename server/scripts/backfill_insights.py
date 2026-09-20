@@ -28,47 +28,12 @@ from observability.elevenlabs_history import (  # noqa: E402
     get_elevenlabs_history,
 )
 from observability.hub import reset_hub  # noqa: E402
-from observability.insights import extract_call_insights, typesafe_configured  # noqa: E402
+from observability.insights import (  # noqa: E402
+    collect_backfill_call_ids,
+    extract_call_insights,
+    typesafe_configured,
+)
 from observability.store import default_db_path, reset_store  # noqa: E402
-
-
-def _keep_row(row: dict) -> bool:
-    if (row.get("transport") or "") == "eval":
-        return False
-    cid = str(row.get("call_id") or "")
-    if cid.startswith("conv_"):
-        return True
-    if row.get("eleven_conversation_id"):
-        return True
-    if cid.startswith("CA-"):
-        return True
-    return False
-
-
-async def collect_call_ids(store, history) -> list[str]:
-    if elevenlabs_history_configured() and history is not None:
-        rows = await history.list_console_calls(store, since=None, include="all")
-    else:
-        rows = await store.list_calls(since=None, include="all")
-    ids: list[str] = []
-    seen: set[str] = set()
-    seen_el: set[str] = set()
-    for row in rows:
-        if not _keep_row(row):
-            continue
-        cid = str(row.get("call_id") or "")
-        el_id = str(row.get("eleven_conversation_id") or "")
-        if cid.startswith("conv_"):
-            el_id = el_id or cid
-        if el_id:
-            if el_id in seen_el:
-                continue
-            seen_el.add(el_id)
-        if not cid or cid in seen:
-            continue
-        seen.add(cid)
-        ids.append(cid)
-    return ids
 
 
 async def latest_choices(store, call_id: str) -> str:
@@ -115,7 +80,7 @@ async def main() -> int:
         return 1
     print("Insights: " + ", ".join(d["name"] for d in defs))
 
-    ids = await collect_call_ids(store, history)
+    ids = await collect_backfill_call_ids(store)
     if args.limit:
         ids = ids[: args.limit]
     print(f"Conversations: {len(ids)}")

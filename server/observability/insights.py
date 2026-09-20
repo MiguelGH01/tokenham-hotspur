@@ -143,12 +143,16 @@ async def extract_call_insights(
     emitter: InsightEmitter,
     client: Any | None = None,
     turns: list[dict[str, str]] | None = None,
+    defs: list[dict[str, Any]] | None = None,
 ) -> str:
     """Run one Jev Choice per insight definition; emit pending/extracted/failed.
 
     Never raises into the call path — extraction is fire-and-forget after hang-up.
     Returns a status token: ``ok``, ``skipped_eval``, ``no_defs``,
     ``unconfigured``, or ``no_transcript``.
+
+    Pass ``defs`` to classify only those labels (new-insight backfill);
+    otherwise every stored definition runs.
     """
     try:
         row = await store._get_call_row(call_id)
@@ -160,11 +164,12 @@ async def extract_call_insights(
     if transport == "eval":
         return "skipped_eval"
 
-    try:
-        defs = await store.list_insight_defs()
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Insight extract: cannot list defs: {}", exc)
-        return "no_defs"
+    if defs is None:
+        try:
+            defs = await store.list_insight_defs()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Insight extract: cannot list defs: {}", exc)
+            return "no_defs"
     if not defs:
         return "no_defs"
 
@@ -286,3 +291,222 @@ def schedule_extract(
         extract_call_insights(call_id, store=store, emitter=emitter, client=client),
         name=f"insights:{call_id}",
     )
+
+
+# ------------------------------------------------------------------ backfill (new insight → every past conversation)
+
+
+_SKIPPED_STATUSES = frozenset(
+    {"skipped_eval", "no_defs", "no_transcript", "unconfigured"}
+)
+
+_backfill_jobs: list[dict[str, Any]] = []
+_backfill_state: dict[str, Any] | None = None
+_backfill_task: asyncio.Task | None = None
+
+
+def eligible_backfill_row(row: dict[str, Any]) -> bool:
+    """Ended, non-eval conversations the console would actually show."""
+    if (row.get("transport") or "") == "eval":
+        return False
+    if (row.get("status") or "") == "live":
+        return False
+    cid = str(row.get("call_id") or "")
+    if cid.startswith("conv_"):
+        return True
+    if row.get("eleven_conversation_id"):
+        return True
+    if cid.startswith("CA-"):
+        return True
+    return False
+
+
+async def collect_backfill_call_ids(store: Any) -> list[str]:
+    """Local store plus ElevenLabs history, de-duplicated by conversation."""
+    from observability.elevenlabs_history import (
+        elevenlabs_history_configured,
+        get_elevenlabs_history,
+    )
+
+    if elevenlabs_history_configured():
+        try:
+            rows = await get_elevenlabs_history().list_console_calls(
+                store, since=None, include="all"
+            )
+        except Exception as exc:
+            logger.warning("Insight backfill: ElevenLabs list failed: {}", exc)
+            rows = await store.list_calls(since=None, include="all")
+    else:
+        rows = await store.list_calls(since=None, include="all")
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    seen_el: set[str] = set()
+    for row in rows:
+        if not eligible_backfill_row(row):
+            continue
+        cid = str(row.get("call_id") or "")
+        el_id = str(row.get("eleven_conversation_id") or "")
+        if cid.startswith("conv_"):
+            el_id = el_id or cid
+        if el_id:
+            if el_id in seen_el:
+                continue
+            seen_el.add(el_id)
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        ids.append(cid)
+    return ids
+
+
+def backfill_snapshot() -> dict[str, Any] | None:
+    if _backfill_state is None:
+        return None
+    snap = dict(_backfill_state)
+    snap["queued"] = [str(j["definition"]["name"]) for j in _backfill_jobs]
+    return snap
+
+
+def reset_insight_backfill() -> None:
+    """Drop queued/running backfills (tests, hub reset)."""
+    global _backfill_task, _backfill_state
+    task = _backfill_task
+    _backfill_task = None
+    _backfill_jobs.clear()
+    _backfill_state = None
+    if task is not None and not task.done():
+        task.cancel()
+
+
+def drop_insight_backfill(insight_id: int) -> None:
+    """Forget queued jobs for a deleted definition; the runner notices mid-sweep."""
+    _backfill_jobs[:] = [
+        job for job in _backfill_jobs if job["definition"].get("id") != insight_id
+    ]
+
+
+def schedule_insight_backfill(
+    definition: dict[str, Any],
+    *,
+    store: Any,
+    hub: Any,
+    client: Any | None = None,
+) -> asyncio.Task:
+    """Classify one new insight across existing conversations, without blocking create."""
+    global _backfill_task
+    _backfill_jobs.append(
+        {
+            "definition": definition,
+            "store": store,
+            "hub": hub,
+            "client": client,
+        }
+    )
+    if _backfill_task is None or _backfill_task.done():
+        _backfill_task = asyncio.create_task(
+            _backfill_worker(), name="insights-backfill"
+        )
+    return _backfill_task
+
+
+async def _backfill_worker() -> None:
+    global _backfill_state
+    while _backfill_jobs:
+        job = _backfill_jobs.pop(0)
+        try:
+            await run_insight_backfill(
+                job["definition"],
+                store=job["store"],
+                hub=job["hub"],
+                client=job["client"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Insight backfill worker failed: {}", exc)
+            if _backfill_state is not None:
+                _backfill_state = {
+                    **_backfill_state,
+                    "status": "failed",
+                    "error": str(exc)[:200],
+                }
+                await _publish_backfill(job["hub"])
+
+
+async def run_insight_backfill(
+    definition: dict[str, Any],
+    *,
+    store: Any,
+    hub: Any,
+    client: Any | None = None,
+) -> dict[str, Any]:
+    """Walk every eligible conversation and run Jev for ``definition`` only."""
+    global _backfill_state
+    _backfill_state = {
+        "insight_id": definition.get("id"),
+        "name": definition["name"],
+        "status": "running",
+        "total": 0,
+        "done": 0,
+        "ok": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
+    await _publish_backfill(hub)
+
+    ids = await collect_backfill_call_ids(store)
+    _backfill_state["total"] = len(ids)
+    await _publish_backfill(hub)
+
+    own_client = client is None
+    if client is None and ids and typesafe_configured():
+        from clients.typesafe_client import TypeSafeInsightClient
+
+        client = TypeSafeInsightClient()
+    try:
+        for cid in ids:
+            current = await store.get_insight_def(definition["id"])
+            if current is None:
+                _backfill_state["status"] = "cancelled"
+                await _publish_backfill(hub)
+                return _backfill_state
+            try:
+                status = await extract_call_insights(
+                    cid,
+                    store=store,
+                    emitter=hub,
+                    client=client,
+                    defs=[definition],
+                )
+            except Exception as exc:
+                logger.warning("Insight backfill {} failed for {}: {}", definition["name"], cid, exc)
+                status = "failed"
+            _backfill_state["done"] += 1
+            if status == "ok":
+                _backfill_state["ok"] += 1
+            elif status in _SKIPPED_STATUSES:
+                _backfill_state["skipped"] += 1
+            else:
+                _backfill_state["failed"] += 1
+            await _publish_backfill(hub)
+    finally:
+        if own_client and client is not None and hasattr(client, "aclose"):
+            try:
+                await client.aclose()
+            except Exception:  # pragma: no cover
+                pass
+
+    if _backfill_state.get("status") == "running":
+        _backfill_state["status"] = "done"
+        await _publish_backfill(hub)
+    return _backfill_state
+
+
+async def _publish_backfill(hub: Any) -> None:
+    notice = getattr(hub, "broadcast_notice", None)
+    if callable(notice) and _backfill_state is not None:
+        try:
+            await notice("insight.backfill", **dict(_backfill_state))
+        except Exception:  # pragma: no cover - defensive
+            pass

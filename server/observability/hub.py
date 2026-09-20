@@ -167,9 +167,12 @@ class CallHub:
 
     async def emit(self, event: ObsEvent) -> None:
         store = await self.ensure_ready()
+        kind = event["kind"]
         async with self._lock:
             call_id = event["call_id"]
-            if call_id not in self._calls:
+            known = call_id in self._calls
+            # Insight labels on historical calls must not resurrect them as live.
+            if not known and not str(kind).startswith("insight."):
                 self._order.append(call_id)
                 self._calls[call_id] = {
                     "call_id": call_id,
@@ -178,11 +181,13 @@ class CallHub:
                     "status": "live",
                     "events": [],
                 }
-            self._apply_side_effects(event)
-            self._append_locked(call_id, event)
+                known = True
+            if known:
+                self._apply_side_effects(event)
+                self._append_locked(call_id, event)
         await self._persist(lambda: store.append_event(event))
         await self._broadcast(event)
-        if event["kind"] in {
+        if kind in {
             "call.started",
             "call.ended",
             "action.queued",
@@ -190,6 +195,10 @@ class CallHub:
             "metrics.first_word",
         }:
             self._mark_shift_dirty()
+
+    async def broadcast_notice(self, kind: str, **payload: Any) -> None:
+        """Fan-out a control message (no call_id) to live console sockets."""
+        await self._fanout({"kind": kind, "payload": payload})
 
     def list_calls(self) -> list[CallSnapshot]:
         return [self._public_snapshot(self._calls[cid]) for cid in reversed(self._order) if cid in self._calls]
@@ -325,14 +334,17 @@ class CallHub:
         }
 
     async def _broadcast(self, event: ObsEvent) -> None:
+        await self._fanout(event)
+
+    async def _fanout(self, message: ObsEvent | dict[str, Any]) -> None:
         dead: list[asyncio.Queue] = []
         for queue in list(self._subscribers):
             try:
-                queue.put_nowait(event)
+                queue.put_nowait(message)
             except asyncio.QueueFull:
                 try:
                     queue.get_nowait()
-                    queue.put_nowait(event)
+                    queue.put_nowait(message)
                 except Exception:
                     dead.append(queue)
         for queue in dead:
@@ -377,6 +389,9 @@ def get_hub() -> CallHub:
 
 def reset_hub(store: ObservabilityStore | None = None) -> CallHub:
     """Replace the singleton (tests)."""
+    from observability.insights import reset_insight_backfill
+
     global _hub
+    reset_insight_backfill()
     _hub = CallHub(store=store)
     return _hub
