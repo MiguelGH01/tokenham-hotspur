@@ -24,7 +24,7 @@ from observability.auth import (
 )
 from observability.events import ObsEvent
 from observability.hub import get_hub
-from observability.store import shift_start_iso
+from observability.store import resolve_period_bound, shift_start_iso
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 CONSOLE_DIR = Path(__file__).resolve().parent / "console"
@@ -217,19 +217,23 @@ def mount_observability_routes(app: FastAPI) -> None:
     @app.get("/observability/shift")
     async def get_shift(
         _admin: dict = Depends(require_admin),
+        period: str = Query(default="today", pattern="^(today|week|month|year|all)$"),
         since: str | None = Query(default=None),
     ):
         store = await hub.ensure_ready()
-        return await store.shift_summary(since=since or shift_start_iso())
+        resolved, bound = resolve_period_bound(period, since)
+        return await store.shift_summary(since=bound, period=resolved)
 
     @app.get("/observability/calls")
     async def list_calls(
         _admin: dict = Depends(require_admin),
+        period: str = Query(default="today", pattern="^(today|week|month|year|all)$"),
         since: str | None = Query(default=None),
         include: str = Query(default="all", pattern="^(all|real|test)$"),
     ):
         store = await hub.ensure_ready()
-        calls = await store.list_calls(since=since or shift_start_iso(), include=include)
+        _, bound = resolve_period_bound(period, since)
+        calls = await store.list_calls(since=bound, include=include)
         return {"calls": calls}
 
     @app.get("/observability/calls/{call_id}")
