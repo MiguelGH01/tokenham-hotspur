@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -111,14 +112,173 @@ def default_db_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "centralita.sqlite"
 
 
+ADMIN_PERIODS = ("today", "week", "month", "year", "all")
+
+
+def _shift_hour() -> int:
+    return int(os.getenv("SHIFT_START_HOUR", "8"))
+
+
+def _shift_aligned(local: datetime) -> datetime:
+    return local.replace(hour=_shift_hour(), minute=0, second=0, microsecond=0)
+
+
+def _add_months(local: datetime, delta: int) -> datetime:
+    month_index = local.month - 1 + delta
+    year = local.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(local.day, calendar.monthrange(year, month)[1])
+    return local.replace(year=year, month=month, day=day)
+
+
 def shift_start_iso(*, now: datetime | None = None) -> str:
     """Today's shift start in Europe/Madrid, returned as UTC ISO."""
-    from datetime import timezone
-
     local = (now or datetime.now(MADRID)).astimezone(MADRID)
-    hour = int(os.getenv("SHIFT_START_HOUR", "8"))
-    start = local.replace(hour=hour, minute=0, second=0, microsecond=0)
+    return _shift_aligned(local).astimezone(timezone.utc).isoformat()
+
+
+def period_start_iso(period: str = "today", *, now: datetime | None = None) -> str | None:
+    """Lower bound for admin KPIs. None means all time."""
+    period = (period or "today").strip().lower()
+    if period not in ADMIN_PERIODS:
+        period = "today"
+    if period == "all":
+        return None
+    local = (now or datetime.now(MADRID)).astimezone(MADRID)
+    if period == "today":
+        start = _shift_aligned(local)
+    elif period == "week":
+        start = _shift_aligned(local - timedelta(days=7))
+    elif period == "month":
+        start = _shift_aligned(_add_months(local, -1))
+    else:
+        try:
+            start = _shift_aligned(local.replace(year=local.year - 1))
+        except ValueError:
+            start = _shift_aligned(local.replace(year=local.year - 1, day=28))
     return start.astimezone(timezone.utc).isoformat()
+
+
+def resolve_period_bound(
+    period: str | None = None, since: str | None = None
+) -> tuple[str, str | None]:
+    """Map a UI period (or an explicit ISO since) to (period, lower_bound).
+
+    ``since`` wins when both are set. Bound ``None`` means all time.
+    """
+    if since:
+        p = (period or "custom").strip().lower()
+        return (p if p in ADMIN_PERIODS or p == "custom" else "custom", since)
+    p = (period or "today").strip().lower()
+    if p not in ADMIN_PERIODS:
+        p = "today"
+    return p, period_start_iso(p)
+
+
+def _volume_grain(start_local: datetime, now_local: datetime) -> str:
+    span = now_local - start_local
+    if span <= timedelta(hours=36):
+        return "hour"
+    if span <= timedelta(days=45):
+        return "day"
+    if span <= timedelta(days=400):
+        return "week"
+    return "month"
+
+
+def _align_bucket_start(start_local: datetime, grain: str) -> datetime:
+    cur = start_local.replace(minute=0, second=0, microsecond=0)
+    if grain == "hour":
+        return cur
+    cur = cur.replace(hour=0)
+    if grain == "day":
+        return cur
+    if grain == "week":
+        return cur - timedelta(days=cur.weekday())
+    return cur.replace(day=1)
+
+
+def _step_bucket(cur: datetime, grain: str) -> datetime:
+    if grain == "hour":
+        return cur + timedelta(hours=1)
+    if grain == "day":
+        return cur + timedelta(days=1)
+    if grain == "week":
+        return cur + timedelta(days=7)
+    return _add_months(cur, 1)
+
+
+def _bucket_tuple(local: datetime, grain: str) -> tuple:
+    if grain == "hour":
+        return (local.year, local.month, local.day, local.hour)
+    if grain == "day":
+        return (local.year, local.month, local.day)
+    if grain == "week":
+        iso = local.isocalendar()
+        return (iso[0], iso[1])
+    return (local.year, local.month)
+
+
+_MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
+
+
+def _bucket_label(local: datetime, grain: str) -> str:
+    mon = _MONTHS[local.month - 1]
+    if grain == "hour":
+        return f"{local.hour:02d}"
+    if grain == "day":
+        return f"{local.day} {mon}"
+    if grain == "week":
+        end = local + timedelta(days=6)
+        end_mon = _MONTHS[end.month - 1]
+        if local.month == end.month:
+            return f"{local.day}–{end.day} {mon}"
+        return f"{local.day} {mon}–{end.day} {end_mon}"
+    return f"{mon} {local.year}"
+
+
+def _volume_series(
+    calls: list[Any], *, since: str | None, now_local: datetime
+) -> tuple[str, list[dict[str, Any]], str | None, int | None]:
+    if since:
+        start_local = _parse_ts(since).astimezone(MADRID)
+    elif calls:
+        start_local = min(_parse_ts(c["started_at"]) for c in calls).astimezone(MADRID)
+    else:
+        return "hour", [], None, None
+
+    end_local = now_local
+    if calls:
+        last_local = max(_parse_ts(c["started_at"]).astimezone(MADRID) for c in calls)
+        if last_local > end_local:
+            end_local = last_local
+
+    grain = _volume_grain(start_local, end_local)
+    counts: dict[tuple, int] = {}
+    for call in calls:
+        started = _parse_ts(call["started_at"]).astimezone(MADRID)
+        key = _bucket_tuple(started, grain)
+        counts[key] = counts.get(key, 0) + 1
+
+    buckets: list[dict[str, Any]] = []
+    busiest_label: str | None = None
+    busiest_hour: int | None = None
+    busiest_count = -1
+    cursor = _align_bucket_start(start_local, grain)
+    n = 0
+    while cursor <= end_local and n < 400:
+        count = counts.get(_bucket_tuple(cursor, grain), 0)
+        label = _bucket_label(cursor, grain)
+        buckets.append({"label": label, "count": count})
+        if count > busiest_count:
+            busiest_count = count
+            busiest_label = label
+            busiest_hour = cursor.hour if grain == "hour" else None
+        cursor = _step_bucket(cursor, grain)
+        n += 1
+    if busiest_count <= 0:
+        return grain, buckets, None, None
+    return grain, buckets, busiest_label, busiest_hour
 
 
 def _parse_ts(ts: str) -> datetime:
@@ -963,13 +1123,20 @@ class ObservabilityStore:
             )
         return snaps
 
-    async def shift_summary(self, *, since: str | None = None) -> dict[str, Any]:
-        since = since or shift_start_iso()
+    async def shift_summary(
+        self, *, since: str | None = None, period: str | None = None
+    ) -> dict[str, Any]:
+        period, bound = resolve_period_bound(period, since)
         now = utc_now_iso()
-        cur = await self.db.execute(
-            "SELECT * FROM calls WHERE started_at >= ? AND COALESCE(is_test, 0) = 0",
-            (since,),
-        )
+        if bound:
+            cur = await self.db.execute(
+                "SELECT * FROM calls WHERE started_at >= ? AND COALESCE(is_test, 0) = 0",
+                (bound,),
+            )
+        else:
+            cur = await self.db.execute(
+                "SELECT * FROM calls WHERE COALESCE(is_test, 0) = 0",
+            )
         calls = await cur.fetchall()
         call_ids = [c["call_id"] for c in calls]
         live = sum(1 for c in calls if c["status"] == "live")
@@ -978,25 +1145,15 @@ class ObservabilityStore:
         durations = sorted(c["duration_ms"] for c in calls if c["duration_ms"] is not None)
         first_words = sorted(c["first_word_ms"] for c in calls if c["first_word_ms"] is not None)
 
-        # Hourly buckets in Europe/Madrid.
-        start_local = _parse_ts(since).astimezone(MADRID)
         now_local = datetime.now(MADRID)
-        hourly: list[dict[str, int]] = []
-        hour = start_local.replace(minute=0, second=0, microsecond=0)
-        busiest_hour: int | None = None
-        busiest_count = -1
-        while hour <= now_local:
-            h = hour.hour
-            count = 0
-            for c in calls:
-                started = _parse_ts(c["started_at"]).astimezone(MADRID)
-                if started.year == hour.year and started.month == hour.month and started.day == hour.day and started.hour == h:
-                    count += 1
-            hourly.append({"hour": h, "count": count})
-            if count > busiest_count:
-                busiest_count = count
-                busiest_hour = h
-            hour += timedelta(hours=1)
+        grain, buckets, busiest_label, busiest_hour = _volume_series(
+            calls, since=bound, now_local=now_local
+        )
+        hourly = (
+            [{"hour": int(b["label"]), "count": b["count"]} for b in buckets]
+            if grain == "hour"
+            else []
+        )
 
         # Primary-action mix.
         mix_counts: dict[str, int] = {}
@@ -1018,38 +1175,47 @@ class ObservabilityStore:
             if a not in order:
                 mix.append({"action": a, "count": n, "pct": round(n / mix_total, 3)})
 
+        if bound:
+            act_where = "call_id IN (SELECT call_id FROM calls WHERE started_at >= ?)"
+            act_params: tuple[str, ...] = (bound,)
+        else:
+            act_where = "1=1"
+            act_params = ()
         cur = await self.db.execute(
-            """
+            f"""
             SELECT
                 SUM(CASE WHEN status = 'posted' THEN 1 ELSE 0 END) AS posted,
                 SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
             FROM actions
-            WHERE call_id IN (SELECT call_id FROM calls WHERE started_at >= ?)
+            WHERE {act_where}
             """,
-            (since,),
+            act_params,
         )
         act = await cur.fetchone()
         posted = int(act["posted"] or 0) if act else 0
         failed = int(act["failed"] or 0) if act else 0
 
         cur = await self.db.execute(
-            """
+            f"""
             SELECT verb, COUNT(*) AS n FROM actions
-            WHERE call_id IN (SELECT call_id FROM calls WHERE started_at >= ?)
+            WHERE {act_where}
             GROUP BY verb ORDER BY n DESC, verb
             """,
-            (since,),
+            act_params,
         )
         by_verb = [{"verb": r["verb"], "count": int(r["n"])} for r in await cur.fetchall()]
 
         return {
             "clinic": os.getenv("CLINIC_NAME", "Clínica Arenal"),
             "timezone": "Europe/Madrid",
-            "shift_start": since,
+            "period": period,
+            "shift_start": bound,
             "now": now,
             "live_calls": live,
             "calls": total,
             "busiest_hour": busiest_hour,
+            "busiest_label": busiest_label,
+            "volume": {"grain": grain, "buckets": buckets},
             "hourly": hourly,
             "submit": {
                 "posted_calls": submitted,
