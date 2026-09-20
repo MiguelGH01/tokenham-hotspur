@@ -166,7 +166,7 @@ const API = {
         ? body.detail.map((e) => (e.id ? e.id + ": " : "") + e.error).join(" · ")
         : String(body.detail || "");
     } catch { /* a body that is not JSON tells us nothing extra */ }
-    if (r.status === 401) detail = "Hace falta sesión de administrador.";
+    if (r.status === 401) detail = "Admin session required.";
     throw new Error(detail || "error " + r.status);
   },
   async login(key) {
@@ -945,20 +945,20 @@ function setView(v){
 
 const NOTICE_KINDS = {
   provider_absent: {
-    label: "no viene", changes: true,
-    explain: "Esos días no se dan citas con él y su agenda aparece marcada. Si alguien lo pide, el agente le ofrece otro médico de la misma especialidad y centro.",
+    label: "out", changes: true,
+    explain: "Those days are not offered with them, and their calendar is marked. If someone asks, the agent offers another doctor in the same specialty and site.",
   },
   clinic_closed: {
-    label: "clínica cerrada", changes: true,
-    explain: "Ningún médico da cita ese día. El agente pasa al siguiente día abierto.",
+    label: "clinic closed", changes: true,
+    explain: "No doctor is offered that day. The agent moves to the next open day.",
   },
   insurer_dropped: {
-    label: "deja un seguro", changes: true,
-    explain: "A los pacientes de ese seguro se les busca otro médico de la misma especialidad.",
+    label: "drops insurer", changes: true,
+    explain: "Patients on that plan are offered another doctor in the same specialty.",
   },
   spoken: {
-    label: "se le dice", changes: false,
-    explain: "El agente lo dice al ofrecer una cita en ese centro y en esas fechas. No cambia ninguna cita.",
+    label: "spoken", changes: false,
+    explain: "The agent says it when offering an appointment at that site on those dates. It does not change any booking.",
   },
 };
 
@@ -982,36 +982,36 @@ async function loadNotices(){
     notices = await API.notices();
     renderNotices();
   }catch(err){
-    noticeStatus("No se han podido cargar los avisos: " + err.message, "bad");
+    noticeStatus("Could not load notices: " + err.message, "bad");
   }
 }
 
 function noticeSentence(n){
   const who = (id) => (catalogue.providers.find(p => p.id === id) || {}).name || id;
-  if(n.kind === "provider_absent")  return who(n.provider_id) + " no viene";
-  if(n.kind === "clinic_closed")    return "La clínica está cerrada";
+  if(n.kind === "provider_absent")  return who(n.provider_id) + " is out";
+  if(n.kind === "clinic_closed")    return "The clinic is closed";
   if(n.kind === "insurer_dropped"){
     const plan = (catalogue.plans.find(p => p.id === n.insurer_id) || {}).name || n.insurer_id;
-    return who(n.provider_id) + " ya no atiende " + plan;
+    return who(n.provider_id) + " no longer takes " + plan;
   }
   const site = n.location_id
     ? (catalogue.locations.find(l => l.id === n.location_id) || {}).name || n.location_id
-    : "todos los centros";
+    : "all sites";
   return "“" + n.text + "” · " + site;
 }
 
 function renderNotices(){
   const host = $("#ntcList"); host.innerHTML = "";
   const list = notices.notices || [];
-  $("#ntcCount").textContent = list.length ? list.length + (list.length===1?" aviso":" avisos") : "";
+  $("#ntcCount").textContent = list.length ? list.length + (list.length===1?" notice":" notices") : "";
   const badge = $("#noticeBadge");
   badge.hidden = !list.length;
   badge.textContent = String(list.length);
 
   if(!list.length){
     const e = el("div","empty");
-    e.appendChild(el("b",null,"Sin avisos"));
-    e.appendChild(el("span",null,"El agente se comporta como de costumbre. Un aviso cambia lo que ofrece o lo que dice, y caduca solo."));
+    e.appendChild(el("b",null,"No notices"));
+    e.appendChild(el("span",null,"The agent behaves as usual. A notice changes what it offers or what it says, and expires on its own."));
     host.appendChild(e);
   }
   list.forEach((n) => {
@@ -1024,11 +1024,11 @@ function renderNotices(){
     body.appendChild(el("div","what", noticeSentence(n)));
     body.appendChild(el("div","when", n.from === n.until ? n.from : n.from + " → " + n.until));
     row.appendChild(body);
-    const remove = el("button","btn","Quitar");
+    const remove = el("button","btn","Remove");
     remove.type = "button";
     remove.addEventListener("click", () => saveNotices({
       ...notices, notices: list.filter(x => x.id !== n.id),
-    }, "Aviso quitado."));
+    }, "Notice removed."));
     row.appendChild(remove);
     host.appendChild(row);
   });
@@ -1045,7 +1045,7 @@ async function saveNotices(document_, okText){
     noticeStatus(okText, "ok");
     return true;
   }catch(err){
-    noticeStatus("No se ha guardado. " + err.message, "bad");
+    noticeStatus("Not saved. " + err.message, "bad");
     return false;
   }
 }
@@ -1075,8 +1075,8 @@ async function submitNotice(){
   const kind = $("#ntcKind").value;
   const from = $("#ntcFrom").value, until = $("#ntcUntil").value;
   const fail = (m) => { const e = $("#ntcError"); e.textContent = m; e.hidden = false; };
-  if(!from || !until) return fail("Pon las dos fechas.");
-  if(until < from) return fail("La fecha de fin es anterior a la de inicio.");
+  if(!from || !until) return fail("Set both dates.");
+  if(until < from) return fail("The end date is before the start date.");
 
   // The id is generated, never typed: it is a handle for the trail, and the
   // server refuses anything that is not one.
@@ -1085,20 +1085,20 @@ async function submitNotice(){
   if(kind === "insurer_dropped") entry.insurer_id = $("#ntcInsurer").value;
   if(kind === "spoken"){
     entry.text = $("#ntcText").value.trim();
-    if(!entry.text) return fail("Escribe qué se le dice al paciente.");
+    if(!entry.text) return fail("Write what to tell the patient.");
     entry.location_id = $("#ntcSite").value || null;
   }
   $("#ntcError").hidden = true;
-  const ok = await saveNotices({ ...notices, notices: [...(notices.notices||[]), entry] }, "Aviso guardado.");
+  const ok = await saveNotices({ ...notices, notices: [...(notices.notices||[]), entry] }, "Notice saved.");
   if(ok) $("#ntcDialog").close();
-  else fail("El servidor no lo ha aceptado.");
+  else fail("The server did not accept it.");
 }
 
 async function saveTone(){
   const text = $("#ntcToneText").value.trim();
   const until = $("#ntcToneUntil").value;
   const tone = text ? (until ? { text, until } : { text }) : null;
-  await saveNotices({ ...notices, tone }, text ? "Tono guardado." : "Tono quitado.");
+  await saveNotices({ ...notices, tone }, text ? "Tone saved." : "Tone cleared.");
 }
 
 function fillNoticeOptions(){
